@@ -1,0 +1,44 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local build caches
+.cargo/
+src-tauri/target/
+
+# Agent workspace
+.codex/
+.trae/
+
+# Logs and debug
+log/
+llm_debug_logs/
+build_err.txt
+build-err2.txt
+
+# Downloaded external specs
+anthropic-openapi-spec-main/
+
+# Plans
+plans/render.txt
