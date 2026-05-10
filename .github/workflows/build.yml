@@ -114,7 +114,7 @@ jobs:
         with:
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'untagged' }}
-          releaseName: "Night Voyage ${{ github.ref_type == 'tag' && github.ref_name || 'Development Build' }}"
+          releaseName: 'Night Voyage ${{ github.ref_type == 'tag' && github.ref_name || 'Development Build' }}'
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: ${{ github.ref_type != 'tag' }}
           prerelease: ${{ github.ref_type != 'tag' }}
