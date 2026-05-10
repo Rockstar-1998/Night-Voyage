@@ -29,6 +29,7 @@ dist-ssr
 # Local build caches (DO NOT upload to Git)
 .cargo/
 .cache/
+target/
 src-tauri/target/
 
 # Agent workspace
