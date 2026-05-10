@@ -113,11 +113,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }}
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'untagged' }}
-          releaseName: 'Night Voyage ${{ github.ref_type == 'tag' && github.ref_name || 'Development Build' }}'
+          tagName: untagged
+          releaseName: 'Night Voyage Development Build'
           releaseBody: 'See the assets to download and install this version.'
-          releaseDraft: ${{ github.ref_type != 'tag' }}
-          prerelease: ${{ github.ref_type != 'tag' }}
+          releaseDraft: true
+          prerelease: true
 
   build-windows-local-style:
     name: Build Windows (Local Style with Isolated Instances)
