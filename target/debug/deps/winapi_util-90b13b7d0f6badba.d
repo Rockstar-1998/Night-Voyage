@@ -1,0 +1,11 @@
+d:\data\Night Voyage\target\debug\deps\winapi_util-90b13b7d0f6badba.d: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\console.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\file.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\sysinfo.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\win.rs
+
+d:\data\Night Voyage\target\debug\deps\libwinapi_util-90b13b7d0f6badba.rlib: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\console.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\file.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\sysinfo.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\win.rs
+
+d:\data\Night Voyage\target\debug\deps\libwinapi_util-90b13b7d0f6badba.rmeta: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\console.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\file.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\sysinfo.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\win.rs
+
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\lib.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\console.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\file.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\sysinfo.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winapi-util-0.1.11\src\win.rs:

@@ -1,0 +1,11 @@
+d:\data\Night Voyage\target\debug\deps\either-e6c2308737a8755d.d: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged_optional.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\iterator.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\into_either.rs
+
+d:\data\Night Voyage\target\debug\deps\libeither-e6c2308737a8755d.rlib: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged_optional.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\iterator.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\into_either.rs
+
+d:\data\Night Voyage\target\debug\deps\libeither-e6c2308737a8755d.rmeta: E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\lib.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged_optional.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\iterator.rs E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\into_either.rs
+
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\lib.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\serde_untagged_optional.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\iterator.rs:
+E:\LibSoftware\Rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\either-1.15.0\src\into_either.rs:

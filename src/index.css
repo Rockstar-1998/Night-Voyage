@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@source "../src/**/*.{tsx,ts}";
+
+@theme {
+  --color-xuanqing: #060C14;
+  --color-night-water: #0B121B;
+  --color-wupeng: #1A2634;
+  --color-mist: rgba(245, 245, 247, 0.12);
+  --color-mist-heavy: rgba(245, 245, 247, 0.2);
+  --color-mist-solid: #F5F5F7;
+  --color-accent: #3A6D8C;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  background: radial-gradient(circle at top right, #0d1a29 0%, var(--color-xuanqing) 100%);
+  background-attachment: fixed;
+  color: var(--color-mist-solid);
+}
+
+/* Custom Scrollbar Styling - Hidden to allow Custom Motion Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
+}

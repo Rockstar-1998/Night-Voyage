@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Night Voyage</title>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen">
+  <div id="root"></div>
+  <!-- Splash Screen -->
+  <div id="splash-screen" style="
+      position: fixed;
+      inset: 0;
+      background: #060C14;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.5s ease-out;
+    ">
+    <div style="
+        width: 48px;
+        height: 48px;
+        border: 3px solid rgba(58,109,140,0.1);
+        border-top-color: #3A6D8C;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      "></div>
+    <div style="
+        margin-top: 16px;
+        color: rgba(245, 245, 247, 0.4);
+        font-family: sans-serif;
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      ">Night Voyage</div>
+    <style>
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </div>
+  <script type="module" src="/src/index.tsx"></script>
+</body>
+
+</html>

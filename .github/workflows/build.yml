@@ -1,0 +1,212 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create release'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+        env:
+          TAURI_ENV_PLATFORM: linux
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+          retention-days: 1
+
+  build-tauri:
+    name: Build Tauri (${{ matrix.platform }})
+    needs: build-frontend
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            name: macOS Apple Silicon
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            name: macOS Intel
+          - platform: 'ubuntu-22.04'
+            args: ''
+            name: Linux
+          - platform: 'windows-latest'
+            args: ''
+            name: Windows
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: 'Night Voyage ${{ github.ref_type == 'tag' && github.ref_name || 'Development Build' }}'
+          releaseBody: 'See the assets to download and install this version.'
+          releaseDraft: ${{ github.ref_type != 'tag' }}
+          prerelease: ${{ github.ref_type != 'tag' }}
+
+  build-windows-local-style:
+    name: Build Windows (Local Style with Isolated Instances)
+    needs: build-frontend
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri for Windows
+        run: npm run tauri build
+        env:
+          TAURI_ENV_PLATFORM: windows
+
+      - name: Create isolated instances
+        shell: pwsh
+        run: |
+          $root = Get-Location
+          $targetDir = "$root\src-tauri\target\release"
+          $distDir = "$root\dist"
+          $instanceA = "$distDir\instance-a"
+          $instanceB = "$distDir\instance-b"
+
+          New-Item -ItemType Directory -Force -Path $instanceA | Out-Null
+          New-Item -ItemType Directory -Force -Path $instanceB | Out-Null
+
+          Copy-Item "$targetDir\night-voyage.exe" $instanceA -Force
+          Copy-Item "$targetDir\night-voyage.exe" $instanceB -Force
+
+          Get-ChildItem "$targetDir\*.dll" | ForEach-Object {
+            Copy-Item $_.FullName $instanceA -Force -ErrorAction SilentlyContinue
+            Copy-Item $_.FullName $instanceB -Force -ErrorAction SilentlyContinue
+          }
+
+          Get-ChildItem "$targetDir\webview2*.dll" | ForEach-Object {
+            Copy-Item $_.FullName $instanceA -Force -ErrorAction SilentlyContinue
+            Copy-Item $_.FullName $instanceB -Force -ErrorAction SilentlyContinue
+          }
+
+          # Create empty database files
+          if (-not (Test-Path "$instanceA\night-voyage.sqlite3")) {
+            New-Item -ItemType File -Path "$instanceA\night-voyage.sqlite3" -Force | Out-Null
+          }
+          if (-not (Test-Path "$instanceB\night-voyage.sqlite3")) {
+            New-Item -ItemType File -Path "$instanceB\night-voyage.sqlite3" -Force | Out-Null
+          }
+
+          Write-Host "Instance A created at: $instanceA"
+          Write-Host "Instance B created at: $instanceB"
+
+      - name: Upload Instance A
+        uses: actions/upload-artifact@v4
+        with:
+          name: night-voyage-instance-a-windows
+          path: dist/instance-a/
+
+      - name: Upload Instance B
+        uses: actions/upload-artifact@v4
+        with:
+          name: night-voyage-instance-b-windows
+          path: dist/instance-b/
+
+      - name: Upload MSI Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: night-voyage-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+
+      - name: Upload NSIS Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: night-voyage-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe

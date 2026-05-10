@@ -7,7 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
 *.local
@@ -23,8 +26,9 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local build caches
+# Local build caches (DO NOT upload to Git)
 .cargo/
+.cache/
 src-tauri/target/
 
 # Agent workspace
@@ -42,3 +46,11 @@ anthropic-openapi-spec-main/
 
 # Plans
 plans/render.txt
+
+# SQLite databases
+*.sqlite3
+*.db
+
+# OS files
+Thumbs.db
+desktop.ini

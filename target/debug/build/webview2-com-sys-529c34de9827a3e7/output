@@ -1,0 +1,2 @@
+cargo:rustc-link-search=native=d:\data\Night Voyage\target\debug\build\webview2-com-sys-529c34de9827a3e7\out\x64
+cargo:rustc-link-lib=advapi32
