@@ -106,18 +106,21 @@ jobs:
         run: npm ci
 
       - name: Build Tauri
-        uses: tauri-apps/tauri-action@v0
+        run: npm run tauri build -- ${{ matrix.args }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          args: ${{ matrix.args }}
-          tagName: untagged
-          releaseName: 'Night Voyage Development Build'
-          releaseBody: 'See the assets to download and install this version.'
-          releaseDraft: true
-          prerelease: true
+          name: tauri-build-${{ matrix.platform }}${{ matrix.args && '-' || '' }}${{ matrix.args && matrix.args.replace('--target ', '') || '' }}
+          path: |
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
 
   build-windows-local-style:
     name: Build Windows (Local Style with Isolated Instances)
