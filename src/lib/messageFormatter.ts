@@ -24,7 +24,8 @@ export type FormatNode =
   | ItalicNode
   | QuoteNode
   | KeywordNode
-  | CustomNode;
+  | CustomNode
+  | StructuredResponseNode;
 
 export interface TextNode {
   kind: 'text';
@@ -59,6 +60,18 @@ export interface CustomNode {
   color: string;
   italic: boolean;
   bold: boolean;
+}
+
+export interface StructuredField {
+  kind: 'string' | 'object';
+  value: string | Record<string, string>;
+}
+
+export interface StructuredResponseNode {
+  kind: 'structured_response';
+  fields: Record<string, StructuredField>;
+  mainContentKey: string | null;
+  displayConfig: Record<string, { defaultCollapsed: boolean }>;
 }
 
 export const DEFAULT_FORMAT_CONFIG: MessageFormatConfig = {
@@ -178,6 +191,39 @@ function applyRegexRule(
     }
   }
   return result;
+}
+
+export function parseStructuredResponse(jsonContent: string, displayConfig?: Record<string, { defaultCollapsed: boolean }>): StructuredResponseNode | null {
+  try {
+    const parsed = JSON.parse(jsonContent);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+
+    const fields: Record<string, StructuredField> = {};
+
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string') {
+        fields[key] = { kind: 'string', value };
+      } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const stringEntries: Record<string, string> = {};
+        for (const [k, v] of Object.entries(value)) {
+          if (typeof v === 'string') {
+            stringEntries[k] = v;
+          }
+        }
+        if (Object.keys(stringEntries).length > 0) {
+          fields[key] = { kind: 'object', value: stringEntries };
+        }
+      }
+    }
+
+    if (Object.keys(fields).length === 0) return null;
+
+    const mainContentKey = fields['content'] ? 'content' : Object.keys(fields)[0];
+
+    return { kind: 'structured_response', fields, mainContentKey, displayConfig: displayConfig ?? {} };
+  } catch {
+    return null;
+  }
 }
 
 function applyWorldBookKeywords(

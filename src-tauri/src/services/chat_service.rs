@@ -3,18 +3,44 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::{
     ChatAttachment, ChatRoundStateEvent, ChatSubmitInputResult, LlmStreamEventPayload,
-    LlmStreamToolUseEvent, RegenerateRoundResult, RoundState, StreamChunkEvent, SubmitRoundAction,
-    UiMessage,
+    LlmStreamToolUseEvent, RegenerateRoundResult, RetryFailedRoundResult, RoundState,
+    StreamChunkEvent, SubmitRoundAction, UiMessage,
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::message_repository::{
     InsertMessageRecord, MessageRepository, PendingMessageContentPart,
 };
+use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
-use crate::services::prompt_compiler::PromptCompileResult;
+use crate::services::prompt_compiler::{
+    validate_output_text_with_retry_snapshot, PromptCompileResult, RetryOutputValidatorSnapshot,
+};
 use crate::utils::now_ts;
 
 const ALLOWED_IMAGE_MIME_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+pub fn chat_debug_log(app: &AppHandle, message: &str) {
+    eprintln!("[chat] {}", message);
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let log_dir = data_dir.join("chat_debug_logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let log_line = format!("[{}] {}\n", timestamp, message);
+        let date_suffix = timestamp / 86_400_000;
+        let log_path = log_dir.join(format!("chat_{}.log", date_suffix));
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = file.write_all(log_line.as_bytes());
+        }
+    }
+}
 
 pub fn validate_attachment_mime_types(attachments: &[ChatAttachment]) -> Result<(), String> {
     for attachment in attachments {
@@ -79,7 +105,29 @@ impl ChatService {
             RoundRepository::ensure_collecting(&mut tx, conversation_id, now).await?;
 
         if RoundRepository::member_already_decided(&mut tx, round_id, member_id).await? {
-            return Err("当前成员本轮已提交发言或放弃发言".to_string());
+            let member_visible_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM messages WHERE round_id = ? AND member_id = ? AND is_hidden = 0",
+            )
+            .bind(round_id)
+            .bind(member_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+            if member_visible_count == 0 {
+                eprintln!(
+                    "[chat] submit_input: member_already_decided=true but member has 0 visible messages, clearing stale action. round_id={}, member_id={}",
+                    round_id, member_id
+                );
+                sqlx::query("DELETE FROM round_member_actions WHERE round_id = ? AND member_id = ?")
+                    .bind(round_id)
+                    .bind(member_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            } else {
+                return Err("当前成员本轮已提交发言或放弃发言".to_string());
+            }
         }
 
         let action_type = if trimmed.is_empty() && attachments.is_empty() {
@@ -139,6 +187,19 @@ impl ChatService {
         let mut assistant_message_id = None;
         let auto_dispatched =
             required_member_count > 0 && decided_member_count >= required_member_count;
+
+        eprintln!(
+            "[chat] submit_input: conversation_id={}, round_id={}, member_id={}, required_members={}, decided_members={}, auto_dispatched={}",
+            conversation_id, round_id, member_id, required_member_count, decided_member_count, auto_dispatched
+        );
+
+        chat_debug_log(
+            &app,
+            &format!(
+                "submit_input: conv={}, round={}, member={}, required={}, decided={}, auto_dispatched={}",
+                conversation_id, round_id, member_id, required_member_count, decided_member_count, auto_dispatched
+            ),
+        );
 
         let provider_id_to_use = if auto_dispatched {
             let provider_id = ConversationRepository::resolve_provider_id(
@@ -211,23 +272,44 @@ impl ChatService {
 
         tx.commit().await.map_err(|err| err.to_string())?;
 
-        let round = RoundRepository::load_state(&db, conversation_id, Some(round_id)).await?;
+        let round = match RoundRepository::load_state(&db, conversation_id, Some(round_id)).await {
+            Ok(r) => Some(r),
+            Err(err) => {
+                eprintln!("[chat] submit_input: load_state failed after commit: {}", err);
+                None
+            }
+        };
         let visible_user_message = match visible_user_message_id {
-            Some(message_id) => Some(MessageRepository::find_by_id(&db, message_id).await?),
+            Some(message_id) => MessageRepository::find_by_id(&db, message_id).await.ok(),
             None => None,
         };
         let assistant_message = match assistant_message_id {
-            Some(message_id) => Some(MessageRepository::find_by_id(&db, message_id).await?),
+            Some(message_id) => MessageRepository::find_by_id(&db, message_id).await.ok(),
             None => None,
         };
 
-        emit_round_state(&app, round.clone())?;
+        if let Some(ref r) = round {
+            if let Err(err) = emit_round_state(&app, r.clone()) {
+                eprintln!("[chat] submit_input: emit_round_state failed: {}", err);
+            }
+        }
 
         if let Some(message) = visible_user_message.clone() {
             broadcast_room_player_message(&app, message, action_type.to_string());
         }
 
         if let (Some(provider_id), Some(message_id)) = (provider_id_to_use, assistant_message_id) {
+            eprintln!(
+                "[chat] submit_input: spawning stream task, provider_id={}, assistant_message_id={}",
+                provider_id, message_id
+            );
+            chat_debug_log(
+                &app,
+                &format!(
+                    "submit_input: spawning stream task, provider_id={}, assistant_message_id={}",
+                    provider_id, message_id
+                ),
+            );
             crate::services::stream_processor::spawn_stream_task(
                 app.clone(),
                 db.clone(),
@@ -240,7 +322,20 @@ impl ChatService {
         }
 
         Ok(ChatSubmitInputResult {
-            round,
+            round: round.unwrap_or_else(|| {
+                crate::models::RoundState {
+                    round_id,
+                    conversation_id,
+                    round_index: 0,
+                    status: "streaming".to_string(),
+                    required_member_count: 0,
+                    decided_member_count: 0,
+                    waiting_member_ids: Vec::new(),
+                    aggregated_user_content: None,
+                    active_assistant_message_id: assistant_message_id,
+                    updated_at: 0,
+                }
+            }),
             action: SubmitRoundAction {
                 member_id,
                 action_type: action_type.to_string(),
@@ -480,6 +575,193 @@ impl ChatService {
         MessageRepository::find_by_id(db, target_message_id).await
     }
 
+    pub async fn delete_message(db: &SqlitePool, message_id: i64) -> Result<(), String> {
+        let message = MessageRepository::find_by_id(db, message_id).await?;
+        let round_id = message.round_id;
+        let role = message.role;
+        let conversation_id = message.conversation_id;
+        let message_kind = message.message_kind.clone();
+
+        eprintln!(
+            "[delete_message] id={}, role={}, kind={}, round_id={:?}, conv={}",
+            message_id, role, message_kind, round_id, conversation_id
+        );
+
+        if let Some(round_id) = round_id {
+            if role == "assistant" {
+                eprintln!(
+                    "[delete_message] assistant: deleting entire round_id={}",
+                    round_id
+                );
+                Self::delete_round_completely(db, round_id).await?;
+            } else {
+                MessageRepository::delete_message(db, message_id).await?;
+
+                let round = RoundRepository::load_state(db, conversation_id, Some(round_id)).await?;
+                let is_streaming_or_queued = round.status == "streaming" || round.status == "queued";
+                let is_aggregate = message_kind == "user_aggregate";
+
+                eprintln!(
+                    "[delete_message] user: round_id={}, round_status={}, is_aggregate={}, is_streaming_or_queued={}",
+                    round_id, round.status, is_aggregate, is_streaming_or_queued
+                );
+
+                let visible_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM messages WHERE round_id = ? AND is_hidden = 0",
+                )
+                .bind(round_id)
+                .fetch_one(db)
+                .await
+                .map_err(|err| err.to_string())?;
+
+                if visible_count == 0 {
+                    eprintln!("[delete_message] user: no visible messages left, deleting round {}", round_id);
+                    Self::delete_round_completely(db, round_id).await?;
+                } else if is_aggregate || is_streaming_or_queued {
+                    let has_assistant: Option<i64> = sqlx::query_scalar(
+                        "SELECT id FROM messages \
+                         WHERE round_id = ? AND role = 'assistant' AND is_hidden = 0 \
+                         LIMIT 1",
+                    )
+                    .bind(round_id)
+                    .fetch_optional(db)
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                    if has_assistant.is_some() {
+                        eprintln!("[delete_message] user: has_assistant, setting completed");
+                        sqlx::query(
+                            "UPDATE message_rounds SET status = 'completed', aggregate_message_id = NULL, aggregated_user_content = NULL WHERE id = ?",
+                        )
+                        .bind(round_id)
+                        .execute(db)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    } else {
+                        eprintln!("[delete_message] user: no assistant, deleting round {}", round_id);
+                        Self::delete_round_completely(db, round_id).await?;
+                    }
+                }
+            }
+        } else {
+            MessageRepository::delete_message(db, message_id).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_round_completely(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+        let message_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM messages WHERE round_id = ?",
+        )
+        .bind(round_id)
+        .fetch_all(db)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        eprintln!(
+            "[delete_message] delete_round_completely: round_id={}, deleting {} messages",
+            round_id,
+            message_ids.len()
+        );
+
+        for mid in &message_ids {
+            sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+                .bind(mid)
+                .execute(db)
+                .await
+                .map_err(|err| err.to_string())?;
+            sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
+                .bind(mid)
+                .execute(db)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+
+        sqlx::query("DELETE FROM messages WHERE round_id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM round_member_actions WHERE round_id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM message_rounds WHERE id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        eprintln!("[delete_message] delete_round_completely: round_id={} deleted", round_id);
+        Ok(())
+    }
+
+    pub async fn retry_failed_round(
+        app: AppHandle,
+        db: SqlitePool,
+        conversation_id: i64,
+        member_id: i64,
+        round_id: i64,
+    ) -> Result<RetryFailedRoundResult, String> {
+        ConversationRepository::ensure_member_is_host(&db, conversation_id, member_id).await?;
+
+        let snapshot = RetrySnapshotRepository::load_by_round(&db, round_id)
+            .await?
+            .ok_or_else(|| "未找到该轮次的重试快照".to_string())?;
+
+        if snapshot.status == "running" {
+            return Err("该轮次正在重试中，请勿重复操作".to_string());
+        }
+
+        let assistant_message_id = snapshot.assistant_message_id;
+
+        let now = now_ts();
+        sqlx::query("UPDATE messages SET content = '' WHERE id = ?")
+            .bind(assistant_message_id)
+            .execute(&db)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+            .bind(assistant_message_id)
+            .execute(&db)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query(
+            "UPDATE message_rounds SET status = 'streaming', updated_at = ? WHERE id = ?",
+        )
+        .bind(now)
+        .bind(round_id)
+        .execute(&db)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        let round = RoundRepository::load_state(&db, conversation_id, Some(round_id)).await?;
+        let assistant_message = MessageRepository::find_by_id(&db, assistant_message_id).await?;
+
+        emit_round_state(&app, round.clone())?;
+        emit_message_reset_event(&app, conversation_id, round_id, assistant_message_id)?;
+
+        crate::services::stream_processor::spawn_retry_worker(app, db, snapshot);
+
+        Ok(RetryFailedRoundResult {
+            round,
+            assistant_message,
+            attempt_count: 0,
+        })
+    }
+
+    pub async fn abort_round_stream(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+        RoundRepository::mark_aborted(db, round_id).await?;
+        let _ = RetrySnapshotRepository::mark_aborted(db, round_id).await;
+        Ok(())
+    }
+
     pub async fn resolve_round_id_from_reply_to(
         db: &SqlitePool,
         conversation_id: i64,
@@ -548,6 +830,28 @@ fn broadcast_room_player_message(app: &AppHandle, message: UiMessage, action_typ
             }
         }
     });
+}
+
+pub fn emit_message_reset_event(
+    app: &AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+    message_id: i64,
+) -> Result<(), String> {
+    emit_llm_stream_event(
+        app,
+        conversation_id,
+        round_id,
+        message_id,
+        "",
+        "message_reset",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 pub fn emit_llm_stream_event(
@@ -698,19 +1002,44 @@ pub async fn finalize_streamed_response(
     db: &SqlitePool,
     round_id: i64,
     assistant_message_id: i64,
-    compiled_prompt: &PromptCompileResult,
     full_content: &str,
-    hidden_parts: &[PendingMessageContentPart],
+    content_parts: &[PendingMessageContentPart],
+    validation_rules: &[RetryOutputValidatorSnapshot],
 ) -> Result<(), String> {
     if full_content.is_empty() {
         return Err("LLM 响应为空".to_string());
     }
 
-    MessageRepository::update_content(db, assistant_message_id, full_content).await?;
-    MessageRepository::replace_content_parts(db, assistant_message_id, full_content, hidden_parts)
-        .await?;
-    compiled_prompt.validate_output_text(full_content)?;
-    RoundRepository::mark_completed(db, round_id, assistant_message_id).await?;
+    let mut tx = db.begin().await.map_err(|err| err.to_string())?;
+
+    sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+        .bind(full_content)
+        .bind(assistant_message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if let Err(err) = MessageRepository::replace_content_parts_tx(&mut tx, assistant_message_id, content_parts).await {
+        eprintln!("[finalize_streamed_response] replace_content_parts failed: {}, round_id={}", err, round_id);
+    }
+
+    let now = crate::utils::now_ts();
+    sqlx::query(
+        "UPDATE message_rounds \
+         SET status = 'completed', active_assistant_message_id = ?, updated_at = ?, completed_at = ? \
+         WHERE id = ?",
+    )
+    .bind(assistant_message_id)
+    .bind(now)
+    .bind(now)
+    .bind(round_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    tx.commit().await.map_err(|err| err.to_string())?;
+
+    validate_output_text_with_retry_snapshot(full_content, validation_rules)?;
     Ok(())
 }
 
@@ -723,6 +1052,7 @@ pub fn save_llm_debug_log(
     response_body: &str,
     is_streaming: bool,
     system_blocks_metadata: Option<&[crate::services::prompt_compiler::PromptBlock]>,
+    log_dir_override: Option<&std::path::Path>,
 ) {
     let timestamp = now_ts();
     let safe_model = model.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
@@ -731,16 +1061,21 @@ pub fn save_llm_debug_log(
         timestamp, conversation_id, round_id, safe_model
     );
 
-    let mut log_dir = std::path::PathBuf::from(".");
-    if let Ok(cargo_manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        log_dir = std::path::PathBuf::from(&cargo_manifest)
-            .parent()
-            .unwrap()
-            .to_path_buf();
-    }
-    log_dir.push("llm_debug_logs");
+    let log_dir = if let Some(dir) = log_dir_override {
+        dir.join("llm_debug_logs")
+    } else {
+        let mut dir = std::path::PathBuf::from(".");
+        if let Ok(cargo_manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            dir = std::path::PathBuf::from(&cargo_manifest)
+                .parent()
+                .unwrap()
+                .to_path_buf();
+        }
+        dir.push("llm_debug_logs");
+        dir
+    };
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("[llm-debug] failed to create log dir: {}", e);
+        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
         return;
     }
 
@@ -776,6 +1111,9 @@ pub fn save_llm_debug_log(
                             }
                             crate::services::prompt_compiler::PromptBlockSource::Compiler => {
                                 serde_json::json!({"type": "compiler"})
+                            }
+                            crate::services::prompt_compiler::PromptBlockSource::Player { character_id } => {
+                                serde_json::json!({"type": "player", "character_id": character_id})
                             }
                         },
                         "token_cost_estimate": block.token_cost_estimate,

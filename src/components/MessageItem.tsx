@@ -1,7 +1,8 @@
-import { Component, Show, createMemo, createSignal } from 'solid-js';
-import { RefreshCw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X } from '../lib/icons';
-import { parseMessageContent, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from '../lib/messageFormatter';
+import { Component, Show, For, createMemo, createSignal } from 'solid-js';
+import { RefreshCw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X, Trash2 } from '../lib/icons';
+import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from '../lib/messageFormatter';
 import { MessageFormatRenderer } from './MessageFormatRenderer';
+import { CollapsibleTag } from './MessageFormatRenderer';
 
 export interface ChatMessage {
   id: string;
@@ -20,6 +21,7 @@ export interface ChatMessage {
   summaryEntryId?: number;
   isActiveInRound?: boolean;
   error?: string;
+  structuredFields?: Record<string, string>;
 }
 
 interface MessageItemProps {
@@ -27,10 +29,14 @@ interface MessageItemProps {
   onRegenerate: (id: string, roundId?: number) => void;
   onEdit: (id: string, content: string) => void;
   onFork: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onRetryFailed?: (id: string, roundId?: number) => void;
+  isRoomClient?: boolean;
   swipeInfo?: { current: number; total: number };
   onSwitchSwipe?: (direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
+  onChoiceSelect?: (key: string, value: string) => void;
 }
 
 export const MessageItem: Component<MessageItemProps> = (props) => {
@@ -38,6 +44,62 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
   const [editContent, setEditContent] = createSignal('');
 
   const isUser = createMemo(() => props.message.sender === 'user');
+
+  // --- Streaming structured fields: use separate stable memos to avoid re-mounting ---
+  // This prevents the CollapsibleTag for thinking from being re-created when content streams.
+
+  /** Whether the message is using streaming structured fields (string_field_delta events). */
+  const streamingStructuredMode = createMemo(() => {
+    const sf = props.message.structuredFields;
+    return !!(sf && Object.keys(sf).length > 0);
+  });
+
+  const streamingObjectFields = createMemo(() => {
+    const sf = props.message.structuredFields;
+    if (!sf) return [];
+    return Object.entries(sf)
+      .filter(([key, value]) => key !== 'content' && value.trimStart().startsWith('{'))
+      .map(([key, value]) => {
+        try {
+          const parsed = JSON.parse(value);
+          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+            const stringEntries: Record<string, string> = {};
+            for (const [k, v] of Object.entries(parsed)) {
+              if (typeof v === 'string') stringEntries[k] = v;
+            }
+            return [key, stringEntries] as [string, Record<string, string>];
+          }
+        } catch { /* not valid JSON yet */ }
+        return null;
+      })
+      .filter((entry): entry is [string, Record<string, string>] => entry !== null);
+  });
+
+  const streamingStringAuxFields = createMemo(() => {
+    const sf = props.message.structuredFields;
+    if (!sf) return [];
+    return Object.entries(sf).filter(([key, value]) => key !== 'content' && !value.trimStart().startsWith('{'));
+  });
+
+  /** The streaming content text (from text_delta, stored in message.content). */
+  const streamingContentText = createMemo(() => {
+    if (!streamingStructuredMode()) return '';
+    const sf = props.message.structuredFields;
+    // If structuredFields itself has a 'content' key, use that; otherwise use message.content
+    return sf?.['content'] ?? props.message.content ?? '';
+  });
+
+  /** Structured response from full JSON (used for DB-loaded messages, not streaming). */
+  const structuredResponse = createMemo(() => {
+    if (streamingStructuredMode()) return null;
+    const content = props.message.content;
+    if (!content || !content.trimStart().startsWith('{')) return null;
+    return parseStructuredResponse(content);
+  });
+
+  const defaultExpanded = createMemo(() =>
+    props.formatConfig?.builtinRules.pseudoXml.defaultExpanded ?? true
+  );
 
   const badgeText = createMemo(() => {
     if (props.message.sender !== 'ai') return null;
@@ -52,15 +114,13 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
   });
 
   return (
-    <div class="group relative flex flex-col gap-2 w-full max-w-4xl mx-auto py-6 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl">
+    <div class="group relative flex flex-col gap-2 w-full max-w-4xl mx-auto py-6 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl backdrop-blur-sm">
       <div class={`flex items-start gap-4 ${isUser() ? 'flex-row-reverse' : ''}`}>
         <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-accent to-emerald-400 flex items-center justify-center text-white font-bold shrink-0 overflow-hidden shadow-sm">
           {props.message.avatar ? (
             <img src={props.message.avatar} alt="avatar" class="w-full h-full object-cover" />
-          ) : props.message.sender === 'user' ? (
-            'U'
           ) : (
-            'AI'
+            props.message.senderName.charAt(0) || (props.message.sender === 'user' ? 'U' : 'A')
           )}
         </div>
 
@@ -91,14 +151,80 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             when={isEditing()}
             fallback={
               <div class="text-mist-solid/80 leading-relaxed text-[15px] whitespace-pre-wrap font-sans break-words">
-                <MessageFormatRenderer
-                  nodes={parseMessageContent(
-                    props.message.content,
-                    props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
-                    props.worldBookKeywords ?? []
-                  )}
-                  defaultExpanded={props.formatConfig?.builtinRules.pseudoXml.defaultExpanded ?? true}
-                />
+                <Show
+                  when={streamingStructuredMode()}
+                  fallback={
+                    <Show
+                      when={structuredResponse()}
+                      fallback={
+                        <MessageFormatRenderer
+                          nodes={parseMessageContent(
+                            props.message.content,
+                            props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
+                            props.worldBookKeywords ?? []
+                          )}
+                          defaultExpanded={defaultExpanded()}
+                          onChoiceSelect={props.onChoiceSelect}
+                        />
+                      }
+                    >
+                      {(sr) => (
+                        <MessageFormatRenderer
+                          nodes={[sr()]}
+                          defaultExpanded={defaultExpanded()}
+                          onChoiceSelect={props.onChoiceSelect}
+                        />
+                      )}
+                    </Show>
+                  }
+                >
+                  {/* Streaming structured mode: render each field independently
+                      so that content delta updates don't re-mount the thinking CollapsibleTag */}
+                  <div class="structured-response">
+                    <For each={streamingStringAuxFields()}>
+                      {([key, value]) => (
+                        <CollapsibleTag
+                          tagName={key}
+                          children={[{ kind: 'text' as const, text: value }]}
+                          defaultExpanded={defaultExpanded()}
+                          onChoiceSelect={props.onChoiceSelect}
+                        />
+                      )}
+                    </For>
+                    <Show when={streamingContentText()}>
+                      <div class="whitespace-pre-wrap">
+                        <MessageFormatRenderer
+                          nodes={parseMessageContent(
+                            streamingContentText(),
+                            props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
+                            props.worldBookKeywords ?? []
+                          )}
+                          defaultExpanded={defaultExpanded()}
+                          onChoiceSelect={props.onChoiceSelect}
+                        />
+                      </div>
+                    </Show>
+                    <For each={streamingObjectFields()}>
+                      {([_key, entries]) => (
+                        <div class="flex flex-wrap gap-2 mt-3">
+                          <For each={Object.entries(entries)}>
+                            {([optKey, optValue]) => (
+                              <button
+                                class="px-4 py-2 bg-accent/20 border border-accent/30 rounded-lg text-sm text-mist-solid hover:bg-accent/30 transition-colors"
+                                onClick={() => {
+                                  props.onChoiceSelect?.(optKey, optValue);
+                                }}
+                              >
+                                <span class="text-accent/80 font-semibold mr-1">{optKey}</span>
+                                <span class="text-mist-solid/70">{optValue}</span>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
                 <Show when={props.message.isStreaming}>
                   <span class="inline-block w-[2px] h-[1em] bg-accent/70 ml-0.5 align-middle animate-pulse" />
                 </Show>
@@ -135,6 +261,17 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
 
           <Show when={props.message.error}>
             <div class="mt-3 text-xs text-red-300/90 whitespace-pre-wrap">{props.message.error}</div>
+          </Show>
+
+          <Show when={props.message.sender === 'ai' && !!props.message.error && !!props.message.roundId && !props.isRoomClient}>
+            <button
+              onClick={() => props.onRetryFailed?.(props.message.id, props.message.roundId)}
+              class="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/20 text-accent text-xs font-medium hover:bg-accent/30 transition-colors border border-accent/20"
+              title="自动重试"
+            >
+              <RefreshCw size={13} />
+              自动重试
+            </button>
           </Show>
 
           <Show when={props.message.sender === 'ai' && props.swipeInfo && props.swipeInfo!.total > 1}>
@@ -181,6 +318,17 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             >
               <GitFork size={14} />
             </button>
+            <button
+              onClick={() => {
+                if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                  props.onDelete?.(props.message.id);
+                }
+              }}
+              class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
+              title="删除"
+            >
+              <Trash2 size={14} />
+            </button>
           </Show>
           <Show when={!isUser()}>
             <button
@@ -206,6 +354,17 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
               title="分支"
             >
               <GitFork size={14} />
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                  props.onDelete?.(props.message.id);
+                }
+              }}
+              class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
+              title="删除"
+            >
+              <Trash2 size={14} />
             </button>
           </Show>
         </div>

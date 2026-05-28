@@ -1,19 +1,22 @@
 import { Component, For, Show, createSignal, createEffect } from 'solid-js';
 import { animate } from '../lib/animate';
-import type { FormatNode, TagNode, ItalicNode, QuoteNode, KeywordNode, CustomNode } from '../lib/messageFormatter';
+import type { FormatNode, TagNode, ItalicNode, QuoteNode, KeywordNode, CustomNode, StructuredResponseNode, StructuredField } from '../lib/messageFormatter';
+import { parseMessageContent, DEFAULT_FORMAT_CONFIG } from '../lib/messageFormatter';
 
 interface MessageFormatRendererProps {
   nodes: FormatNode[];
   defaultExpanded?: boolean;
+  onChoiceSelect?: (key: string, value: string) => void;
 }
 
 interface CollapsibleTagProps {
   tagName: string;
   children: FormatNode[];
   defaultExpanded: boolean;
+  onChoiceSelect?: (key: string, value: string) => void;
 }
 
-const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
+export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
   const [isExpanded, setIsExpanded] = createSignal(props.defaultExpanded);
   let contentRef: HTMLDivElement | undefined;
 
@@ -48,7 +51,7 @@ const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
       <Show when={isExpanded()}>
         <div ref={contentRef} style={{ overflow: 'hidden', height: '0px', opacity: 0 }}>
           <div class="pl-4 pt-1">
-            <MessageFormatRenderer nodes={props.children} defaultExpanded={props.defaultExpanded} />
+            <MessageFormatRenderer nodes={props.children} defaultExpanded={props.defaultExpanded} onChoiceSelect={props.onChoiceSelect} />
           </div>
         </div>
       </Show>
@@ -56,13 +59,79 @@ const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
   );
 };
 
-const renderNode = (node: FormatNode, _index: number, defaultExpanded: boolean) => {
+const StructuredResponseRenderer: Component<{
+  fields: Record<string, StructuredField>;
+  mainContentKey: string | null;
+  displayConfig: Record<string, { defaultCollapsed: boolean }>;
+  defaultExpanded: boolean;
+  onChoiceSelect?: (key: string, value: string) => void;
+}> = (props) => {
+  const fieldEntries = () => Object.entries(props.fields);
+
+  return (
+    <div class="structured-response">
+      <For each={fieldEntries()}>
+        {([key, field]) => {
+          const isCollapsed = () => props.displayConfig[key]?.defaultCollapsed ?? false;
+          return (
+            <Show
+              when={field.kind === 'string' && key !== props.mainContentKey}
+              fallback={
+                <Show when={field.kind === 'string' && key === props.mainContentKey}>
+                  <div class="whitespace-pre-wrap">
+                    <MessageFormatRenderer
+                      nodes={parseMessageContent((field as { kind: 'string'; value: string }).value, DEFAULT_FORMAT_CONFIG, [])}
+                      defaultExpanded={props.defaultExpanded}
+                      onChoiceSelect={props.onChoiceSelect}
+                    />
+                  </div>
+                </Show>
+              }
+            >
+              <MessageFormatRenderer
+                nodes={[{ kind: 'tag', tagName: key, children: [{ kind: 'text', text: (field as { kind: 'string'; value: string }).value }] }]}
+                defaultExpanded={!isCollapsed()}
+                onChoiceSelect={props.onChoiceSelect}
+              />
+            </Show>
+          );
+        }}
+      </For>
+      <For each={fieldEntries()}>
+        {([_key, field]) => (
+          <Show when={field.kind === 'object'}>
+            <div class="flex flex-wrap gap-2 mt-3">
+              <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
+                {([optKey, optValue]) => (
+                  <button
+                    class="px-4 py-2 bg-accent/20 border border-accent/30 rounded-lg text-sm text-mist-solid hover:bg-accent/30 transition-colors"
+                    onClick={() => {
+                      props.onChoiceSelect?.(optKey, optValue);
+                    }}
+                  >
+                    <span class="text-accent/80 font-semibold mr-1">{optKey}</span>
+                    <span class="text-mist-solid/70">{optValue}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+        )}
+      </For>
+    </div>
+  );
+};
+
+const renderNode = (node: FormatNode, _index: number, defaultExpanded: boolean, onChoiceSelect?: (key: string, value: string) => void) => {
   switch (node.kind) {
-    case 'text':
-      return <span>{(node as FormatNode & { text: string }).text}</span>;
+    case 'text': {
+      const rawText = (node as FormatNode & { text: string }).text;
+      const normalizedText = rawText.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+      return <span class="whitespace-pre-wrap">{normalizedText}</span>;
+    }
     case 'tag': {
       const tag = node as TagNode;
-      return <CollapsibleTag tagName={tag.tagName} children={tag.children} defaultExpanded={defaultExpanded} />;
+      return <CollapsibleTag tagName={tag.tagName} children={tag.children} defaultExpanded={defaultExpanded} onChoiceSelect={onChoiceSelect} />;
     }
     case 'italic': {
       const italic = node as ItalicNode;
@@ -90,6 +159,18 @@ const renderNode = (node: FormatNode, _index: number, defaultExpanded: boolean) 
         </span>
       );
     }
+    case 'structured_response': {
+      const sr = node as StructuredResponseNode;
+      return (
+        <StructuredResponseRenderer
+          fields={sr.fields}
+          mainContentKey={sr.mainContentKey}
+          displayConfig={sr.displayConfig}
+          defaultExpanded={defaultExpanded}
+          onChoiceSelect={onChoiceSelect}
+        />
+      );
+    }
     default:
       return null;
   }
@@ -98,7 +179,7 @@ const renderNode = (node: FormatNode, _index: number, defaultExpanded: boolean) 
 export const MessageFormatRenderer: Component<MessageFormatRendererProps> = (props) => {
   return (
     <For each={props.nodes}>
-      {(node, i) => renderNode(node, i(), props.defaultExpanded ?? true)}
+      {(node, i) => renderNode(node, i(), props.defaultExpanded ?? true, props.onChoiceSelect)}
     </For>
   );
 };

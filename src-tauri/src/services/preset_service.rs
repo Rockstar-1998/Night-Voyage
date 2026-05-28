@@ -5,7 +5,7 @@ use crate::models::{PresetDetail, PresetSemanticGroupRecord, PresetSummary};
 use crate::repositories::preset_repository::PresetRepository;
 use crate::utils::now_ts;
 use crate::validators::preset_validator::{
-    merge_materialized_blocks, merge_materialized_examples, missing_locked_block_snapshot,
+    merge_materialized_blocks, missing_locked_block_snapshot,
     normalize_beta_features_impl, normalize_category_impl, normalize_max_output_tokens_impl,
     normalize_optional_text_impl, normalize_penalty_impl, normalize_required_impl,
     normalize_response_mode_impl, normalize_temperature_impl,
@@ -13,7 +13,7 @@ use crate::validators::preset_validator::{
     normalize_top_p_impl, PresetValidator,
 };
 use crate::validators::preset_validator::{
-    PresetExampleInput, PresetPromptBlockInput, PresetProviderOverrideInput,
+    PresetPromptBlockInput, PresetProviderOverrideInput,
     PresetSemanticGroupInput, PresetSemanticOptionInput, PresetStopSequenceInput,
 };
 
@@ -33,6 +33,8 @@ pub struct PortablePresetMeta {
     pub thinking_enabled: Option<bool>,
     pub thinking_budget_tokens: Option<i64>,
     pub beta_features: Option<Vec<String>>,
+    pub structured_output_schema: Option<String>,
+    pub structured_output_display: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -44,7 +46,6 @@ struct PortablePresetFile {
     preset: PortablePresetMeta,
     semantic_groups: Vec<PresetSemanticGroupInput>,
     blocks: Vec<PresetPromptBlockInput>,
-    examples: Vec<PresetExampleInput>,
     stop_sequences: Vec<PresetStopSequenceInput>,
     provider_overrides: Vec<PresetProviderOverrideInput>,
 }
@@ -88,6 +89,8 @@ impl<'a> PresetService<'a> {
                 thinking_enabled: detail.preset.thinking_enabled,
                 thinking_budget_tokens: detail.preset.thinking_budget_tokens,
                 beta_features: detail.preset.beta_features,
+                structured_output_schema: detail.preset.structured_output_schema,
+                structured_output_display: detail.preset.structured_output_display,
             },
             semantic_groups: detail
                 .semantic_groups
@@ -99,12 +102,6 @@ impl<'a> PresetService<'a> {
                 .into_iter()
                 .filter(|block| block.semantic_option_id.is_none())
                 .map(Self::preset_block_record_to_input)
-                .collect(),
-            examples: detail
-                .examples
-                .into_iter()
-                .filter(|example| example.semantic_option_id.is_none())
-                .map(Self::preset_example_record_to_input)
                 .collect(),
             stop_sequences: detail
                 .stop_sequences
@@ -145,8 +142,9 @@ impl<'a> PresetService<'a> {
             portable.preset.thinking_enabled,
             portable.preset.thinking_budget_tokens,
             portable.preset.beta_features,
+            portable.preset.structured_output_schema,
+            portable.preset.structured_output_display,
             Some(portable.blocks),
-            Some(portable.examples),
             Some(portable.stop_sequences),
             Some(portable.provider_overrides),
             Some(portable.semantic_groups),
@@ -169,8 +167,9 @@ impl<'a> PresetService<'a> {
         thinking_enabled: Option<bool>,
         thinking_budget_tokens: Option<i64>,
         beta_features: Option<Vec<String>>,
+        structured_output_schema: Option<String>,
+        structured_output_display: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
-        examples: Option<Vec<PresetExampleInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
         semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
@@ -188,8 +187,9 @@ impl<'a> PresetService<'a> {
         let thinking_enabled = normalize_thinking_enabled_impl(thinking_enabled)?;
         let thinking_budget_tokens = normalize_thinking_budget_tokens_impl(thinking_budget_tokens)?;
         let beta_features = normalize_beta_features_impl(beta_features)?;
+        let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
+        let structured_output_display = normalize_optional_text_impl(structured_output_display);
         let direct_blocks = PresetValidator::validate_blocks(blocks)?;
-        let direct_examples = PresetValidator::validate_examples(examples)?;
         let semantic_groups = PresetValidator::validate_semantic_groups(semantic_groups)?;
         let stop_sequences = PresetValidator::validate_stop_sequences(stop_sequences)?;
         let provider_overrides = PresetValidator::validate_provider_overrides(provider_overrides)?;
@@ -215,6 +215,8 @@ impl<'a> PresetService<'a> {
             thinking_enabled,
             thinking_budget_tokens,
             beta_features_json.as_deref(),
+            structured_output_schema.as_deref(),
+            structured_output_display.as_deref(),
             now,
         )
         .await?;
@@ -229,10 +231,7 @@ impl<'a> PresetService<'a> {
                 &semantic_materialization.blocks,
             );
         let blocks = merge_materialized_blocks(&direct_blocks, semantic_materialization.blocks)?;
-        let examples =
-            merge_materialized_examples(&direct_examples, semantic_materialization.examples);
         PresetRepository::replace_blocks(&mut tx, preset_id, &blocks, now).await?;
-        PresetRepository::replace_examples(&mut tx, preset_id, &examples, now).await?;
         PresetRepository::replace_stop_sequences(&mut tx, preset_id, &stop_sequences, now).await?;
         PresetRepository::replace_provider_overrides(&mut tx, preset_id, &provider_overrides, now)
             .await?;
@@ -257,8 +256,9 @@ impl<'a> PresetService<'a> {
         thinking_enabled: Option<bool>,
         thinking_budget_tokens: Option<i64>,
         beta_features: Option<Vec<String>>,
+        structured_output_schema: Option<String>,
+        structured_output_display: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
-        examples: Option<Vec<PresetExampleInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
         semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
@@ -276,12 +276,10 @@ impl<'a> PresetService<'a> {
         let thinking_enabled = normalize_thinking_enabled_impl(thinking_enabled)?;
         let thinking_budget_tokens = normalize_thinking_budget_tokens_impl(thinking_budget_tokens)?;
         let beta_features = normalize_beta_features_impl(beta_features)?;
+        let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
+        let structured_output_display = normalize_optional_text_impl(structured_output_display);
         let direct_blocks_input = match blocks {
             Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks))?),
-            None => None,
-        };
-        let direct_examples_input = match examples {
-            Some(examples) => Some(PresetValidator::validate_examples(Some(examples))?),
             None => None,
         };
         let semantic_groups_input = match semantic_groups {
@@ -313,10 +311,6 @@ impl<'a> PresetService<'a> {
             Some(blocks) => blocks,
             None => PresetRepository::load_existing_normalized_blocks(&mut tx, id, false).await?,
         };
-        let direct_examples = match direct_examples_input {
-            Some(examples) => examples,
-            None => PresetRepository::load_existing_normalized_examples(&mut tx, id, false).await?,
-        };
         let semantic_materialization = match semantic_groups_input.as_ref() {
             Some(semantic_groups) => {
                 PresetRepository::replace_semantic_groups(&mut tx, id, semantic_groups, now).await?
@@ -330,8 +324,6 @@ impl<'a> PresetService<'a> {
             );
         let final_blocks =
             merge_materialized_blocks(&direct_blocks, semantic_materialization.blocks)?;
-        let final_examples =
-            merge_materialized_examples(&direct_examples, semantic_materialization.examples);
 
         let beta_features_json = beta_features
             .as_ref()
@@ -355,12 +347,13 @@ impl<'a> PresetService<'a> {
             thinking_enabled,
             thinking_budget_tokens,
             beta_features_json.as_deref(),
+            structured_output_schema.as_deref(),
+            structured_output_display.as_deref(),
             now,
         )
         .await?;
 
         PresetRepository::replace_blocks(&mut tx, id, &final_blocks, now).await?;
-        PresetRepository::replace_examples(&mut tx, id, &final_examples, now).await?;
 
         if let Some(stop_sequences) = stop_sequences {
             PresetRepository::replace_stop_sequences(&mut tx, id, &stop_sequences, now).await?;
@@ -461,13 +454,7 @@ impl<'a> PresetService<'a> {
                     .map(Self::semantic_option_block_record_to_input)
                     .collect(),
             ),
-            examples: Some(
-                option
-                    .examples
-                    .into_iter()
-                    .map(Self::semantic_option_example_record_to_input)
-                    .collect(),
-            ),
+            examples: Some(vec![]),
             children: Some(
                 option
                     .children
@@ -496,17 +483,6 @@ impl<'a> PresetService<'a> {
         }
     }
 
-    fn semantic_option_example_record_to_input(
-        example: crate::models::PresetSemanticOptionExampleRecord,
-    ) -> PresetExampleInput {
-        PresetExampleInput {
-            role: example.role,
-            content: example.content,
-            sort_order: Some(example.sort_order),
-            is_enabled: Some(example.is_enabled),
-        }
-    }
-
     fn preset_block_record_to_input(
         block: crate::models::PresetPromptBlockRecord,
     ) -> PresetPromptBlockInput {
@@ -522,17 +498,6 @@ impl<'a> PresetService<'a> {
             lock_reason: block.lock_reason,
             exclusive_group_key: block.exclusive_group_key,
             exclusive_group_label: block.exclusive_group_label,
-        }
-    }
-
-    fn preset_example_record_to_input(
-        example: crate::models::PresetExampleRecord,
-    ) -> PresetExampleInput {
-        PresetExampleInput {
-            role: example.role,
-            content: example.content,
-            sort_order: Some(example.sort_order),
-            is_enabled: Some(example.is_enabled),
         }
     }
 
@@ -562,6 +527,8 @@ impl<'a> PresetService<'a> {
             thinking_enabled_override: provider_override.thinking_enabled_override,
             thinking_budget_tokens_override: provider_override.thinking_budget_tokens_override,
             beta_features_override: provider_override.beta_features_override,
+            structured_output_schema_override: provider_override.structured_output_schema_override,
+            structured_output_display_override: provider_override.structured_output_display_override,
         }
     }
 }

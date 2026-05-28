@@ -96,7 +96,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
 
   return (
     <div class="h-full w-full flex flex-col bg-transparent overflow-hidden isolate relative animate-in fade-in slide-in-from-right-4 duration-300">
-      <div class="p-8 flex items-center justify-between border-b border-white/5 bg-xuanqing/20">
+      <div class="p-8 flex items-center justify-between border-b border-white/5 bg-transparent">
         <div class="flex items-center gap-4 flex-1">
           <IconButton onClick={props.onBack} label="返回世界书列表" size="lg" class="group">
             <ArrowLeft size={18} class="group-hover:-translate-x-0.5 transition-transform" />

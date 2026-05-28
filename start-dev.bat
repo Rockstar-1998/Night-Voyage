@@ -48,8 +48,9 @@ set "DISPLAY_JOBS=auto"
 set "CARGO_TARGET_DIR=%ROOT%\src-tauri\target"
 set "RELEASE_EXE=%CARGO_TARGET_DIR%\release\night-voyage.exe"
 set "DIST_DIR=%ROOT%\dist"
-set "INSTANCE_A=%DIST_DIR%\instance-a"
-set "INSTANCE_B=%DIST_DIR%\instance-b"
+set "INSTANCES_DIR=%CACHE_DIR%\instances"
+set "INSTANCE_A=%INSTANCES_DIR%\instance-a"
+set "INSTANCE_B=%INSTANCES_DIR%\instance-b"
 
 if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%"
 if not exist "%CARGO_TARGET_DIR%" mkdir "%CARGO_TARGET_DIR%"
@@ -113,6 +114,7 @@ echo [Night Voyage] Release build succeeded.
 :: ============================================================
 echo [Night Voyage] Creating isolated instances...
 
+if not exist "%INSTANCES_DIR%" mkdir "%INSTANCES_DIR%"
 if not exist "%INSTANCE_A%" mkdir "%INSTANCE_A%"
 if not exist "%INSTANCE_B%" mkdir "%INSTANCE_B%"
 
@@ -163,11 +165,11 @@ echo   Build Complete!
 echo ========================================
 echo.
 echo   Instance A (separate DB):
-    %INSTANCE_A%\night-voyage.exe
+echo     "%INSTANCE_A%\night-voyage.exe"
 
 echo.
 echo   Instance B (separate DB):
-    %INSTANCE_B%\night-voyage.exe
+echo     "%INSTANCE_B%\night-voyage.exe"
 
 echo.
 echo   Run them manually to test multiplayer.

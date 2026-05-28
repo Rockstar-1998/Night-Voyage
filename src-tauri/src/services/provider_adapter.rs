@@ -13,19 +13,17 @@ use crate::{
 pub struct ProviderCapabilityMatrix {
     pub provider_kind: String,
     pub supports_system_message: bool,
-    pub supports_example_messages: bool,
-    pub supports_prefill_seed: bool,
     pub supports_stop_sequences: bool,
     pub supports_temperature: bool,
     pub supports_top_p: bool,
     pub supports_top_k: bool,
     pub supports_presence_penalty: bool,
     pub supports_frequency_penalty: bool,
-    pub supports_response_mode_json_object: bool,
     pub supports_tools: bool,
     pub supports_thinking: bool,
     pub supports_image_input: bool,
     pub supports_thinking_config: bool,
+    pub supports_structured_json_output: bool,
 }
 
 impl ProviderCapabilityMatrix {
@@ -34,36 +32,47 @@ impl ProviderCapabilityMatrix {
             "openai_compatible" => Ok(Self {
                 provider_kind: provider_kind.to_string(),
                 supports_system_message: true,
-                supports_example_messages: true,
-                supports_prefill_seed: false,
                 supports_stop_sequences: true,
                 supports_temperature: true,
                 supports_top_p: true,
                 supports_top_k: true,
                 supports_presence_penalty: true,
                 supports_frequency_penalty: true,
-                supports_response_mode_json_object: true,
                 supports_tools: false,
                 supports_thinking: false,
                 supports_image_input: false,
                 supports_thinking_config: false,
+                supports_structured_json_output: true,
             }),
             "anthropic" => Ok(Self {
                 provider_kind: provider_kind.to_string(),
                 supports_system_message: true,
-                supports_example_messages: true,
-                supports_prefill_seed: true,
                 supports_stop_sequences: true,
                 supports_temperature: true,
                 supports_top_p: true,
                 supports_top_k: false,
                 supports_presence_penalty: false,
                 supports_frequency_penalty: false,
-                supports_response_mode_json_object: false,
                 supports_tools: true,
                 supports_thinking: true,
                 supports_image_input: true,
                 supports_thinking_config: true,
+                supports_structured_json_output: true,
+            }),
+            "test_no_structured_json" => Ok(Self {
+                provider_kind: provider_kind.to_string(),
+                supports_system_message: true,
+                supports_stop_sequences: true,
+                supports_temperature: true,
+                supports_top_p: true,
+                supports_top_k: false,
+                supports_presence_penalty: false,
+                supports_frequency_penalty: false,
+                supports_tools: false,
+                supports_thinking: false,
+                supports_image_input: false,
+                supports_thinking_config: false,
+                supports_structured_json_output: false,
             }),
             other => Err(format!(
                 "Prompt Compiler V1 暂不支持 provider_kind='{}' 的请求适配",
@@ -76,11 +85,6 @@ impl ProviderCapabilityMatrix {
         vec![
             format!("provider_kind={}", self.provider_kind),
             format!("supports_system_message={}", self.supports_system_message),
-            format!(
-                "supports_example_messages={}",
-                self.supports_example_messages
-            ),
-            format!("supports_prefill_seed={}", self.supports_prefill_seed),
             format!("supports_stop_sequences={}", self.supports_stop_sequences),
             format!("supports_temperature={}", self.supports_temperature),
             format!("supports_top_p={}", self.supports_top_p),
@@ -93,14 +97,14 @@ impl ProviderCapabilityMatrix {
                 "supports_frequency_penalty={}",
                 self.supports_frequency_penalty
             ),
-            format!(
-                "supports_response_mode_json_object={}",
-                self.supports_response_mode_json_object
-            ),
             format!("supports_tools={}", self.supports_tools),
             format!("supports_thinking={}", self.supports_thinking),
             format!("supports_image_input={}", self.supports_image_input),
             format!("supports_thinking_config={}", self.supports_thinking_config),
+            format!(
+                "supports_structured_json_output={}",
+                self.supports_structured_json_output
+            ),
         ]
     }
 }
@@ -145,19 +149,12 @@ pub fn build_llm_chat_request(
         .capability_checks
         .push(format!("thinking_enabled={}", thinking.is_some()));
 
-    let system = merge_system_blocks(&result.system_blocks);
+    let mut system = merge_system_blocks(&result.system_blocks);
     let mut messages = Vec::new();
-    messages.extend(result.example_blocks.iter().map(block_to_llm_message));
     messages.extend(result.history_blocks.iter().map(block_to_llm_message));
     messages.push(block_to_llm_message(&result.current_user_block));
 
-    if capabilities.supports_prefill_seed {
-        if let Some(prefill_seed) = result.prefill_seed.as_ref() {
-            messages.push(block_to_llm_message(prefill_seed));
-        }
-    }
-
-    Ok(LlmChatRequest {
+    let request = LlmChatRequest {
         provider_kind: provider_kind.to_string(),
         model: model.to_string(),
         system,
@@ -191,7 +188,17 @@ pub fn build_llm_chat_request(
         tool_choice: None,
         thinking,
         beta_features: result.params.beta_features.clone(),
-    })
+        structured_output_schema: result.params.structured_output_schema.clone(),
+        structured_output_display: result.params.structured_output_display.clone(),
+    };
+
+    if result.params.response_mode.as_deref() == Some("structured_json")
+        && !capabilities.supports_structured_json_output
+    {
+        return Err("当前 provider 不支持结构化 JSON 输出 (structured_json)".to_string());
+    }
+
+    Ok(request)
 }
 
 pub fn build_provider_http_request(
@@ -218,16 +225,8 @@ fn validate_prompt_for_provider(
     result: &mut PromptCompileResult,
     capabilities: &ProviderCapabilityMatrix,
 ) -> Result<(), String> {
-    if !capabilities.supports_prefill_seed && result.prefill_seed.is_some() {
-        return Err("当前 provider 不支持 prefill seed".to_string());
-    }
-
     if !capabilities.supports_system_message && !result.system_blocks.is_empty() {
         return Err("当前 provider 不支持 system message".to_string());
-    }
-
-    if !capabilities.supports_example_messages && !result.example_blocks.is_empty() {
-        return Err("当前 provider 不支持 example messages".to_string());
     }
 
     if !capabilities.supports_stop_sequences && !result.params.stop_sequences.is_empty() {
@@ -274,10 +273,22 @@ fn resolve_thinking_config(
 }
 
 fn merge_system_blocks(blocks: &[crate::services::prompt_compiler::PromptBlock]) -> Vec<String> {
-    blocks
-        .iter()
-        .map(|block| block.content.trim().to_string())
-        .filter(|content| !content.is_empty())
+    use crate::services::prompt_compiler::PromptBlockKind;
+    let mut groups: Vec<(PromptBlockKind, Vec<String>)> = Vec::new();
+    for block in blocks {
+        let content = block.content.trim().to_string();
+        if content.is_empty() {
+            continue;
+        }
+        if let Some(group) = groups.iter_mut().find(|(kind, _)| *kind == block.kind) {
+            group.1.push(content);
+        } else {
+            groups.push((block.kind.clone(), vec![content]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, contents)| contents.join("\n\n"))
         .collect()
 }
 
@@ -298,18 +309,22 @@ fn flatten_request_to_legacy_chat_messages(
 ) -> Result<Vec<ChatMessage>, String> {
     let mut messages = Vec::new();
 
-    let merged_system: String = request
+    // OpenAI-compatible endpoints here only accept one leading system message.
+    let system_text = request
         .system
         .iter()
-        .map(|s| s.as_str())
+        .map(|system_text| system_text.trim())
+        .filter(|system_text| !system_text.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let merged_system = merged_system.trim().to_string();
-    if !merged_system.is_empty() {
-        messages.push(ChatMessage::new("system", &merged_system));
+    if !system_text.is_empty() {
+        messages.push(ChatMessage::new("system", system_text));
     }
 
     for message in &request.messages {
+        if message.role == LlmRole::System {
+            continue;
+        }
         messages.push(ChatMessage::new(
             message.role.as_str(),
             extract_text_only_content(message)?,
@@ -393,14 +408,17 @@ fn build_openai_http_request(
         body.insert("max_tokens".to_string(), json!(max_tokens));
     }
     match request.response_mode.as_deref() {
-        None | Some("text") => {}
-        Some("json_object") => {
-            body.insert(
-                "response_format".to_string(),
-                json!({
-                    "type": "json_object",
-                }),
-            );
+        None | Some("pseudo_xml") => {}
+        Some("structured_json") => {
+            match request.structured_output_schema.as_deref() {
+                Some(schema_json) if !schema_json.trim().is_empty() => {
+                    let response_format = crate::llm::build_openai_structured_json_response_format(schema_json)?;
+                    body.insert("response_format".to_string(), response_format);
+                }
+                _ => {
+                    return Err("structured_json 模式必须提供 JSON Schema（structured_output_schema 不能为空）".to_string());
+                }
+            }
         }
         Some(other) => return Err(format!("unsupported compiled response mode: {other}")),
     }
@@ -439,6 +457,27 @@ fn build_openai_http_request(
     })
 }
 
+fn inject_additional_properties_false(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if map.get("type").and_then(|v| v.as_str()) == Some("object") {
+                if !map.contains_key("additionalProperties") {
+                    map.insert("additionalProperties".to_string(), Value::Bool(false));
+                }
+            }
+            for (_, child) in map.iter_mut() {
+                inject_additional_properties_false(child);
+            }
+        }
+        Value::Array(arr) => {
+            for child in arr.iter_mut() {
+                inject_additional_properties_false(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn build_anthropic_http_request(
     request: &LlmChatRequest,
     base_url: &str,
@@ -475,6 +514,27 @@ fn build_anthropic_http_request(
                     .collect(),
             ),
         );
+    }
+    if request.response_mode.as_deref() == Some("structured_json") {
+        match request.structured_output_schema.as_deref() {
+            Some(schema_json) if !schema_json.trim().is_empty() => {
+                let mut schema_value: serde_json::Value = serde_json::from_str(schema_json)
+                    .map_err(|e| format!("invalid JSON Schema: {}", e))?;
+                inject_additional_properties_false(&mut schema_value);
+                body.insert(
+                    "output_config".to_string(),
+                    json!({
+                        "format": {
+                            "type": "json_schema",
+                            "schema": schema_value,
+                        }
+                    }),
+                );
+            }
+            _ => {
+                return Err("structured_json 模式必须提供 JSON Schema（structured_output_schema 不能为空）".to_string());
+            }
+        }
     }
     if let Some(temperature) = request.temperature {
         body.insert("temperature".to_string(), json!(temperature));
@@ -522,7 +582,6 @@ fn build_anthropic_http_request(
             },
         );
     }
-
     let messages = request
         .messages
         .iter()
@@ -726,10 +785,8 @@ mod tests {
     fn empty_result() -> PromptCompileResult {
         PromptCompileResult {
             system_blocks: vec![],
-            example_blocks: vec![],
             history_blocks: vec![],
             current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "当前输入"),
-            prefill_seed: None,
             output_validators: vec![],
             params: CompiledSamplingParams::default(),
             debug: PromptCompileDebugReport::default(),
@@ -739,22 +796,15 @@ mod tests {
     #[test]
     fn adapter_keeps_history_outside_system() {
         let mut result = PromptCompileResult {
-            system_blocks: vec![block(
-                PromptBlockKind::PresetRule,
-                PromptRole::System,
-                "系统规则",
-            )],
-            example_blocks: vec![],
-            history_blocks: vec![
-                block(PromptBlockKind::RecentHistory, PromptRole::User, "旧问题"),
-                block(
-                    PromptBlockKind::RecentHistory,
-                    PromptRole::Assistant,
-                    "旧回答",
-                ),
+            system_blocks: vec![
+                block(PromptBlockKind::PresetRule, PromptRole::System, "system-a"),
+                block(PromptBlockKind::CharacterBase, PromptRole::System, "system-b"),
             ],
-            current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "当前输入"),
-            prefill_seed: None,
+            history_blocks: vec![
+                block(PromptBlockKind::RecentHistory, PromptRole::User, "user-old"),
+                block(PromptBlockKind::RecentHistory, PromptRole::Assistant, "assistant-old"),
+            ],
+            current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "current-user"),
             output_validators: vec![],
             params: CompiledSamplingParams::default(),
             debug: PromptCompileDebugReport::default(),
@@ -766,83 +816,26 @@ mod tests {
 
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].role, "system");
-        assert_eq!(messages[0].content, "系统规则");
+        assert_eq!(messages[0].content, "system-a\n\nsystem-b");
         assert_eq!(messages[1].role, "user");
-        assert_eq!(messages[1].content, "旧问题");
+        assert_eq!(messages[1].content, "user-old");
         assert_eq!(messages[2].role, "assistant");
-        assert_eq!(messages[2].content, "旧回答");
+        assert_eq!(messages[2].content, "assistant-old");
         assert_eq!(messages[3].role, "user");
-        assert_eq!(messages[3].content, "当前输入");
+        assert_eq!(messages[3].content, "current-user");
     }
 
     #[test]
-    fn adapter_rejects_prefill_for_openai_compatible_v1() {
-        let mut result = PromptCompileResult {
-            system_blocks: vec![],
-            example_blocks: vec![],
-            history_blocks: vec![],
-            current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "当前输入"),
-            prefill_seed: Some(block(
-                PromptBlockKind::PrefillSeed,
-                PromptRole::Assistant,
-                "prefill",
-            )),
-            output_validators: vec![],
-            params: CompiledSamplingParams::default(),
-            debug: PromptCompileDebugReport::default(),
-        };
+    fn adapter_empty_system_produces_no_system_message() {
+        let mut result = empty_result();
 
-        let error =
+        let messages =
             adapt_prompt_compile_result_to_openai_messages(&mut result, "openai_compatible")
-                .expect_err("prefill should fail");
+                .expect("adapter should succeed");
 
-        assert!(error.contains("prefill"));
-    }
-
-    #[test]
-    fn anthropic_request_keeps_prefill_as_last_assistant_message() {
-        let mut result = PromptCompileResult {
-            system_blocks: vec![block(
-                PromptBlockKind::PresetRule,
-                PromptRole::System,
-                "系统规则",
-            )],
-            example_blocks: vec![],
-            history_blocks: vec![block(
-                PromptBlockKind::RecentHistory,
-                PromptRole::User,
-                "旧问题",
-            )],
-            current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "当前输入"),
-            prefill_seed: Some(block(
-                PromptBlockKind::PrefillSeed,
-                PromptRole::Assistant,
-                "开头前缀",
-            )),
-            output_validators: vec![],
-            params: CompiledSamplingParams {
-                max_output_tokens: Some(256),
-                ..CompiledSamplingParams::default()
-            },
-            debug: PromptCompileDebugReport::default(),
-        };
-
-        let request = build_llm_chat_request(
-            &mut result,
-            "anthropic",
-            "claude-sonnet-4-5",
-            true,
-            Some(0.3),
-            None,
-        )
-        .expect("anthropic request should build");
-
-        assert_eq!(request.system, vec!["系统规则".to_string()]);
-        assert_eq!(request.messages.len(), 3);
-        assert_eq!(request.messages[2].role, LlmRole::Assistant);
-        assert_eq!(request.messages[2].first_text(), Some("开头前缀"));
-        assert_eq!(request.max_output_tokens, Some(256));
-        assert_eq!(request.temperature, Some(0.3));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "当前输入");
     }
 
     #[test]
@@ -917,13 +910,15 @@ mod tests {
             top_k: None,
             presence_penalty: None,
             frequency_penalty: None,
-            response_mode: Some("text".to_string()),
+            response_mode: Some("pseudo_xml".to_string()),
             stop_sequences: vec!["END".to_string()],
             stream: true,
             tools: vec![],
             tool_choice: None,
             thinking: None,
             beta_features: vec![],
+            structured_output_schema: None,
+            structured_output_display: None,
         };
 
         let http_request =
@@ -985,10 +980,227 @@ mod tests {
             tool_choice: None,
             thinking: None,
             beta_features: vec![],
+            structured_output_schema: None,
+            structured_output_display: None,
         };
 
         let error = build_provider_http_request(&request, "https://api.openai.com", "key")
             .expect_err("non-text openai request should fail");
         assert!(error.contains("纯文本"));
+    }
+
+    #[test]
+    fn anthropic_structured_json_request_sets_output_config() {
+        let request = LlmChatRequest {
+            provider_kind: "anthropic".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            system: vec!["系统规则".to_string()],
+            messages: vec![LlmMessage::text(LlmRole::User, "你好")],
+            temperature: None,
+            max_output_tokens: Some(256),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            response_mode: Some("structured_json".to_string()),
+            stop_sequences: vec![],
+            stream: false,
+            tools: vec![],
+            tool_choice: None,
+            thinking: None,
+            beta_features: vec![],
+            structured_output_schema: Some(r#"{"type":"object","properties":{"thinking":{"type":"string","description":"模型的内部推理过程"},"text":{"type":"string","description":"叙事正文"},"choices":{"type":"object","description":"玩家可选的行动选项","additionalProperties":{"type":"string"}}},"required":["thinking","text"]}"#.to_string()),
+            structured_output_display: None,
+        };
+
+        let http_request =
+            build_provider_http_request(&request, "https://api.anthropic.com", "test-key")
+                .expect("structured_json anthropic request should build");
+
+        assert!(
+            http_request.body.get("tools").is_none(),
+            "tools should not be present with native structured outputs"
+        );
+        assert!(
+            http_request.body.get("tool_choice").is_none(),
+            "tool_choice should not be present with native structured outputs"
+        );
+
+        let output_config = http_request
+            .body
+            .get("output_config")
+            .expect("output_config should exist");
+        let format = output_config
+            .get("format")
+            .expect("output_config.format should exist");
+        assert_eq!(
+            format.get("type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        let schema = format
+            .get("schema")
+            .expect("format should have schema");
+        assert_eq!(schema.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(schema.get("properties").and_then(|v| v.as_object()).is_some());
+        assert!(schema
+            .get("properties")
+            .and_then(|v| v.get("choices"))
+            .is_some());
+
+        assert_eq!(
+            schema.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(false),
+            "top-level schema should have additionalProperties: false auto-injected"
+        );
+
+        let choices = schema
+            .get("properties")
+            .and_then(|v| v.get("choices"))
+            .expect("choices should exist");
+        assert!(
+            choices.get("additionalProperties").and_then(|v| v.as_object()).is_some(),
+            "existing additionalProperties should not be overwritten"
+        );
+
+        let system_array = http_request
+            .body
+            .get("system")
+            .and_then(|v| v.as_array())
+            .expect("system should be an array");
+        assert_eq!(system_array.len(), 1, "system should only contain the original system text, no tool_use instruction");
+    }
+
+    #[test]
+    fn openai_structured_json_request_sets_json_schema_format() {
+        let request = LlmChatRequest {
+            provider_kind: "openai_compatible".to_string(),
+            model: "gpt-4o".to_string(),
+            system: vec![],
+            messages: vec![LlmMessage::text(LlmRole::User, "你好")],
+            temperature: None,
+            max_output_tokens: Some(256),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            response_mode: Some("structured_json".to_string()),
+            stop_sequences: vec![],
+            stream: false,
+            tools: vec![],
+            tool_choice: None,
+            thinking: None,
+            beta_features: vec![],
+            structured_output_schema: Some(r#"{"type":"object","properties":{"thinking":{"type":"string","description":"模型的内部推理过程"},"text":{"type":"string","description":"回复正文"}},"required":["thinking","text"]}"#.to_string()),
+            structured_output_display: None,
+        };
+
+        let http_request =
+            build_provider_http_request(&request, "https://api.openai.com", "test-key")
+                .expect("structured_json openai request should build");
+
+        let response_format = http_request
+            .body
+            .get("response_format")
+            .expect("response_format should exist");
+        assert_eq!(
+            response_format.get("type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+
+        let json_schema = response_format
+            .get("json_schema")
+            .expect("json_schema should exist");
+        assert_eq!(
+            json_schema.get("name").and_then(|v| v.as_str()),
+            Some("night_voyage_response")
+        );
+        assert_eq!(
+            json_schema.get("strict").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let schema = json_schema
+            .get("schema")
+            .expect("schema should exist");
+        assert_eq!(schema.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(schema.get("properties").and_then(|v| v.as_object()).is_some());
+        assert!(schema.get("properties").and_then(|v| v.get("thinking")).is_some());
+        assert!(schema.get("properties").and_then(|v| v.get("text")).is_some());
+    }
+
+    #[test]
+    fn structured_json_rejected_for_unsupported_provider() {
+        let mut result = empty_result();
+        result.params.response_mode = Some("structured_json".to_string());
+
+        let error = build_llm_chat_request(
+            &mut result,
+            "test_no_structured_json",
+            "test-model",
+            false,
+            None,
+            None,
+        )
+        .expect_err("structured_json should be rejected for unsupported provider");
+
+        assert!(error.contains("structured_json"));
+    }
+
+    #[test]
+    fn structured_json_without_schema_is_rejected_openai() {
+        let request = LlmChatRequest {
+            provider_kind: "openai_compatible".to_string(),
+            model: "gpt-4o".to_string(),
+            system: vec![],
+            messages: vec![LlmMessage::text(LlmRole::User, "你好")],
+            temperature: None,
+            max_output_tokens: Some(256),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            response_mode: Some("structured_json".to_string()),
+            stop_sequences: vec![],
+            stream: false,
+            tools: vec![],
+            tool_choice: None,
+            thinking: None,
+            beta_features: vec![],
+            structured_output_schema: None,
+            structured_output_display: None,
+        };
+
+        let error = build_provider_http_request(&request, "https://api.openai.com", "test-key")
+            .expect_err("structured_json without schema should be rejected");
+        assert!(error.contains("structured_output_schema"));
+    }
+
+    #[test]
+    fn structured_json_with_empty_schema_is_rejected_anthropic() {
+        let request = LlmChatRequest {
+            provider_kind: "anthropic".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            system: vec![],
+            messages: vec![LlmMessage::text(LlmRole::User, "你好")],
+            temperature: None,
+            max_output_tokens: Some(256),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            response_mode: Some("structured_json".to_string()),
+            stop_sequences: vec![],
+            stream: false,
+            tools: vec![],
+            tool_choice: None,
+            thinking: None,
+            beta_features: vec![],
+            structured_output_schema: Some("".to_string()),
+            structured_output_display: None,
+        };
+
+        let error = build_provider_http_request(&request, "https://api.anthropic.com", "test-key")
+            .expect_err("structured_json with empty schema should be rejected");
+        assert!(error.contains("structured_output_schema"));
     }
 }

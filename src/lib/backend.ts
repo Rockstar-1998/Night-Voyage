@@ -113,7 +113,8 @@ export interface PresetSummary {
   topP?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
-  responseMode?: 'text' | 'json_object' | string;
+  responseMode?: 'pseudo_xml' | 'structured_json' | string;
+  structuredOutputSchema?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -174,7 +175,8 @@ export interface PresetProviderOverrideRecord {
   topPOverride?: number;
   presencePenaltyOverride?: number;
   frequencyPenaltyOverride?: number;
-  responseModeOverride?: 'text' | 'json_object' | string;
+  responseModeOverride?: 'pseudo_xml' | 'structured_json' | string;
+  structuredOutputSchemaOverride?: string;
   stopSequencesOverride: string[];
   disabledBlockTypes: string[];
   createdAt: number;
@@ -253,7 +255,6 @@ export interface PresetSemanticGroupRecord {
 export interface PresetDetail {
   preset: PresetSummary;
   blocks: PresetPromptBlock[];
-  examples: PresetExampleRecord[];
   stopSequences: PresetStopSequenceRecord[];
   providerOverrides: PresetProviderOverrideRecord[];
   semanticGroups: PresetSemanticGroupRecord[];
@@ -264,17 +265,14 @@ export interface PresetCompilePreview {
   providerKind?: string;
   systemText: string;
   systemBlocks: PresetPromptBlock[];
-  exampleMessages: Array<{
-    role: 'user' | 'assistant' | string;
-    content: string;
-  }>;
   params: {
     temperature?: number;
     maxOutputTokens?: number;
     topP?: number;
     presencePenalty?: number;
     frequencyPenalty?: number;
-    responseMode?: 'text' | 'json_object' | string;
+    responseMode?: 'pseudo_xml' | 'structured_json' | string;
+    structuredOutputSchema?: string;
     stopSequences: string[];
   };
 }
@@ -381,7 +379,10 @@ export interface LlmStreamEventPayload {
     | 'content_block_start'
     | 'content_block_stop'
     | 'tool_use'
+    | 'string_field_delta'
+    | 'object_field_complete'
     | 'message_stop'
+    | 'message_reset'
     | string;
   partIndex?: number;
   partType?:
@@ -483,10 +484,11 @@ export interface CreateConversationPayload {
   worldBookId?: number;
   presetId?: number;
   providerId?: number;
-  hostDisplayName: string;
-  hostPlayerCharacterId?: number;
+  hostDisplayName?: string;
+  hostPlayerCharacterId: number;
   chatMode?: ChatMode;
   agentProviderPolicy?: AgentProviderPolicy;
+  openingMessageIndex?: number;
 }
 
 export interface UpdateConversationBindingsPayload {
@@ -564,7 +566,8 @@ export interface PresetProviderOverrideInput {
   topPOverride?: number;
   presencePenaltyOverride?: number;
   frequencyPenaltyOverride?: number;
-  responseModeOverride?: 'text' | 'json_object' | string;
+  responseModeOverride?: 'pseudo_xml' | 'structured_json' | string;
+  structuredOutputSchemaOverride?: string;
   stopSequencesOverride?: string[];
   disabledBlockTypes?: string[];
 }
@@ -601,7 +604,8 @@ export interface CreatePresetPayload {
   topP?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
-  responseMode?: 'text' | 'json_object' | string;
+  responseMode?: 'pseudo_xml' | 'structured_json' | string;
+  structuredOutputSchema?: string;
   blocks?: PresetPromptBlockInput[];
   examples?: PresetExampleInput[];
   stopSequences?: PresetStopSequenceInput[];
@@ -698,12 +702,12 @@ export async function chatSubmitInput(conversationId: number, memberId: number, 
   return invokeCommand<ChatSubmitInputResult>('chat_submit_input', { conversationId, memberId, content });
 }
 
-export async function regenerateMessage(conversationId: number, providerId: number, replyToId: number) {
-  return invokeCommand<RegenerateRoundResult>('regenerate_message', { conversationId, providerId, replyToId });
+export async function regenerateMessage(conversationId: number, memberId: number, providerId: number, replyToId: number) {
+  return invokeCommand<RegenerateRoundResult>('regenerate_message', { conversationId, memberId, providerId, replyToId });
 }
 
-export async function chatRegenerateRound(conversationId: number, roundId: number) {
-  return invokeCommand<RegenerateRoundResult>('chat_regenerate_round', { conversationId, roundId });
+export async function chatRegenerateRound(conversationId: number, memberId: number, roundId: number) {
+  return invokeCommand<RegenerateRoundResult>('chat_regenerate_round', { conversationId, memberId, roundId });
 }
 
 export async function roundStateGet(conversationId: number) {
@@ -881,6 +885,27 @@ export async function listenStreamError(
   return listen<StreamErrorEvent>('llm-stream-error', (event) => handler(event.payload));
 }
 
+export interface MessageResetEvent {
+  conversationId: number;
+  roundId: number;
+  messageId: number;
+}
+
+export async function listenMessageReset(
+  handler: (payload: MessageResetEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<LlmStreamEventPayload>('llm-stream-event', (event) => {
+    const payload = event.payload;
+    if (payload.eventKind === 'message_reset') {
+      handler({
+        conversationId: payload.conversationId,
+        roundId: payload.roundId,
+        messageId: payload.messageId,
+      });
+    }
+  });
+}
+
 export async function listenRoundState(
   handler: (payload: ChatRoundStateEvent) => void,
 ): Promise<UnlistenFn> {
@@ -950,6 +975,24 @@ export async function messagesUpdateContent(messageId: number, content: string) 
 
 export async function messagesSwitchSwipe(roundId: number, targetMessageId: number) {
   return invokeCommand<UiMessage>('messages_switch_swipe', { roundId, targetMessageId });
+}
+
+export async function messagesDelete(messageId: number) {
+  return invokeCommand<void>('messages_delete', { messageId });
+}
+
+export async function abortRoundStream(roundId: number) {
+  return invokeCommand<void>('abort_round_stream', { roundId });
+}
+
+export interface RetryFailedRoundResult {
+  round: RoundState;
+  assistantMessage: UiMessage;
+  attemptCount: number;
+}
+
+export async function retryFailedRound(conversationId: number, memberId: number, roundId: number) {
+  return invokeCommand<RetryFailedRoundResult>('retry_failed_round', { conversationId, memberId, roundId });
 }
 
 export async function conversationsFork(conversationId: number, upToMessageId: number) {

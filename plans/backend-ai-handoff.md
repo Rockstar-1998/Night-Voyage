@@ -1490,3 +1490,189 @@ This section supersedes older conflicting bullets elsewhere in this document.
 - `NewChatModal`：online 模式时显示房间创建/管理 UI
 - 非房主玩家隐藏"重新生成"、"修改内容"等房主专属操作按钮
 - 客户端消息通过 `room_send_message` 发送，流式输出通过 `room:stream_chunk` 事件接收
+
+## 2026-05-21 Phase 16 Update（Structured JSON Response Mode）
+
+This section supersedes older conflicting bullets elsewhere in this document.
+
+### Feature
+
+- 新增 `response_mode: "structured_json"`，允许预设指定结构化 JSON 输出模式，使 LLM 返回符合预定义 schema 的 JSON 响应。
+
+### UI Entry
+
+- Preset Settings → Response Mode 下拉菜单 → 新增 `"structured_json"` 选项 → 选中后显示 Schema Template 选择器。
+
+### Tauri Commands Affected
+
+- `presets_create` / `presets_update`：新增 `structured_output_schema` 参数（`Option<serde_json::Value>`），当 `responseMode = "structured_json"` 时必填，否则必须为 `None`。
+- 不新增命令；schema 持久化复用现有预设保存链路。
+
+### Tauri Events
+
+- `llm-stream-event`：现有事件，`structured_json` 模式下新增 `thinking_delta` 发射（从结构化 JSON 的 `thinking` 字段增量解析而来）。
+- `llm-stream-chunk`：现有事件，`delta` 接收从结构化 JSON 的 `text` 字段增量解析而来的文本增量。
+- 不新增事件。
+
+### Request Payload Changes
+
+- OpenAI 兼容路径：
+  ```json
+  {
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "night_voyage_response",
+        "strict": true,
+        "schema": "<schema>"
+      }
+    }
+  }
+  ```
+  原 `response_mode = "json_object"` 映射的 `{ "type": "json_object" }` 不受影响；`structured_json` 使用独立映射。
+  - OpenAI 兼容 endpoint 只接受单条开头的 `system` message；发送前必须把 `request.system` 合并成一条，不得拆成多条 system 消息。
+- Anthropic 路径：
+  ```json
+  {
+    "tools": [
+      {
+        "name": "night_voyage_response",
+        "description": "Respond in the structured JSON format",
+        "input_schema": "<schema>"
+      }
+    ],
+    "tool_choice": {
+      "type": "tool",
+      "name": "night_voyage_response"
+    }
+  }
+  ```
+
+### Response Parsing
+
+- 新增 `src-tauri/src/llm/structured_output_parser.rs`，负责增量 JSON 解析。
+- 解析规则：
+  - `thinking` 字段内容存入 `message_content_parts`，`part_type = "thinking"`，`is_hidden = 1`（与 Anthropic 原生 thinking 存储方式一致）。
+  - `text` 字段内容作为可见正文，写入 `messages.content` 并通过 `llm-stream-chunk` 增量发射。
+  - `choices` 字段内容存入 `message_content_parts`，`part_type = "structured_choices"`，`is_hidden = 1`。
+- 增量解析器在流式接收过程中逐步提取已完成字段，不等待完整 JSON 闭合。
+
+### Schema Templates
+
+- `basic`：
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "thinking": { "type": "string" },
+      "text": { "type": "string" }
+    },
+    "required": ["thinking", "text"]
+  }
+  ```
+- `interactive_fiction`：
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "thinking": { "type": "string" },
+      "text": { "type": "string" },
+      "choices": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "required": ["thinking", "text", "choices"]
+  }
+  ```
+- 模板由后端常量维护，前端通过 Schema Template 选择器引用模板 key，后端在编译时展开为完整 schema。
+
+### Frontend Contract
+
+- 当 `UiMessage.content` 为合法 JSON 且同时包含 `thinking` 和 `text` 字段时，按结构化响应渲染：
+  - `thinking` 渲染为可折叠的"Thinking"标签（与 Anthropic 原生 thinking 渲染方式一致）。
+  - `text` 通过正常消息格式化器渲染。
+  - `choices` 渲染为可点击按钮列表。
+- 选项点击时派发 `night-voyage-choice-select` 自定义事件，`detail` 包含 `{ key: string, label: string, value: string }`。
+- 前端运行时集成仍延后；本阶段仅关闭后端数据模型、编译器与请求体链路。
+
+### Error States
+
+- Provider 不支持 `structured_json`：显式报错，不静默回退到 `json_object` 或 `text`。
+- 流式过程中 JSON 解析错误：记录错误日志，保留已解析内容，不丢弃已发射的增量。
+- 流结束时 JSON 不完整：提取已完成字段，报告显式错误，不静默补全缺失字段。
+
+### 数据库迁移
+
+- 新增迁移 `00XX_preset_structured_output_schema.sql`：
+  - `presets` 表新增 `structured_output_schema TEXT NULL`。
+  - `preset_provider_overrides` 表新增 `structured_output_schema_override TEXT NULL`。
+- `structured_output_schema` 存储为 JSON TEXT，读取时反序列化为 `serde_json::Value`。
+- `response_mode = "structured_json"` 时 `structured_output_schema` 必须非空；校验失败时显式报错。
+
+### 预设命令 DTO 扩展
+
+- `PresetSummary`、`PresetDetail`、`PresetCompilePreview.params` 新增 `structuredOutputSchema: Option<serde_json::Value>`。
+- `presets_create` 和 `presets_update` 新增 `structuredOutputSchema` 参数。
+- Provider override DTO 新增 `structuredOutputSchemaOverride`。
+- Prompt Compiler 加载 `structured_output_schema`，应用 provider override，编译结果流入 `CompiledSamplingParams`。
+
+### 本阶段非目标
+
+- 不实现自定义 schema 编辑器（仅支持预定义模板）。
+- 不实现 schema 版本管理或迁移。
+- 不实现结构化输出的前端运行时渲染。
+- 不实现 `structured_json` 模式下的流式早期终止或部分 schema 校验。
+## 2026-05-26 Failed Reply Auto-Retry Update
+
+This section defines the backend contract for failed assistant reply auto-retry.
+
+### Feature Goal
+
+- When an outbound LLM request has been compiled, persist the exact provider HTTP request snapshot before the first network send.
+- If that round later fails, the failed assistant message can be retried by replaying the saved snapshot directly.
+- Retry replay must not run the prompt compiler again and must continue on all provider/network failures until success, round deletion, or user abort.
+
+### SQLite Contract
+
+- Add `llm_retry_snapshots`, keyed by `round_id`.
+- Store `conversation_id`, `assistant_message_id`, `provider_id`, `provider_kind`, `model_name`, serialized `ProviderHttpRequest`, serialized output-validator snapshot, attempt count, last error, status, and timestamps.
+- Snapshot status values: `prepared`, `running`, `failed`, `succeeded`, `aborted`.
+- Insert/update the snapshot before the first outbound network request. Increment `attempt_count` when an attempt starts; update `last_error` when an attempt fails.
+- On startup, stale `running` snapshots are reset to `failed` and their still-streaming rounds are restored to `failed`, so the user can retry again after app restart.
+
+### Tauri Command
+
+```ts
+type RetryFailedRoundRequest = {
+  conversationId: number;
+  memberId: number;
+  roundId: number;
+};
+
+type RetryFailedRoundResult = {
+  round: RoundState;
+  assistantMessage: UiMessage;
+  attemptCount: number;
+};
+```
+
+- Command name: `retry_failed_round`.
+- Permission: `memberId` must be the conversation host. Room clients must not expose this command in UI.
+- The command validates that a retry snapshot exists and the target round still has an active assistant message.
+- The command clears the failed assistant message content/artifacts, marks the round streaming, emits round state, emits a message-reset stream event, and returns immediately.
+- A background worker replays the stored provider HTTP request snapshot until success or stop.
+
+### Worker Rules
+
+- Replay the stored `ProviderHttpRequest` exactly; do not call `compile_prompt`.
+- Use the stored provider kind/model metadata only for parser selection, logging, and snapshot status.
+- On retry failures, update `last_error`, keep retrying with a small bounded backoff, and do not emit repeated `llm-stream-error` events.
+- On success, reuse the existing streaming persistence path and write the result into the same `round_id` and active assistant message.
+- On abort or round deletion, stop the worker and mark the snapshot `aborted`.
+
+### Stream Events
+
+- Keep `llm-stream-error` as the first-failure UI entry.
+- Add `llm-stream-event` with `eventKind = "message_reset"` before replay starts so the host renderer clears stale partial content.
+- Room broadcasts add optional `reset: true` on `room:stream_chunk` to clear stale partial content for room clients before replay chunks arrive.

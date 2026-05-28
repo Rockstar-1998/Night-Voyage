@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::services::prompt_compiler::{
-    validate_preset_block_definition, PresetBlockValidationKind,
+    validate_preset_block_definition,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -175,6 +175,8 @@ pub struct PresetProviderOverrideInput {
     pub thinking_enabled_override: Option<bool>,
     pub thinking_budget_tokens_override: Option<i64>,
     pub beta_features_override: Option<Vec<String>>,
+    pub structured_output_schema_override: Option<String>,
+    pub structured_output_display_override: Option<String>,
 }
 
 #[derive(Debug)]
@@ -192,6 +194,8 @@ pub struct NormalizedPresetProviderOverrideInput {
     pub thinking_enabled_override: Option<bool>,
     pub thinking_budget_tokens_override: Option<i64>,
     pub beta_features_override: Option<Vec<String>>,
+    pub structured_output_schema_override: Option<String>,
+    pub structured_output_display_override: Option<String>,
 }
 
 pub struct PresetValidator;
@@ -201,12 +205,6 @@ impl PresetValidator {
         blocks: Option<Vec<PresetPromptBlockInput>>,
     ) -> Result<Vec<NormalizedPresetPromptBlockInput>, String> {
         normalize_blocks(blocks)
-    }
-
-    pub fn validate_examples(
-        examples: Option<Vec<PresetExampleInput>>,
-    ) -> Result<Vec<NormalizedPresetExampleInput>, String> {
-        normalize_examples(examples)
     }
 
     pub fn validate_semantic_groups(
@@ -472,15 +470,18 @@ pub fn normalize_response_mode_impl(
         Some(mode) => {
             let trimmed = mode.trim();
             if trimmed.is_empty() {
-                return Ok("compact".to_string());
+                return Ok("pseudo_xml".to_string());
             }
             let normalized = trimmed.to_lowercase();
-            if !["compact", "verbose", "auto"].contains(&normalized.as_str()) {
-                return Err(format!("{field_name} 必须是 compact、verbose 或 auto"));
+            match normalized.as_str() {
+                "pseudo_xml" | "structured_json" => Ok(normalized),
+                "text" | "json_object" => Ok("pseudo_xml".to_string()),
+                _ => Err(format!(
+                    "{field_name} must be one of: pseudo_xml, structured_json"
+                )),
             }
-            Ok(normalized)
         }
-        None => Ok("compact".to_string()),
+        None => Ok("pseudo_xml".to_string()),
     }
 }
 
@@ -494,14 +495,23 @@ fn normalize_optional_response_mode_from_row_impl(
                 return Ok(None);
             }
             let normalized = trimmed.to_lowercase();
-            if !["compact", "verbose", "auto"].contains(&normalized.as_str()) {
-                eprintln!(
-                    "警告: response_mode '{}' 无效，已被忽略，使用默认值 compact",
-                    mode
-                );
-                return Ok(Some("compact".to_string()));
+            match normalized.as_str() {
+                "pseudo_xml" | "structured_json" => Ok(Some(normalized)),
+                "text" | "json_object" | "compact" | "verbose" | "auto" => {
+                    eprintln!(
+                        "警告: response_mode '{}' 已废弃，自动映射为 pseudo_xml",
+                        mode
+                    );
+                    Ok(Some("pseudo_xml".to_string()))
+                }
+                _ => {
+                    eprintln!(
+                        "警告: response_mode '{}' 无效，已被忽略，使用默认值 pseudo_xml",
+                        mode
+                    );
+                    Ok(Some("pseudo_xml".to_string()))
+                }
             }
-            Ok(Some(normalized))
         }
         None => Ok(None),
     }
@@ -776,10 +786,14 @@ fn normalize_semantic_expansion_kind(
     match value {
         Some(kind) => {
             let normalized = kind.trim().to_lowercase();
-            if !["mixed", "inline", "block"].contains(&normalized.as_str()) {
-                return Err(format!("{field_name} 必须是 mixed、inline 或 block"));
+            match normalized.as_str() {
+                "blocks" | "examples" | "params" | "mixed" => Ok(normalized),
+                "block" => Ok("blocks".to_string()),
+                "inline" => Ok("mixed".to_string()),
+                _ => Err(format!(
+                    "{field_name} 必须是 blocks、examples、params 或 mixed"
+                )),
             }
-            Ok(normalized)
         }
         None => Ok("mixed".to_string()),
     }
@@ -857,6 +871,12 @@ fn normalize_provider_overrides(
             beta_features_override: normalize_beta_features_impl(
                 override_input.beta_features_override,
             )?,
+            structured_output_schema_override: normalize_optional_text_impl(
+                override_input.structured_output_schema_override,
+            ),
+            structured_output_display_override: normalize_optional_text_impl(
+                override_input.structured_output_display_override,
+            ),
         });
     }
 
@@ -867,20 +887,13 @@ fn validate_normalized_block_collection(
     blocks: &[NormalizedPresetPromptBlockInput],
     field_name: &str,
 ) -> Result<(), String> {
-    let mut enabled_prefill_count = 0;
     let mut enabled_exclusive_groups: HashMap<String, Vec<usize>> = HashMap::new();
     let mut exclusive_group_labels: HashMap<String, String> = HashMap::new();
 
     for (index, block) in blocks.iter().enumerate() {
         let descriptor = format!("{field_name}[{index}]");
-        let validation_kind =
+        let _validation_kind =
             validate_preset_block_definition(&block.block_type, &block.content, &descriptor)?;
-        if block.is_enabled && validation_kind == PresetBlockValidationKind::Prefill {
-            enabled_prefill_count += 1;
-            if enabled_prefill_count > 1 {
-                return Err("only one enabled prefill block is allowed per preset".to_string());
-            }
-        }
 
         if let Some(group_key) = block.exclusive_group_key.as_ref() {
             if let Some(group_label) = block.exclusive_group_label.as_ref() {
@@ -985,28 +998,6 @@ pub fn merge_materialized_blocks(
 fn log_merged_block_conflicts(blocks: &[NormalizedPresetPromptBlockInput], field_name: &str) {
     let _ = blocks;
     let _ = field_name;
-}
-
-pub fn merge_materialized_examples(
-    direct_examples: &[NormalizedPresetExampleInput],
-    materialized_examples: Vec<NormalizedPresetExampleInput>,
-) -> Vec<NormalizedPresetExampleInput> {
-    let mut merged = direct_examples.to_vec();
-    let mut seen_keys: HashSet<String> = HashSet::new();
-
-    for example in &merged {
-        let key = format!("{}:{}", example.role, example.content);
-        seen_keys.insert(key);
-    }
-
-    for m_example in materialized_examples {
-        let key = format!("{}:{}", m_example.role, m_example.content);
-        if seen_keys.insert(key) {
-            merged.push(m_example);
-        }
-    }
-
-    merged
 }
 
 pub fn prune_shadowed_semantic_direct_blocks(
@@ -1143,16 +1134,14 @@ mod tests {
     }
 
     #[test]
-    fn normalize_blocks_rejects_multiple_enabled_prefill_blocks() {
+    fn normalize_blocks_rejects_deprecated_prefill_block_type() {
         let mut first = block_input("compiler:prefill", "Seed one");
         first.is_enabled = Some(true);
-        let mut second = block_input("template:prefill", "{{ current_user.content }}");
-        second.is_enabled = Some(true);
 
-        let error = PresetValidator::validate_blocks(Some(vec![first, second]))
-            .expect_err("duplicate prefill should fail");
+        let error = PresetValidator::validate_blocks(Some(vec![first]))
+            .expect_err("deprecated prefill block type should fail");
 
-        assert!(error.contains("only one enabled prefill block"));
+        assert!(error.contains("deprecated"));
     }
 
     #[test]

@@ -35,10 +35,17 @@ interface MobileViewProps {
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number }) => Promise<void> | void;
+  playerCharacters: CharacterCard[];
+  currentPlayerCharacter?: CharacterCard;
+  onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
   onSend: (content: string) => Promise<void> | void;
+  onAbort?: () => void | Promise<void>;
+  replyStatus?: 'idle' | 'connecting' | 'processing' | 'responding';
   onRegenerate: (id: string, roundId?: number) => void;
   onEdit: (id: string, content: string) => void;
   onFork: (id: string) => void;
+  onDeleteMessage?: (id: string) => void;
+  onRetryFailed?: (id: string, roundId?: number) => void;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   onSelectConversation: (conversationId: number) => void;
@@ -198,11 +205,13 @@ export const MobileView: Component<MobileViewProps> = (props) => {
             </div>
 
             <div class="flex-1 overflow-hidden pt-3">
-              <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} />
+              <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
             </div>
             <div class="px-4 pb-6 pt-2">
               <ChatInputBar
                 onSend={props.onSend}
+                onAbort={props.onAbort}
+                replyStatus={props.replyStatus}
                 allowEmptySend={props.allowEmptySend}
                 disabled={props.sending}
               />
@@ -241,6 +250,9 @@ export const MobileView: Component<MobileViewProps> = (props) => {
           plotSummaries={props.plotSummaries}
           onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
           onSavePlotSummary={props.onSavePlotSummary}
+          playerCharacters={props.playerCharacters}
+          currentPlayerCharacter={props.currentPlayerCharacter}
+          onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
         />
       </Show>
     </div>

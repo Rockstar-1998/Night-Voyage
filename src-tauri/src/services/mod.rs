@@ -6,4 +6,5 @@ pub mod preset_service;
 pub mod prompt_compiler;
 pub mod provider_adapter;
 pub mod stream_processor;
+pub mod structured_output_parser;
 pub mod world_book_matcher;

@@ -1,6 +1,5 @@
-import { Component, onMount, For } from 'solid-js';
+import { Component, For } from 'solid-js';
 import { Globe, Palette } from '../lib/icons';
-import { animate } from '../lib/animate';
 import { IconButton } from './ui/IconButton';
 
 interface SettingCategory {
@@ -10,26 +9,17 @@ interface SettingCategory {
 }
 
 export const SettingsSidebar: Component<{ activeCategory: string; onCategoryChange: (id: string) => void }> = (props) => {
-    let containerRef: HTMLDivElement | undefined;
-
     const categories: SettingCategory[] = [
         { id: 'api', label: 'API 配置', icon: Globe },
         { id: 'appearance', label: '界面外观', icon: Palette },
     ];
 
-    onMount(() => {
-        if (containerRef) {
-            animate(containerRef, { x: [-10, 0], opacity: [0, 1] }, { duration: 0.6, delay: 0.1, ease: "easeOut" });
-        }
-    });
-
     return (
         <div
-            ref={containerRef}
-            class="w-80 flex flex-col bg-night-water border-r border-white/5 h-full relative pt-10"
+            class="w-80 flex flex-col bg-night-water/30 backdrop-blur-sm border-r border-white/5 h-full relative pt-10"
         >
             <div class="p-6 flex flex-col gap-6">
-                <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">设置</h1>
+                <h1 data-workspace-title class="text-3xl font-black text-white tracking-tighter uppercase italic">设置</h1>
             </div>
 
             <div class="flex-1 overflow-y-auto px-4 pb-20 custom-scrollbar">

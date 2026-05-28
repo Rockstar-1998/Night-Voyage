@@ -139,27 +139,6 @@ export const CompletionPreviewModal: Component<{
                           </div>
                         </div>
 
-                        <div class="rounded-3xl border border-white/5 bg-white/5 p-5 space-y-4">
-                          <div>
-                            <h3 class="text-sm font-bold text-mist-solid">Example Messages</h3>
-                            <p class="text-xs text-mist-solid/35 mt-1">few-shot 示例消息预览。</p>
-                          </div>
-                          <div class="space-y-3 max-h-[320px] overflow-y-auto custom-scrollbar">
-                            <For each={preview().exampleMessages}>
-                              {(message) => (
-                                <div class="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-2">
-                                  <span class="text-[10px] px-2 py-0.5 rounded-md border border-blue-500/20 bg-blue-500/10 text-blue-200 uppercase tracking-widest">
-                                    {message.role}
-                                  </span>
-                                  <p class="text-xs text-mist-solid/60 leading-5 whitespace-pre-wrap">{message.content}</p>
-                                </div>
-                              )}
-                            </For>
-                            <Show when={preview().exampleMessages.length === 0}>
-                              <div class="text-sm text-mist-solid/35">当前没有 example messages。</div>
-                            </Show>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   );

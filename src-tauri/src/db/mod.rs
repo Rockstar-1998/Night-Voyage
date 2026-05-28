@@ -24,7 +24,82 @@ pub async fn init_pool(app: &AppHandle) -> DbResult<SqlitePool> {
 
     sqlx::migrate!().run(&pool).await?;
 
+    cleanup_stale_rounds(&pool).await;
+    crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository::recover_running_snapshots(&pool).await?;
+
     Ok(pool)
+}
+
+async fn cleanup_stale_rounds(db: &SqlitePool) {
+    let stale_rounds: Vec<i64> = match sqlx::query_scalar(
+        "SELECT mr.id FROM message_rounds mr \
+         WHERE mr.status = 'collecting' \
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.round_id = mr.id AND m.is_hidden = 0)",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(err) => {
+            eprintln!("[startup] cleanup_stale_rounds: query failed: {}", err);
+            return;
+        }
+    };
+
+    if stale_rounds.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "[startup] cleanup_stale_rounds: found {} stale collecting rounds with no visible messages",
+        stale_rounds.len()
+    );
+
+    for round_id in &stale_rounds {
+        eprintln!("[startup] cleanup_stale_rounds: cleaning round_id={}", round_id);
+
+        if let Err(err) = sqlx::query("DELETE FROM message_content_parts WHERE message_id IN (SELECT id FROM messages WHERE round_id = ?)")
+            .bind(round_id)
+            .execute(db)
+            .await
+        {
+            eprintln!("[startup] cleanup_stale_rounds: failed to delete content_parts for round {}: {}", round_id, err);
+        }
+
+        if let Err(err) = sqlx::query("DELETE FROM message_tool_calls WHERE message_id IN (SELECT id FROM messages WHERE round_id = ?)")
+            .bind(round_id)
+            .execute(db)
+            .await
+        {
+            eprintln!("[startup] cleanup_stale_rounds: failed to delete tool_calls for round {}: {}", round_id, err);
+        }
+
+        if let Err(err) = sqlx::query("DELETE FROM messages WHERE round_id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+        {
+            eprintln!("[startup] cleanup_stale_rounds: failed to delete messages for round {}: {}", round_id, err);
+        }
+
+        if let Err(err) = sqlx::query("DELETE FROM round_member_actions WHERE round_id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+        {
+            eprintln!("[startup] cleanup_stale_rounds: failed to delete member_actions for round {}: {}", round_id, err);
+        }
+
+        if let Err(err) = sqlx::query("DELETE FROM message_rounds WHERE id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+        {
+            eprintln!("[startup] cleanup_stale_rounds: failed to delete round {}: {}", round_id, err);
+        }
+    }
+
+    eprintln!("[startup] cleanup_stale_rounds: cleaned {} stale rounds", stale_rounds.len());
 }
 
 pub fn resolve_db_path(app: &AppHandle) -> DbResult<PathBuf> {

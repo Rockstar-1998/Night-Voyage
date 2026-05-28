@@ -113,6 +113,19 @@ pub enum LlmToolChoice {
     Tool { name: String },
 }
 
+pub fn build_openai_structured_json_response_format(schema_json: &str) -> Result<serde_json::Value, String> {
+    let schema_value: serde_json::Value = serde_json::from_str(schema_json)
+        .map_err(|e| format!("invalid JSON Schema: {}", e))?;
+    Ok(serde_json::json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "night_voyage_response",
+            "strict": true,
+            "schema": schema_value
+        }
+    }))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmThinkingConfig {
@@ -140,6 +153,8 @@ pub struct LlmChatRequest {
     pub tool_choice: Option<LlmToolChoice>,
     pub thinking: Option<LlmThinkingConfig>,
     pub beta_features: Vec<String>,
+    pub structured_output_schema: Option<String>,
+    pub structured_output_display: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

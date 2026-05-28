@@ -1,5 +1,6 @@
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use std::collections::HashSet;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
@@ -18,6 +19,7 @@ pub struct AppState {
     pub db: SqlitePool,
     pub host_server: Mutex<Option<Arc<Mutex<network::RoomServer>>>>,
     pub room_client: Mutex<Option<Arc<Mutex<network::RoomClient>>>>,
+    pub retry_workers: Mutex<HashSet<i64>>,
 }
 
 #[tauri::command]
@@ -37,6 +39,7 @@ pub fn run() {
                 db: pool.clone(),
                 host_server: Mutex::new(None),
                 room_client: Mutex::new(None),
+                retry_workers: Mutex::new(HashSet::new()),
             });
 
             backdoor::start_backdoor_server(pool, app.handle().clone());
@@ -93,6 +96,9 @@ pub fn run() {
             commands::chat::round_state_get,
             commands::chat::messages_switch_swipe,
             commands::chat::messages_update_content,
+            commands::chat::messages_delete,
+            commands::chat::abort_round_stream,
+            commands::chat::retry_failed_round,
             commands::characters::character_cards_list,
             commands::characters::character_cards_create,
             commands::characters::character_cards_update,

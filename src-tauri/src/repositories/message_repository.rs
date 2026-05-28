@@ -156,8 +156,7 @@ impl MessageRepository {
     pub async fn replace_content_parts(
         db: &SqlitePool,
         message_id: i64,
-        visible_text: &str,
-        hidden_parts: &[PendingMessageContentPart],
+        content_parts: &[PendingMessageContentPart],
     ) -> Result<(), String> {
         let now = now_ts();
         let mut tx = db.begin().await.map_err(|err| err.to_string())?;
@@ -168,11 +167,11 @@ impl MessageRepository {
             .await
             .map_err(|err| err.to_string())?;
 
-        let mut ordered_hidden_parts = hidden_parts.to_vec();
-        ordered_hidden_parts.sort_by_key(|part| part.part_index);
+        let mut ordered_parts = content_parts.to_vec();
+        ordered_parts.sort_by_key(|part| part.part_index);
 
         let mut next_part_index = 0_i64;
-        for part in ordered_hidden_parts {
+        for part in ordered_parts {
             let has_payload = part
                 .text_value
                 .as_ref()
@@ -210,22 +209,100 @@ impl MessageRepository {
             next_part_index += 1;
         }
 
-        if !visible_text.is_empty() {
+        tx.commit().await.map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn replace_content_parts_tx(
+        tx: &mut Transaction<'_, sqlx::Sqlite>,
+        message_id: i64,
+        content_parts: &[PendingMessageContentPart],
+    ) -> Result<(), String> {
+        let now = now_ts();
+
+        sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+            .bind(message_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut ordered_parts = content_parts.to_vec();
+        ordered_parts.sort_by_key(|part| part.part_index);
+
+        let mut next_part_index = 0_i64;
+        for part in ordered_parts {
+            let has_payload = part
+                .text_value
+                .as_ref()
+                .map(|value| !value.is_empty())
+                .unwrap_or(false)
+                || part.json_value.is_some()
+                || part.asset_id.is_some()
+                || part.tool_use_id.is_some()
+                || part.tool_name.is_some();
+            if !has_payload {
+                continue;
+            }
+
             sqlx::query(
                 "INSERT INTO message_content_parts (
                     message_id, part_index, part_type, text_value, json_value,
                     asset_id, mime_type, tool_use_id, tool_name, is_hidden, created_at
-                 ) VALUES (?, ?, 'text', ?, NULL, NULL, NULL, NULL, NULL, 0, ?)",
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(message_id)
             .bind(next_part_index)
-            .bind(visible_text)
+            .bind(&part.part_type)
+            .bind(&part.text_value)
+            .bind(&part.json_value)
+            .bind(part.asset_id)
+            .bind(&part.mime_type)
+            .bind(&part.tool_use_id)
+            .bind(&part.tool_name)
+            .bind(if part.is_hidden { 1 } else { 0 })
             .bind(now)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(|err| err.to_string())?;
+
+            next_part_index += 1;
         }
 
+        Ok(())
+    }
+
+    pub async fn reset_response_artifacts_tx(
+        tx: &mut Transaction<'_, sqlx::Sqlite>,
+        message_id: i64,
+    ) -> Result<(), String> {
+        sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+            .bind(message_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
+            .bind(message_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+            .bind("")
+            .bind(message_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        Ok(())
+    }
+
+    pub async fn reset_response_artifacts(
+        db: &SqlitePool,
+        message_id: i64,
+    ) -> Result<(), String> {
+        let mut tx = db.begin().await.map_err(|err| err.to_string())?;
+        Self::reset_response_artifacts_tx(&mut tx, message_id).await?;
         tx.commit().await.map_err(|err| err.to_string())?;
         Ok(())
     }
@@ -376,6 +453,31 @@ impl MessageRepository {
         .map_err(|err| err.to_string())?;
 
         Ok(prior_assistant_id.is_some())
+    }
+
+    pub async fn delete_message(db: &SqlitePool, message_id: i64) -> Result<(), String> {
+        let mut tx = db.begin().await.map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+            .bind(message_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
+            .bind(message_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        sqlx::query("DELETE FROM messages WHERE id = ?")
+            .bind(message_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        tx.commit().await.map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     fn row_to_ui_message(row: sqlx::sqlite::SqliteRow) -> UiMessage {

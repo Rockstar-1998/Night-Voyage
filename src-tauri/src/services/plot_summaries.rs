@@ -15,6 +15,7 @@ use crate::{
     utils::now_ts,
 };
 
+pub const PLOT_SUMMARY_MODE_DISABLED: &str = "disabled";
 pub const PLOT_SUMMARY_MODE_AI: &str = "ai";
 pub const PLOT_SUMMARY_MODE_MANUAL: &str = "manual";
 pub const PLOT_SUMMARY_SOURCE_AI: &str = "ai";
@@ -65,9 +66,10 @@ struct PlotSummaryGenerationContext {
 
 pub fn normalize_plot_summary_mode(value: &str) -> Result<String, String> {
     match value.trim() {
+        PLOT_SUMMARY_MODE_DISABLED => Ok(PLOT_SUMMARY_MODE_DISABLED.to_string()),
         PLOT_SUMMARY_MODE_AI => Ok(PLOT_SUMMARY_MODE_AI.to_string()),
         PLOT_SUMMARY_MODE_MANUAL => Ok(PLOT_SUMMARY_MODE_MANUAL.to_string()),
-        _ => Err("plotSummaryMode 只支持 ai 或 manual".to_string()),
+        _ => Err("plotSummaryMode 只支持 disabled、ai 或 manual".to_string()),
     }
 }
 
@@ -433,7 +435,7 @@ async fn run_plot_summary_processing_task(
     Ok(())
 }
 
-async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Result<String, String> {
+pub async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Result<String, String> {
     let value: Option<String> =
         sqlx::query_scalar("SELECT plot_summary_mode FROM conversations WHERE id = ? LIMIT 1")
             .bind(conversation_id)
@@ -443,7 +445,7 @@ async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Result
 
     normalize_plot_summary_mode(
         value
-            .unwrap_or_else(|| PLOT_SUMMARY_MODE_AI.to_string())
+            .unwrap_or_else(|| PLOT_SUMMARY_MODE_DISABLED.to_string())
             .as_str(),
     )
 }

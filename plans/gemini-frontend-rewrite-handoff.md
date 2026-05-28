@@ -1,5 +1,16 @@
 # Frontend Runtime Integration Handoff
 
+## 2026-05-26 Motion One Workspace Transition
+
+- Task class: frontend runtime plus dependency/cache configuration.
+- Whitelist: allowed for the current frontend agent; no `src-tauri/**` runtime files are changed for this task.
+- Dependency change: add the official `motion` package and use its DOM `animate()` API from `"motion"` for desktop workspace transitions.
+- Cache rule: npm cache/logs must point to `D:\software_cache\npm-cache`; do not write package-manager cache data into project `.cache` or the system drive.
+- Runtime shape: desktop workspace panes are managed by a Solid host transition stage. A pane mounts lazily on first visit and then stays mounted while inactive with `opacity: 0`, `pointer-events: none`, `aria-hidden`, and `inert`.
+- Animation contract: pane transitions use compositor-friendly `opacity` and `x`; title transitions mirror the reference effect with enter blur/left offset and faster leave blur/right offset.
+- Reduced motion: respect `prefers-reduced-motion: reduce` by removing blur/translation and using a short opacity-only transition.
+- Backend contract: unchanged. No Tauri command, event, payload, or backend AI handoff update is required.
+
 ## Goal
 
 将当前 `SolidJS` 宿主前端从假数据 / 本地 store / 模拟流式状态，接入已经落地的 `Tauri 2 + Rust` 后端命令与事件，完成 Night Voyage 的前端联调基础版本。
@@ -615,3 +626,40 @@ C --> D[内容管理区再改]
 D --> E[补齐可访问性]
 E --> F[桌面与移动验收]
 ```
+## 2026-05-26 Failed Reply Auto-Retry UI Update
+
+This section defines the Solid host contract for failed assistant reply auto-retry.
+
+### UI Goal
+
+- Failed assistant messages show a visible `自动重试` action on the message body, not only inside hover actions.
+- The action is available on desktop and mobile touch layouts.
+- Room clients must not show or call this action.
+
+### Backend Command
+
+```ts
+retryFailedRound({
+  conversationId: number,
+  memberId: number,
+  roundId: number,
+}) => Promise<{
+  round: RoundState,
+  assistantMessage: UiMessage,
+  attemptCount: number,
+}>
+```
+
+### State Rules
+
+- On click, clear the message error in local UI, clear stale content, mark the message as streaming/retrying, and disable duplicate clicks.
+- Set the shared reply status active so the existing stop button can abort the retry.
+- Continue consuming existing `llm-stream-event` and room stream events.
+- Handle `eventKind = "message_reset"` by clearing the target assistant message content, structured fields, and error.
+- Handle `room:stream_chunk` with `reset: true` the same way for room clients.
+- Do not run prompt assembly or retry policy in the frontend; frontend only renders state and forwards the command.
+
+### Error Rules
+
+- Keep `llm-stream-error` for the first failure state.
+- After auto-retry starts, backend retry failures are not repeatedly surfaced as modal alerts. The retry worker persists `last_error` in SQLite and keeps trying.

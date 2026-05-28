@@ -212,13 +212,15 @@ pub async fn providers_test(
         top_k: None,
         presence_penalty: None,
         frequency_penalty: None,
-        response_mode: Some("text".to_string()),
+        response_mode: Some("pseudo_xml".to_string()),
         stop_sequences: vec![],
         stream: false,
         tools: vec![],
         tool_choice: None,
         thinking: None,
         beta_features: vec![],
+        structured_output_schema: None,
+        structured_output_display: None,
     };
     let http_request = build_provider_http_request(&request, &base_url, &api_key)?;
     let request_url = http_request.url.clone();
@@ -314,13 +316,15 @@ pub async fn providers_test_claude_native(
             top_k: None,
             presence_penalty: None,
             frequency_penalty: None,
-            response_mode: Some("text".to_string()),
+            response_mode: Some("pseudo_xml".to_string()),
             stop_sequences: vec![],
             stream: false,
             tools: vec![],
             tool_choice: None,
             thinking: None,
             beta_features: vec![],
+            structured_output_schema: None,
+            structured_output_display: None,
         };
         let http_request =
             build_provider_http_request(&request, &provider.base_url, &provider.api_key)?;

@@ -1,7 +1,8 @@
 use tauri::AppHandle;
 
 use crate::models::{
-    ChatAttachment, ChatSubmitInputResult, RegenerateRoundResult, RoundState, UiMessage,
+    ChatAttachment, ChatSubmitInputResult, RegenerateRoundResult, RetryFailedRoundResult,
+    RoundState, UiMessage,
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::services::chat_service::ChatService;
@@ -149,4 +150,31 @@ pub async fn messages_switch_swipe(
     target_message_id: i64,
 ) -> Result<UiMessage, String> {
     ChatService::switch_swipe(&state.db, round_id, target_message_id).await
+}
+
+#[tauri::command]
+pub async fn messages_delete(
+    state: tauri::State<'_, AppState>,
+    message_id: i64,
+) -> Result<(), String> {
+    ChatService::delete_message(&state.db, message_id).await
+}
+
+#[tauri::command]
+pub async fn abort_round_stream(
+    state: tauri::State<'_, AppState>,
+    round_id: i64,
+) -> Result<(), String> {
+    ChatService::abort_round_stream(&state.db, round_id).await
+}
+
+#[tauri::command]
+pub async fn retry_failed_round(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    member_id: i64,
+    round_id: i64,
+) -> Result<RetryFailedRoundResult, String> {
+    ChatService::retry_failed_round(app, state.db.clone(), conversation_id, member_id, round_id).await
 }

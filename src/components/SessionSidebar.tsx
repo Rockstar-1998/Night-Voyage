@@ -47,9 +47,9 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
   };
 
   return (
-    <div class="w-80 flex flex-col bg-night-water/60 backdrop-blur-3xl border-r border-white/5 h-full relative pt-10">
+    <div class="w-80 flex flex-col bg-night-water/30 backdrop-blur-sm border-r border-white/5 h-full relative pt-10">
       <div class="p-6 flex flex-col gap-6">
-        <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">Sessions</h1>
+        <h1 data-workspace-title class="text-3xl font-black text-white tracking-tighter uppercase italic">Sessions</h1>
 
         <div class="relative group">
           <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={20} />
@@ -92,7 +92,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                     <div class="flex flex-col gap-2">
                       <div
                         onClick={() => props.onSelect?.(session.id)}
-                        class={`group p-4 rounded-[1.75rem] border text-left transition-all cursor-pointer relative overflow-hidden ${props.selectedConversationId === session.id
+                        class={`group p-4 rounded-[1.75rem] border text-left transition-all cursor-pointer relative overflow-hidden backdrop-blur-sm ${props.selectedConversationId === session.id
                           ? 'bg-accent/10 border-accent/40 shadow-[0_12px_32px_rgba(0,0,0,0.35)]'
                           : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
                       >
@@ -192,7 +192,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                   {(session) => (
                     <button
                       onClick={() => props.onSelect?.(session.id)}
-                      class={`group p-4 rounded-[1.75rem] border text-left transition-all relative overflow-hidden ${props.selectedConversationId === session.id
+                      class={`group p-4 rounded-[1.75rem] border text-left transition-all relative overflow-hidden backdrop-blur-sm ${props.selectedConversationId === session.id
                         ? 'bg-accent/10 border-accent/40 shadow-[0_12px_32px_rgba(0,0,0,0.35)]'
                         : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
                     >

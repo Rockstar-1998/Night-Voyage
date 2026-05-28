@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use sqlx::{Row, SqlitePool, Transaction};
 
 use crate::models::{
-    PresetDetail, PresetExampleRecord, PresetPromptBlockRecord, PresetProviderOverrideRecord,
+    PresetDetail, PresetPromptBlockRecord, PresetProviderOverrideRecord,
     PresetSemanticGroupRecord, PresetSemanticOptionBlockRecord, PresetSemanticOptionExampleRecord,
     PresetSemanticOptionRecord, PresetStopSequenceRecord, PresetSummary,
 };
 use crate::validators::preset_validator::{
     NormalizedPresetExampleInput, NormalizedPresetPromptBlockInput,
     NormalizedPresetProviderOverrideInput, NormalizedPresetSemanticGroupInput,
-    NormalizedPresetSemanticOptionInput, NormalizedPresetStopSequenceInput,
+    NormalizedPresetStopSequenceInput,
     PresetBlockLockSnapshot, SemanticMaterialization,
 };
 
@@ -40,7 +40,7 @@ impl PresetRepository {
         let rows = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, created_at, updated_at \
              FROM presets ORDER BY updated_at DESC, id DESC",
         )
         .fetch_all(db)
@@ -54,7 +54,7 @@ impl PresetRepository {
         let row = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, created_at, updated_at \
              FROM presets WHERE id = ? LIMIT 1",
         )
         .bind(id)
@@ -65,7 +65,6 @@ impl PresetRepository {
         match row {
             Some(row) => {
                 let blocks = Self::find_blocks_by_preset_id(db, id).await?;
-                let examples = Self::find_examples_by_preset_id(db, id).await?;
                 let stop_sequences = Self::find_stop_sequences_by_preset_id(db, id).await?;
                 let provider_overrides = Self::find_provider_overrides_by_preset_id(db, id).await?;
                 let semantic_groups = Self::find_semantic_groups_by_preset_id(db, id).await?;
@@ -73,7 +72,6 @@ impl PresetRepository {
                 Ok(Some(PresetDetail {
                     preset: Self::row_to_preset_summary(row)?,
                     blocks,
-                    examples,
                     stop_sequences,
                     provider_overrides,
                     semantic_groups,
@@ -103,27 +101,6 @@ impl PresetRepository {
         Ok(rows
             .into_iter()
             .map(Self::row_to_preset_prompt_block_record)
-            .collect())
-    }
-
-    pub async fn find_examples_by_preset_id(
-        db: &SqlitePool,
-        preset_id: i64,
-    ) -> Result<Vec<PresetExampleRecord>, String> {
-        let rows = sqlx::query(
-            "SELECT id, preset_id, semantic_option_id, role, content, sort_order, is_enabled, created_at, updated_at \
-             FROM preset_examples \
-             WHERE preset_id = ? \
-             ORDER BY sort_order ASC, id ASC",
-        )
-        .bind(preset_id)
-        .fetch_all(db)
-        .await
-        .map_err(|err| err.to_string())?;
-
-        Ok(rows
-            .into_iter()
-            .map(Self::row_to_preset_example_record)
             .collect())
     }
 
@@ -157,6 +134,7 @@ impl PresetRepository {
              top_p_override, top_k_override, presence_penalty_override, frequency_penalty_override, \
              response_mode_override, stop_sequences_override, disabled_block_types, \
              thinking_enabled_override, thinking_budget_tokens_override, beta_features_override, \
+             structured_output_schema_override, structured_output_display_override, \
              created_at, updated_at \
              FROM preset_provider_overrides \
              WHERE preset_id = ? \
@@ -378,15 +356,18 @@ impl PresetRepository {
         thinking_enabled: Option<bool>,
         thinking_budget_tokens: Option<i64>,
         beta_features: Option<&str>,
+        structured_output_schema: Option<&str>,
+        structured_output_display: Option<&str>,
         now: i64,
     ) -> Result<i64, String> {
         let result = sqlx::query(
             "INSERT INTO presets (
                 name, description, category, is_builtin, version, temperature,
                 max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode,
-                thinking_enabled, thinking_budget_tokens, beta_features,
+                thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema,
+                structured_output_display,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
         .bind(&description)
@@ -401,6 +382,8 @@ impl PresetRepository {
         .bind(thinking_enabled)
         .bind(thinking_budget_tokens)
         .bind(beta_features)
+        .bind(structured_output_schema)
+        .bind(structured_output_display)
         .bind(now)
         .bind(now)
         .execute(&mut **tx)
@@ -426,6 +409,8 @@ impl PresetRepository {
         thinking_enabled: Option<bool>,
         thinking_budget_tokens: Option<i64>,
         beta_features: Option<&str>,
+        structured_output_schema: Option<&str>,
+        structured_output_display: Option<&str>,
         now: i64,
     ) -> Result<(), String> {
         sqlx::query(
@@ -444,6 +429,8 @@ impl PresetRepository {
                 thinking_enabled = ?,
                 thinking_budget_tokens = ?,
                 beta_features = ?,
+                structured_output_schema = ?,
+                structured_output_display = ?,
                 updated_at = ?
              WHERE id = ?",
         )
@@ -460,6 +447,8 @@ impl PresetRepository {
         .bind(thinking_enabled)
         .bind(thinking_budget_tokens)
         .bind(beta_features)
+        .bind(structured_output_schema)
+        .bind(structured_output_display)
         .bind(now)
         .bind(id)
         .execute(&mut **tx)
@@ -540,40 +529,6 @@ impl PresetRepository {
         Ok(())
     }
 
-    pub async fn replace_examples(
-        tx: &mut Transaction<'_, sqlx::Sqlite>,
-        preset_id: i64,
-        examples: &[NormalizedPresetExampleInput],
-        now: i64,
-    ) -> Result<(), String> {
-        sqlx::query("DELETE FROM preset_examples WHERE preset_id = ?")
-            .bind(preset_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        for example in examples {
-            sqlx::query(
-                "INSERT INTO preset_examples (
-                    preset_id, semantic_option_id, role, content, sort_order, is_enabled, created_at, updated_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(preset_id)
-            .bind(example.semantic_option_id)
-            .bind(&example.role)
-            .bind(&example.content)
-            .bind(example.sort_order)
-            .bind(if example.is_enabled { 1 } else { 0 })
-            .bind(now)
-            .bind(now)
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-        }
-
-        Ok(())
-    }
-
     pub async fn replace_stop_sequences(
         tx: &mut Transaction<'_, sqlx::Sqlite>,
         preset_id: i64,
@@ -630,8 +585,9 @@ impl PresetRepository {
                     top_p_override, top_k_override, presence_penalty_override, frequency_penalty_override,
                     response_mode_override, stop_sequences_override, disabled_block_types,
                     thinking_enabled_override, thinking_budget_tokens_override, beta_features_override,
+                    structured_output_schema_override, structured_output_display_override,
                     created_at, updated_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(preset_id)
             .bind(&override_input.provider_kind)
@@ -647,6 +603,8 @@ impl PresetRepository {
             .bind(override_input.thinking_enabled_override)
             .bind(override_input.thinking_budget_tokens_override)
             .bind(&beta_features_override_json)
+            .bind(&override_input.structured_output_schema_override)
+            .bind(&override_input.structured_output_display_override)
             .bind(now)
             .bind(now)
             .execute(&mut **tx)
@@ -842,38 +800,12 @@ impl PresetRepository {
             .collect()
     }
 
-    pub async fn load_existing_normalized_examples(
-        tx: &mut Transaction<'_, sqlx::Sqlite>,
-        preset_id: i64,
-        semantic_only: bool,
-    ) -> Result<Vec<NormalizedPresetExampleInput>, String> {
-        let sql = if semantic_only {
-            "SELECT semantic_option_id, role, content, sort_order, is_enabled \
-             FROM preset_examples WHERE preset_id = ? AND semantic_option_id IS NOT NULL AND semantic_option_id > 0 \
-             ORDER BY sort_order ASC, id ASC"
-        } else {
-            "SELECT semantic_option_id, role, content, sort_order, is_enabled \
-             FROM preset_examples WHERE preset_id = ? AND (semantic_option_id IS NULL OR semantic_option_id = 0) \
-             ORDER BY sort_order ASC, id ASC"
-        };
-        let rows = sqlx::query(sql)
-            .bind(preset_id)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        rows.into_iter()
-            .map(Self::normalized_preset_example_from_row)
-            .collect()
-    }
-
     pub async fn load_existing_semantic_materialization(
         tx: &mut Transaction<'_, sqlx::Sqlite>,
         preset_id: i64,
     ) -> Result<SemanticMaterialization, String> {
         let blocks = Self::load_existing_normalized_blocks(tx, preset_id, true).await?;
-        let examples = Self::load_existing_normalized_examples(tx, preset_id, true).await?;
-        Ok(SemanticMaterialization { blocks, examples })
+        Ok(SemanticMaterialization { blocks, examples: vec![] })
     }
 
     pub async fn get_locked_block_snapshots(
@@ -988,6 +920,8 @@ impl PresetRepository {
                 .ok()
                 .flatten()
                 .and_then(|s: String| serde_json::from_str::<Vec<String>>(&s).ok()),
+            structured_output_schema: row.try_get("structured_output_schema").ok().flatten(),
+            structured_output_display: row.try_get("structured_output_display").ok().flatten(),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         })
@@ -1020,26 +954,6 @@ impl PresetRepository {
             lock_reason: row.try_get("lock_reason").ok(),
             exclusive_group_key: row.try_get("exclusive_group_key").ok(),
             exclusive_group_label: row.try_get("exclusive_group_label").ok(),
-            created_at: row.try_get("created_at").unwrap_or_default(),
-            updated_at: row.try_get("updated_at").unwrap_or_default(),
-        }
-    }
-
-    fn row_to_preset_example_record(row: sqlx::sqlite::SqliteRow) -> PresetExampleRecord {
-        PresetExampleRecord {
-            id: row.try_get("id").unwrap_or_default(),
-            preset_id: row.try_get("preset_id").unwrap_or_default(),
-            semantic_option_id: row
-                .try_get::<Option<i64>, _>("semantic_option_id")
-                .unwrap_or(None)
-                .filter(|v| *v > 0),
-            role: row.try_get("role").unwrap_or_default(),
-            content: row.try_get("content").unwrap_or_default(),
-            sort_order: row.try_get("sort_order").unwrap_or_default(),
-            is_enabled: row
-                .try_get::<i64, _>("is_enabled")
-                .map(|v| v != 0)
-                .unwrap_or(true),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         }
@@ -1091,6 +1005,8 @@ impl PresetRepository {
             )
             .ok()
             .flatten(),
+            structured_output_schema_override: row.try_get("structured_output_schema_override").ok().flatten(),
+            structured_output_display_override: row.try_get("structured_output_display_override").ok().flatten(),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         }
@@ -1186,30 +1102,6 @@ impl PresetRepository {
         })
     }
 
-    fn normalized_preset_example_from_row(
-        row: sqlx::sqlite::SqliteRow,
-    ) -> Result<NormalizedPresetExampleInput, String> {
-        Ok(NormalizedPresetExampleInput {
-            role: Self::normalize_example_role(
-                0,
-                &row.try_get::<String, _>("role").unwrap_or_default(),
-            )?,
-            content: Self::normalize_required_from_row(
-                row.try_get("content").unwrap_or_default(),
-                "preset_examples.content",
-            )?,
-            sort_order: row.try_get("sort_order").unwrap_or_default(),
-            is_enabled: row
-                .try_get::<i64, _>("is_enabled")
-                .map(|value| value != 0)
-                .unwrap_or(true),
-            semantic_option_id: row
-                .try_get::<Option<i64>, _>("semantic_option_id")
-                .unwrap_or(None)
-                .filter(|value| *value > 0),
-        })
-    }
-
     fn normalize_required_from_row(value: String, field_name: &str) -> Result<String, String> {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -1239,27 +1131,26 @@ impl PresetRepository {
                     return Ok(None);
                 }
                 let normalized = trimmed.to_lowercase();
-                if !["compact", "verbose", "auto"].contains(&normalized.as_str()) {
-                    eprintln!(
-                        "警告: response_mode '{}' 无效，已被忽略，使用默认值 compact",
-                        mode
-                    );
-                    return Ok(Some("compact".to_string()));
+                match normalized.as_str() {
+                    "pseudo_xml" | "structured_json" => Ok(Some(normalized)),
+                    "text" | "json_object" | "compact" | "verbose" | "auto" => {
+                        eprintln!(
+                            "警告: response_mode '{}' 已废弃，自动映射为 pseudo_xml",
+                            mode
+                        );
+                        Ok(Some("pseudo_xml".to_string()))
+                    }
+                    _ => {
+                        eprintln!(
+                            "警告: response_mode '{}' 无效，已被忽略，使用默认值 pseudo_xml",
+                            mode
+                        );
+                        Ok(Some("pseudo_xml".to_string()))
+                    }
                 }
-                Ok(Some(normalized))
             }
             None => Ok(None),
         }
-    }
-
-    fn normalize_example_role(index: usize, value: &str) -> Result<String, String> {
-        let trimmed = value.trim().to_lowercase();
-        if !["user", "assistant", "system"].contains(&trimmed.as_str()) {
-            return Err(format!(
-                "examples[{index}].role 必须是 user、assistant 或 system"
-            ));
-        }
-        Ok(trimmed)
     }
 
     fn serialize_optional_string_array(

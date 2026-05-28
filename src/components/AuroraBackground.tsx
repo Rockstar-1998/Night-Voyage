@@ -97,24 +97,7 @@ export const AuroraBackground: Component<AuroraBackgroundProps> = (props) => {
 
     return (
         <div class="fixed inset-0 -z-10 overflow-hidden bg-xuanqing pointer-events-none">
-            <div ref={charBgRef} style={{ opacity: 0 }} class="absolute inset-0">
-                <img
-                    ref={imgRefA}
-                    src={slotAUrl() || undefined}
-                    style={{ filter: 'blur(60px) saturate(1.2)', 'object-fit': 'cover', opacity: 0 }}
-                    class="absolute inset-0 w-full h-full"
-                />
-                <img
-                    ref={imgRefB}
-                    src={slotBUrl() || undefined}
-                    style={{ filter: 'blur(60px) saturate(1.2)', 'object-fit': 'cover', opacity: 0 }}
-                    class="absolute inset-0 w-full h-full"
-                />
-                <div class="absolute inset-0" style={{ background: 'rgba(6, 12, 20, 0.6)' }} />
-            </div>
-
-            <div class="absolute inset-0 bg-gradient-to-br from-[#060C14] via-[#0B121B] to-black opacity-80" />
-
+            {/* Aurora layers — at the bottom, fade out when character image is active */}
             <Show when={props.enableAurora !== false}>
                 <div ref={auroraContainerRef} style={{ opacity: 1 }} class="absolute inset-0">
                     <div
@@ -150,6 +133,26 @@ export const AuroraBackground: Component<AuroraBackgroundProps> = (props) => {
                     'background-image': `url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`
                 }} />
             </Show>
+
+            {/* Gradient overlay — between aurora and character image */}
+            <div class="absolute inset-0 bg-gradient-to-br from-[#060C14] via-[#0B121B] to-black opacity-80" />
+
+            {/* Character image layer — on top of everything, visible only in chat */}
+            <div ref={charBgRef} style={{ opacity: 0 }} class="absolute inset-0">
+                <img
+                    ref={imgRefA}
+                    src={slotAUrl() || undefined}
+                    style={{ filter: 'blur(30px) saturate(1.2)', 'object-fit': 'cover', opacity: 0 }}
+                    class="absolute inset-0 w-full h-full"
+                />
+                <img
+                    ref={imgRefB}
+                    src={slotBUrl() || undefined}
+                    style={{ filter: 'blur(30px) saturate(1.2)', 'object-fit': 'cover', opacity: 0 }}
+                    class="absolute inset-0 w-full h-full"
+                />
+                <div class="absolute inset-0" style={{ background: 'rgba(6, 12, 20, 0.35)' }} />
+            </div>
         </div>
     );
 };

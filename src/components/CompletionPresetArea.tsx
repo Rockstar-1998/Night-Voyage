@@ -95,10 +95,13 @@ const parseOptionalFloat = (fieldName: string, value: string) => {
 const normalizeResponseMode = (value: string) => {
   const normalized = value.trim();
   if (!normalized) return undefined;
-  if (normalized === 'text' || normalized === 'json_object') {
+  if (normalized === 'pseudo_xml' || normalized === 'structured_json') {
     return normalized;
   }
-  throw new Error('responseMode 只支持 text 或 json_object');
+  if (normalized === 'text' || normalized === 'json_object') {
+    return 'pseudo_xml';
+  }
+  throw new Error('responseMode 只支持 pseudo_xml 或 structured_json');
 };
 
 const buildProviderOverrideInputs = (
@@ -137,6 +140,7 @@ const buildProviderOverrideInputs = (
       presencePenaltyOverride: parseOptionalFloat('presencePenaltyOverride', override.presencePenaltyOverride),
       frequencyPenaltyOverride: parseOptionalFloat('frequencyPenaltyOverride', override.frequencyPenaltyOverride),
       responseModeOverride: normalizeResponseMode(override.responseModeOverride),
+      structuredOutputSchemaOverride: normalizeOptional(override.structuredOutputSchemaOverride),
       stopSequencesOverride: stopSequencesOverride.length > 0 ? stopSequencesOverride : undefined,
       disabledBlockTypes: disabledBlockTypes.length > 0 ? disabledBlockTypes : undefined,
     });
@@ -161,6 +165,7 @@ const buildPresetSettingsPayload = (draft: PresetSettingsDraft): CreatePresetPay
     presencePenalty: parseOptionalFloat('presencePenalty', draft.presencePenalty),
     frequencyPenalty: parseOptionalFloat('frequencyPenalty', draft.frequencyPenalty),
     responseMode: normalizeResponseMode(draft.responseMode),
+    structuredOutputSchema: normalizeOptional(draft.structuredOutputSchema),
     stopSequences: splitConfigItems(draft.stopSequencesText).map((stopText, index) => ({
       stopText,
       sortOrder: index,
@@ -967,7 +972,7 @@ export const CompletionPresetArea: Component = () => {
 
   return (
     <div class="flex-1 flex h-full bg-transparent overflow-hidden relative">
-      <div class="w-80 border-r border-white/5 bg-night-water/40 backdrop-blur-xl flex flex-col">
+      <div class="w-80 border-r border-white/5 bg-night-water/30 backdrop-blur-sm flex flex-col">
         <div class="p-6 border-b border-white/5 space-y-4">
           <div>
             <h2 class="text-3xl font-black text-white tracking-tighter uppercase italic">预设列表</h2>
@@ -1038,7 +1043,7 @@ export const CompletionPresetArea: Component = () => {
       </div>
 
       <div class="flex-1 flex flex-col h-full overflow-hidden">
-        <div class="p-8 flex items-center justify-between border-b border-white/5 bg-xuanqing/20 gap-6">
+        <div class="p-8 flex items-center justify-between border-b border-white/5 bg-transparent gap-6">
           <div class="flex items-center gap-4 flex-1 min-w-0">
             <div class="relative flex-1 max-w-xl group">
               <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={18} />
@@ -1149,7 +1154,6 @@ export const CompletionPresetArea: Component = () => {
                             <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">分类 {detail().preset.category}</span>
                             <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">semanticGroups {detail().semanticGroups.length}</span>
                             <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">blocks {detail().blocks.length}</span>
-                            <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">examples {detail().examples.length}</span>
                             <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">stop {detail().stopSequences.length}</span>
                             <span class="px-2 py-0.5 rounded-md border border-white/10 bg-white/5">providerOverrides {detail().providerOverrides.length}</span>
                           </div>

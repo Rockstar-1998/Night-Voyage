@@ -191,7 +191,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
   };
 
   return (
-    <div class="w-full flex flex-col bg-night-water border-r border-white/5 h-full relative pt-10">
+    <div class="w-full flex flex-col bg-transparent h-full relative pt-10">
       <div class="p-8 flex flex-col gap-6">
         <div class="flex items-center justify-between">
           <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">角色展示柜</h1>

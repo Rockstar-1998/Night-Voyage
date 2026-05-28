@@ -240,7 +240,7 @@ pub async fn chat_test_handler(
     })?;
 
     let conv_result = sqlx::query(
-        "INSERT INTO conversations (conversation_type, title, host_character_id, provider_id, chat_mode, agent_provider_policy, created_at, updated_at) VALUES ('single', 'BackdoorTest', ?, ?, 'classic', 'shared_host_provider', ?, ?)",
+        "INSERT INTO conversations (conversation_type, title, host_character_id, provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at) VALUES ('single', 'BackdoorTest', ?, ?, 'classic', 'shared_host_provider', 'disabled', ?, ?)",
     )
     .bind(test_char_id)
     .bind(provider_id)

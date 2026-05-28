@@ -7,6 +7,7 @@ interface NewChatModalProps {
   isOpen: boolean;
   onClose: () => void;
   npcCharacters: CharacterCard[];
+  playerCharacters: CharacterCard[];
   worldBooks: WorldBookSummary[];
   providers: ApiProviderSummary[];
   onCreateConversation: (payload: CreateConversationPayload) => Promise<void | number> | void;
@@ -17,10 +18,11 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [step, setStep] = createSignal(1);
   const [conversationType, setConversationType] = createSignal<ConversationType | null>(null);
   const [title, setTitle] = createSignal('');
-  const [hostDisplayName, setHostDisplayName] = createSignal('主持人');
+  const [selectedPlayerCharacterId, setSelectedPlayerCharacterId] = createSignal<number | undefined>();
   const [selectedCharacterId, setSelectedCharacterId] = createSignal<number | undefined>();
   const [selectedWorldBookId, setSelectedWorldBookId] = createSignal<number | undefined>();
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | undefined>();
+  const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
 
   const [roomPort, setRoomPort] = createSignal('');
   const [roomPassphrase, setRoomPassphrase] = createSignal('');
@@ -43,7 +45,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setStep(1);
     setConversationType(null);
     setTitle('');
-    setHostDisplayName('主持人');
+    setSelectedPlayerCharacterId(undefined);
     setSelectedCharacterId(undefined);
     setSelectedWorldBookId(undefined);
     setSelectedProviderId(props.providers[0]?.id);
@@ -52,6 +54,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setRoomResult(null);
     setRoomError('');
     setCopied(false);
+    setSelectedOpeningIndex(0);
   };
 
   const canGoNext = createMemo(() => Boolean(selectedCharacterId()));
@@ -66,7 +69,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     }
     return '';
   });
-  const canSubmit = createMemo(() => conversationConfigError().length === 0);
+  const canSubmit = createMemo(() => conversationConfigError().length === 0 && Boolean(selectedPlayerCharacterId()));
 
   const handleSubmit = async () => {
     if (createdConversationId()) {
@@ -74,16 +77,17 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       props.onClose();
       return;
     }
-    if (!canSubmit() || !conversationType() || !selectedCharacterId()) return;
+    if (!canSubmit() || !conversationType() || !selectedCharacterId() || !selectedPlayerCharacterId()) return;
     const payload: CreateConversationPayload = {
       conversationType: conversationType()!,
       title: title().trim() || selectedCharacter()?.name || undefined,
       hostCharacterId: selectedCharacterId(),
       worldBookId: selectedWorldBookId(),
       providerId: selectedProviderId(),
-      hostDisplayName: hostDisplayName().trim() || '主持人',
+      hostPlayerCharacterId: selectedPlayerCharacterId()!,
       chatMode: 'classic',
       agentProviderPolicy: 'shared_host_provider',
+      openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
     };
     try {
       const conversationId = await props.onCreateConversation(payload);
@@ -107,7 +111,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const handleCreateRoom = async () => {
     let conversationId = createdConversationId();
     if (!conversationId) {
-      if (!canSubmit() || !conversationType() || !selectedCharacterId()) {
+      if (!canSubmit() || !conversationType() || !selectedCharacterId() || !selectedPlayerCharacterId()) {
         setRoomError(conversationConfigError() || '请先完善会话配置');
         return;
       }
@@ -119,9 +123,10 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
         hostCharacterId: selectedCharacterId(),
         worldBookId: selectedWorldBookId(),
         providerId: selectedProviderId(),
-        hostDisplayName: hostDisplayName().trim() || '主持人',
+        hostPlayerCharacterId: selectedPlayerCharacterId()!,
         chatMode: 'classic',
         agentProviderPolicy: 'shared_host_provider',
+        openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
       };
       try {
         const result = await props.onCreateConversation(payload);
@@ -254,6 +259,44 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                   )}
                 </For>
               </div>
+
+              <div class="text-center mb-4">
+                <h2 class="text-2xl md:text-3xl font-black text-white mb-2">选择玩家角色</h2>
+                <p class="text-mist-solid/40">选择你在会话中扮演的角色。</p>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <For each={props.playerCharacters}>
+                  {(character) => (
+                    <button
+                      onClick={() => setSelectedPlayerCharacterId(character.id)}
+                      class={`relative aspect-video rounded-3xl overflow-hidden border-2 text-left transition-all ${selectedPlayerCharacterId() === character.id
+                        ? 'border-purple-500 shadow-[0_0_30px_rgba(168,85,247,0.3)] scale-[1.02]'
+                        : 'border-white/5 hover:border-white/20'}`}
+                    >
+                      <img
+                        src={resolveImageSrc(character.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`)}
+                        alt={character.name}
+                        class="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700"
+                      />
+                      <div class="absolute inset-0 bg-purple-500/5" />
+                      <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                      <div class="absolute bottom-0 left-0 right-0 p-4">
+                        <h3 class="text-xl font-bold text-white mb-2">{character.name}</h3>
+                        <div class="flex flex-wrap gap-2">
+                          <For each={character.tags.slice(0, 3)}>
+                            {(tag) => <span class="text-[9px] px-2 py-0.5 rounded-md bg-purple-500 text-white font-bold">{tag}</span>}
+                          </For>
+                        </div>
+                      </div>
+                      <Show when={selectedPlayerCharacterId() === character.id}>
+                        <div class="absolute top-4 right-4 bg-purple-500 p-2 rounded-full text-white shadow-lg">
+                          <CheckCircle2 size={16} />
+                        </div>
+                      </Show>
+                    </button>
+                  )}
+                </For>
+              </div>
             </Show>
 
             <Show when={step() === 2}>
@@ -283,14 +326,40 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40"
                     />
                   </div>
-                  <div class="space-y-2">
-                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">房主显示名</label>
-                    <input
-                      value={hostDisplayName()}
-                      onInput={(e) => setHostDisplayName(e.currentTarget.value)}
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40"
-                    />
-                  </div>
+                  <Show when={(selectedCharacter()?.firstMessages?.length ?? 0) > 0}>
+                    <div class="space-y-2">
+                      <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">开场消息</label>
+                      <div class="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                        <For each={selectedCharacter()?.firstMessages ?? []}>
+                          {(msg, idx) => (
+                            <button
+                              onClick={() => setSelectedOpeningIndex(idx())}
+                              class={`w-full text-left p-3 rounded-xl border transition-all ${
+                                selectedOpeningIndex() === idx()
+                                  ? 'bg-accent/10 border-accent/40 text-white'
+                                  : 'bg-white/5 border-white/5 text-mist-solid/60 hover:bg-white/10'
+                              }`}
+                            >
+                              <div class="flex items-start gap-2">
+                                <span class="text-[10px] font-bold text-accent/60 shrink-0 mt-0.5">#{idx() + 1}</span>
+                                <p class="text-sm line-clamp-2">{msg}</p>
+                              </div>
+                            </button>
+                          )}
+                        </For>
+                        <button
+                          onClick={() => setSelectedOpeningIndex(-1)}
+                          class={`w-full text-left p-3 rounded-xl border transition-all ${
+                            selectedOpeningIndex() === -1
+                              ? 'bg-accent/10 border-accent/40 text-white'
+                              : 'bg-white/5 border-white/5 text-mist-solid/40 hover:bg-white/10'
+                          }`}
+                        >
+                          <span class="text-sm">不发送开场消息</span>
+                        </button>
+                      </div>
+                    </div>
+                  </Show>
                 </div>
 
                 <div class="space-y-4 p-6 rounded-3xl bg-white/5 border border-white/5">

@@ -170,6 +170,8 @@ pub struct PresetSummary {
     pub thinking_enabled: Option<bool>,
     pub thinking_budget_tokens: Option<i64>,
     pub beta_features: Option<Vec<String>>,
+    pub structured_output_schema: Option<String>,
+    pub structured_output_display: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -238,6 +240,8 @@ pub struct PresetProviderOverrideRecord {
     pub thinking_enabled_override: Option<bool>,
     pub thinking_budget_tokens_override: Option<i64>,
     pub beta_features_override: Option<Vec<String>>,
+    pub structured_output_schema_override: Option<String>,
+    pub structured_output_display_override: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -317,7 +321,6 @@ pub struct PresetSemanticGroupRecord {
 pub struct PresetDetail {
     pub preset: PresetSummary,
     pub blocks: Vec<PresetPromptBlockRecord>,
-    pub examples: Vec<PresetExampleRecord>,
     pub stop_sequences: Vec<PresetStopSequenceRecord>,
     pub provider_overrides: Vec<PresetProviderOverrideRecord>,
     pub semantic_groups: Vec<PresetSemanticGroupRecord>,
@@ -344,6 +347,8 @@ pub struct PresetCompilePreviewParams {
     pub thinking_enabled: Option<bool>,
     pub thinking_budget_tokens: Option<i64>,
     pub beta_features: Option<Vec<String>>,
+    pub structured_output_schema: Option<String>,
+    pub structured_output_display: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -353,7 +358,6 @@ pub struct PresetCompilePreview {
     pub provider_kind: Option<String>,
     pub system_text: String,
     pub system_blocks: Vec<PresetPromptBlockRecord>,
-    pub example_messages: Vec<PresetCompilePreviewMessage>,
     pub params: PresetCompilePreviewParams,
 }
 
@@ -388,6 +392,14 @@ pub struct RegenerateRoundResult {
     pub round: RoundState,
     pub assistant_message: UiMessage,
     pub preserved_version_count: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryFailedRoundResult {
+    pub round: RoundState,
+    pub assistant_message: UiMessage,
+    pub attempt_count: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

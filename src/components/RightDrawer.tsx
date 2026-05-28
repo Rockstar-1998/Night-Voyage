@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-j
 import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Pencil, Save, Sparkles, UserRound } from '../lib/icons';
 import { animate } from '../lib/animate';
 import type { CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
+import { toAssetUrl } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 
 interface RightDrawerProps {
@@ -19,6 +20,9 @@ interface RightDrawerProps {
   plotSummaries: PlotSummaryRecord[];
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
+  playerCharacters: CharacterCard[];
+  currentPlayerCharacter?: CharacterCard;
+  onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
 }
 
 const getSectionLabel = (sectionKey: string) => {
@@ -75,6 +79,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [bindingPresetId, setBindingPresetId] = createSignal<string>('');
   const [bindingWorldBookId, setBindingWorldBookId] = createSignal<string>('');
   const [bindingSaving, setBindingSaving] = createSignal(false);
+  const [switchingPlayerCharacter, setSwitchingPlayerCharacter] = createSignal(false);
   let drawerRef: HTMLDivElement | undefined;
 
   const toggleDrawer = () => {
@@ -173,9 +178,21 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     }
   };
 
+  const handleSwitchPlayerCharacter = async (playerCharacterId: number) => {
+    setSwitchingPlayerCharacter(true);
+    setLocalError(null);
+    try {
+      await props.onSwitchPlayerCharacter(playerCharacterId);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSwitchingPlayerCharacter(false);
+    }
+  };
+
   onMount(() => {
     if (drawerRef) {
-      drawerRef.style.transform = 'translateX(100%)';
+      drawerRef.style.translate = '100%';
     }
   });
 
@@ -277,6 +294,50 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                 <Save size={16} class={bindingSaving() ? 'animate-pulse' : ''} />
               </IconButton>
             </div>
+          </section>
+
+          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                <UserRound size={18} />
+              </div>
+              <div>
+                <p class="text-sm font-semibold text-white">玩家角色卡</p>
+                <p class="text-xs text-mist-solid/40">切换当前会话中你扮演的角色卡。</p>
+              </div>
+            </div>
+            <Show
+              when={props.currentPlayerCharacter}
+              fallback={<div class="text-sm text-mist-solid/45">当前会话未绑定玩家角色卡。</div>}
+            >
+              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3 flex items-center gap-3">
+                <Show when={props.currentPlayerCharacter?.imagePath} fallback={<div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-mist-solid/40"><UserRound size={16} /></div>}>
+                  <img src={toAssetUrl(props.currentPlayerCharacter?.imagePath)} alt="" class="w-8 h-8 rounded-lg object-cover" />
+                </Show>
+                <p class="text-sm font-semibold text-white">{props.currentPlayerCharacter?.name}</p>
+              </div>
+            </Show>
+            <Show when={props.playerCharacters.length > 0}>
+              <div class="space-y-2">
+                <label class="text-xs uppercase tracking-widest text-mist-solid/35">切换角色卡</label>
+                <select
+                  value={props.currentPlayerCharacter?.id ?? ''}
+                  disabled={switchingPlayerCharacter()}
+                  onChange={(event) => {
+                    const val = event.currentTarget.value;
+                    if (val) void handleSwitchPlayerCharacter(Number(val));
+                  }}
+                  class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid outline-none focus:border-accent/40 disabled:opacity-50"
+                >
+                  <For each={props.playerCharacters}>
+                    {(pc) => <option value={pc.id}>{pc.name}</option>}
+                  </For>
+                </select>
+              </div>
+            </Show>
+            <Show when={switchingPlayerCharacter()}>
+              <p class="text-xs text-sky-200 animate-pulse">正在切换玩家角色卡…</p>
+            </Show>
           </section>
 
           <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">

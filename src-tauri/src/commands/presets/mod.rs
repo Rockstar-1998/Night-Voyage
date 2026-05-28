@@ -1,7 +1,7 @@
 use crate::models::{PresetDetail, PresetSummary};
 use crate::services::preset_service::PresetService;
 use crate::validators::preset_validator::{
-    PresetExampleInput, PresetPromptBlockInput, PresetProviderOverrideInput,
+    PresetPromptBlockInput, PresetProviderOverrideInput,
     PresetSemanticGroupInput, PresetStopSequenceInput,
 };
 use crate::AppState;
@@ -52,8 +52,9 @@ pub async fn presets_create(
     thinking_enabled: Option<bool>,
     thinking_budget_tokens: Option<i64>,
     beta_features: Option<Vec<String>>,
+    structured_output_schema: Option<String>,
+    structured_output_display: Option<String>,
     blocks: Option<Vec<PresetPromptBlockInput>>,
-    examples: Option<Vec<PresetExampleInput>>,
     stop_sequences: Option<Vec<PresetStopSequenceInput>>,
     provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
     semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
@@ -74,8 +75,9 @@ pub async fn presets_create(
             thinking_enabled,
             thinking_budget_tokens,
             beta_features,
+            structured_output_schema,
+            structured_output_display,
             blocks,
-            examples,
             stop_sequences,
             provider_overrides,
             semantic_groups,
@@ -100,8 +102,9 @@ pub async fn presets_update(
     thinking_enabled: Option<bool>,
     thinking_budget_tokens: Option<i64>,
     beta_features: Option<Vec<String>>,
+    structured_output_schema: Option<String>,
+    structured_output_display: Option<String>,
     blocks: Option<Vec<PresetPromptBlockInput>>,
-    examples: Option<Vec<PresetExampleInput>>,
     stop_sequences: Option<Vec<PresetStopSequenceInput>>,
     provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
     semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
@@ -123,8 +126,9 @@ pub async fn presets_update(
             thinking_enabled,
             thinking_budget_tokens,
             beta_features,
+            structured_output_schema,
+            structured_output_display,
             blocks,
-            examples,
             stop_sequences,
             provider_overrides,
             semantic_groups,

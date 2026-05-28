@@ -11,6 +11,7 @@ export interface PresetProviderOverrideDraft {
   presencePenaltyOverride: string;
   frequencyPenaltyOverride: string;
   responseModeOverride: string;
+  structuredOutputSchemaOverride: string;
   stopSequencesOverrideText: string;
   disabledBlockTypesText: string;
 }
@@ -25,6 +26,7 @@ export interface PresetSettingsDraft {
   presencePenalty: string;
   frequencyPenalty: string;
   responseMode: string;
+  structuredOutputSchema: string;
   stopSequencesText: string;
   providerOverrides: PresetProviderOverrideDraft[];
 }
@@ -37,6 +39,7 @@ const EMPTY_PROVIDER_OVERRIDE: PresetProviderOverrideDraft = {
   presencePenaltyOverride: '',
   frequencyPenaltyOverride: '',
   responseModeOverride: '',
+  structuredOutputSchemaOverride: '',
   stopSequencesOverrideText: '',
   disabledBlockTypesText: '',
 };
@@ -50,7 +53,8 @@ const EMPTY_PRESET_SETTINGS_DRAFT: PresetSettingsDraft = {
   topP: '',
   presencePenalty: '',
   frequencyPenalty: '',
-  responseMode: '',
+  responseMode: 'pseudo_xml',
+  structuredOutputSchema: '',
   stopSequencesText: '',
   providerOverrides: [],
 };
@@ -71,7 +75,8 @@ const buildDraftFromDetail = (detail: PresetDetail | null): PresetSettingsDraft 
     topP: numberToString(detail.preset.topP),
     presencePenalty: numberToString(detail.preset.presencePenalty),
     frequencyPenalty: numberToString(detail.preset.frequencyPenalty),
-    responseMode: detail.preset.responseMode ?? '',
+    responseMode: detail.preset.responseMode || 'pseudo_xml',
+    structuredOutputSchema: detail.preset.structuredOutputSchema ?? '',
     stopSequencesText: detail.stopSequences.map((item) => item.stopText).join('\n'),
     providerOverrides: detail.providerOverrides.map((override) => ({
       providerKind: override.providerKind,
@@ -81,6 +86,7 @@ const buildDraftFromDetail = (detail: PresetDetail | null): PresetSettingsDraft 
       presencePenaltyOverride: numberToString(override.presencePenaltyOverride),
       frequencyPenaltyOverride: numberToString(override.frequencyPenaltyOverride),
       responseModeOverride: override.responseModeOverride ?? '',
+      structuredOutputSchemaOverride: override.structuredOutputSchemaOverride ?? '',
       stopSequencesOverrideText: override.stopSequencesOverride.join('\n'),
       disabledBlockTypesText: override.disabledBlockTypes.join('\n'),
     })),
@@ -237,14 +243,74 @@ export const CompletionParametersPanel: Component<{
                   <label class="text-xs text-mist-solid/50">Response Mode</label>
                   <select
                     value={draft().responseMode}
-                    onChange={(e) => updateDraft({ responseMode: e.currentTarget.value })}
+                    onChange={(e) => {
+                      const mode = e.currentTarget.value;
+                      if (mode === 'structured_json' && !draft().structuredOutputSchema?.trim()) {
+                        updateDraft({
+                          responseMode: mode,
+                          structuredOutputSchema: JSON.stringify({
+                            type: "object",
+                            properties: {
+                              "思考": { type: "string", description: "你的内心独白和推理过程" },
+                              "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                            },
+                            required: ["思考", "正文"],
+                            additionalProperties: false,
+                          }, null, 2),
+                        });
+                      } else {
+                        updateDraft({ responseMode: mode });
+                      }
+                    }}
                     class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
                   >
-                    <option value="">默认</option>
-                    <option value="text">text</option>
-                    <option value="json_object">json_object</option>
+                    <option value="pseudo_xml">伪 XML</option>
+                    <option value="structured_json">结构化输出</option>
                   </select>
                 </div>
+                <Show when={draft().responseMode === 'structured_json'}>
+                  <div class="space-y-2 mt-2">
+                    <div class="flex items-center justify-between">
+                      <label class="text-xs text-mist-solid/50">JSON Schema</label>
+                      <div class="flex gap-1">
+                        <button
+                          type="button"
+                          class="text-xs px-2 py-1 bg-accent/10 border border-accent/20 rounded-lg text-accent/70 hover:bg-accent/20 transition-colors"
+                          onClick={() => updateDraft({ structuredOutputSchema: JSON.stringify({
+                            type: "object",
+                            properties: {
+                              "思考": { type: "string", description: "你的内心独白和推理过程" },
+                              "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                            },
+                            required: ["思考", "正文"],
+                            additionalProperties: false,
+                          }, null, 2) })}
+                        >基础</button>
+                        <button
+                          type="button"
+                          class="text-xs px-2 py-1 bg-accent/10 border border-accent/20 rounded-lg text-accent/70 hover:bg-accent/20 transition-colors"
+                          onClick={() => updateDraft({ structuredOutputSchema: JSON.stringify({
+                            type: "object",
+                            properties: {
+                              "思考": { type: "string", description: "你的内心独白和推理过程" },
+                              "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                              "选项": { type: "object", description: "玩家可以做出的选择", additionalProperties: { type: "string" } },
+                            },
+                            required: ["思考", "正文"],
+                            additionalProperties: false,
+                          }, null, 2) })}
+                        >交互小说</button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={draft().structuredOutputSchema || ''}
+                      onInput={(e) => updateDraft({ structuredOutputSchema: e.currentTarget.value })}
+                      placeholder="留空 = 提示词驱动（仅要求模型输出 JSON，不约束结构）"
+                      rows={8}
+                      class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent/40 resize-y"
+                    />
+                  </div>
+                </Show>
                 <div class="space-y-2">
                   <label class="text-xs text-mist-solid/50">Presence Penalty</label>
                   <input
@@ -341,14 +407,75 @@ export const CompletionParametersPanel: Component<{
                           <label class="text-xs text-mist-solid/50">Response Mode Override</label>
                           <select
                             value={override.responseModeOverride}
-                            onChange={(e) => updateProviderOverride(index(), { responseModeOverride: e.currentTarget.value })}
+                            onChange={(e) => {
+                              const mode = e.currentTarget.value;
+                              if (mode === 'structured_json' && !override.structuredOutputSchemaOverride?.trim()) {
+                                updateProviderOverride(index(), {
+                                  responseModeOverride: mode,
+                                  structuredOutputSchemaOverride: JSON.stringify({
+                                    type: "object",
+                                    properties: {
+                                      "思考": { type: "string", description: "你的内心独白和推理过程" },
+                                      "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                                    },
+                                    required: ["思考", "正文"],
+                                    additionalProperties: false,
+                                  }, null, 2),
+                                });
+                              } else {
+                                updateProviderOverride(index(), { responseModeOverride: mode });
+                              }
+                            }}
                             class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
                           >
-                            <option value="">默认</option>
-                            <option value="text">text</option>
-                            <option value="json_object">json_object</option>
+                            <option value="">默认（继承预设）</option>
+                            <option value="pseudo_xml">伪 XML</option>
+                            <option value="structured_json">结构化输出</option>
                           </select>
                         </div>
+                        <Show when={override.responseModeOverride === 'structured_json'}>
+                          <div class="space-y-2 mt-2">
+                            <div class="flex items-center justify-between">
+                              <label class="text-xs text-mist-solid/50">JSON Schema Override</label>
+                              <div class="flex gap-1">
+                                <button
+                                  type="button"
+                                  class="text-xs px-2 py-1 bg-accent/10 border border-accent/20 rounded-lg text-accent/70 hover:bg-accent/20 transition-colors"
+                                  onClick={() => updateProviderOverride(index(), { structuredOutputSchemaOverride: JSON.stringify({
+                                    type: "object",
+                                    properties: {
+                                      "思考": { type: "string", description: "你的内心独白和推理过程" },
+                                      "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                                    },
+                                    required: ["思考", "正文"],
+                                    additionalProperties: false,
+                                  }, null, 2) })}
+                                >基础</button>
+                                <button
+                                  type="button"
+                                  class="text-xs px-2 py-1 bg-accent/10 border border-accent/20 rounded-lg text-accent/70 hover:bg-accent/20 transition-colors"
+                                  onClick={() => updateProviderOverride(index(), { structuredOutputSchemaOverride: JSON.stringify({
+                                    type: "object",
+                                    properties: {
+                                      "思考": { type: "string", description: "你的内心独白和推理过程" },
+                                      "正文": { type: "string", description: "故事正文，这是玩家看到的主要内容" },
+                                      "选项": { type: "object", description: "玩家可以做出的选择", additionalProperties: { type: "string" } },
+                                    },
+                                    required: ["思考", "正文"],
+                                    additionalProperties: false,
+                                  }, null, 2) })}
+                                >交互小说</button>
+                              </div>
+                            </div>
+                            <textarea
+                              value={override.structuredOutputSchemaOverride || ''}
+                              onInput={(e) => updateProviderOverride(index(), { structuredOutputSchemaOverride: e.currentTarget.value })}
+                              placeholder="留空 = 使用预设默认 Schema"
+                              rows={8}
+                              class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent/40 resize-y"
+                            />
+                          </div>
+                        </Show>
                         <div class="space-y-2">
                           <label class="text-xs text-mist-solid/50">Presence Penalty Override</label>
                           <input

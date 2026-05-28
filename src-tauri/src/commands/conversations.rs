@@ -4,6 +4,7 @@ use sqlx::Row;
 
 use crate::{
     models::{ConversationCreateResult, ConversationListItem, ConversationMember, RoundState},
+    repositories::message_repository::{InsertMessageRecord, MessageRepository},
     utils::now_ts,
     AppState,
 };
@@ -72,10 +73,11 @@ pub async fn conversations_create(
     world_book_id: Option<i64>,
     preset_id: Option<i64>,
     provider_id: Option<i64>,
-    host_display_name: String,
-    host_player_character_id: Option<i64>,
+    host_display_name: Option<String>,
+    host_player_character_id: i64,
     chat_mode: Option<String>,
     agent_provider_policy: Option<String>,
+    opening_message_index: Option<i64>,
 ) -> Result<ConversationCreateResult, String> {
     validate_conversation_type(&conversation_type)?;
     let host_character_id =
@@ -84,9 +86,20 @@ pub async fn conversations_create(
     let agent_provider_policy = normalize_agent_provider_policy(agent_provider_policy.as_deref())?;
     let now = now_ts();
     let title = normalize_title(title);
-    let host_display_name = normalize_display_name(&host_display_name)?;
-
     let mut tx = state.db.begin().await.map_err(|err| err.to_string())?;
+
+    let player_character_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM character_cards WHERE id = ?"
+    )
+    .bind(host_player_character_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| format!("玩家角色卡不存在: {err}"))?;
+
+    let host_display_name = match host_display_name {
+        Some(name) if !name.trim().is_empty() => normalize_display_name(&name)?,
+        _ => player_character_name.clone(),
+    };
     let preset_id = resolve_conversation_preset_id(
         &mut tx,
         host_character_id,
@@ -97,8 +110,8 @@ pub async fn conversations_create(
     let result = sqlx::query(
         "INSERT INTO conversations (
             conversation_type, title, host_character_id, world_book_id, preset_id,
-            provider_id, chat_mode, agent_provider_policy, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'disabled', ?, ?)",
     )
     .bind(&conversation_type)
     .bind(&title)
@@ -142,7 +155,83 @@ pub async fn conversations_create(
     .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;
-    let round_id = round_result.last_insert_rowid();
+    let mut round_id = round_result.last_insert_rowid();
+
+    if let Some(idx) = opening_message_index {
+        if idx >= 0 {
+            let opener_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM character_card_openers WHERE character_id = ?",
+            )
+            .bind(host_character_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+            let opening_content = if opener_count > 0 {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT opener_text FROM character_card_openers WHERE character_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1 OFFSET ?",
+                )
+                .bind(host_character_id)
+                .bind(idx)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?
+            } else if idx == 0 {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT first_message FROM character_cards WHERE id = ? LIMIT 1",
+                )
+                .bind(host_character_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?
+                .flatten()
+                .filter(|msg| !msg.trim().is_empty())
+            } else {
+                None
+            };
+
+            if let Some(content) = opening_content {
+                let message_id = MessageRepository::insert_record(
+                    &mut tx,
+                    InsertMessageRecord {
+                        conversation_id,
+                        round_id: Some(round_id),
+                        member_id: None,
+                        role: "assistant",
+                        message_kind: "assistant_visible",
+                        content: &content,
+                        is_hidden: false,
+                        is_swipe: false,
+                        swipe_index: 0,
+                        reply_to_id: None,
+                        created_at: now,
+                    },
+                )
+                .await?;
+
+                sqlx::query(
+                    "UPDATE message_rounds SET status = 'completed', active_assistant_message_id = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(message_id)
+                .bind(now)
+                .bind(round_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+
+                let round2_result = sqlx::query(
+                    "INSERT INTO message_rounds (conversation_id, round_index, status, created_at, updated_at) VALUES (?, 2, 'collecting', ?, ?)",
+                )
+                .bind(conversation_id)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+                round_id = round2_result.last_insert_rowid();
+            }
+        }
+    }
 
     tx.commit().await.map_err(|err| err.to_string())?;
 
@@ -317,9 +406,19 @@ pub async fn conversation_members_update(
     is_active: Option<bool>,
 ) -> Result<ConversationMember, String> {
     let now = now_ts();
-    let next_display_name = match display_name.as_deref() {
-        Some(value) => Some(normalize_display_name(value)?),
-        None => None,
+    let next_display_name = if let Some(char_id) = player_character_id {
+        let char_name: String =
+            sqlx::query_scalar("SELECT name FROM character_cards WHERE id = ? LIMIT 1")
+                .bind(char_id)
+                .fetch_one(&state.db)
+                .await
+                .map_err(|err| err.to_string())?;
+        Some(normalize_display_name(&char_name)?)
+    } else {
+        match display_name.as_deref() {
+            Some(value) => Some(normalize_display_name(value)?),
+            None => None,
+        }
     };
 
     sqlx::query(
@@ -520,6 +619,18 @@ pub async fn conversations_delete(
         .execute(&state.db)
         .await
         .map_err(|err| err.to_string())?;
+
+    sqlx::query("DELETE FROM rooms WHERE conversation_id = ?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|err| {
+            eprintln!(
+                "[conversation-debug] delete:delete_rooms_error conversation_id={} error={}",
+                id, err
+            );
+            err.to_string()
+        })?;
 
     sqlx::query("DELETE FROM conversations WHERE id = ?")
         .bind(id)
@@ -883,7 +994,7 @@ pub async fn conversations_fork(
     let now = now_ts();
 
     let fork_id: i64 = sqlx::query_scalar(
-        "INSERT INTO conversations (title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
+        "INSERT INTO conversations (title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'disabled', ?, ?) RETURNING id"
     )
     .bind(&forked_title)
     .bind(host_character_id)

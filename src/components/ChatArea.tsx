@@ -8,10 +8,14 @@ interface ChatAreaProps {
   onRegenerate: (id: string, roundId?: number) => void;
   onEdit: (id: string, content: string) => void;
   onFork: (id: string) => void;
+  onDeleteMessage?: (id: string) => void;
+  onRetryFailed?: (id: string, roundId?: number) => void;
+  isRoomClient?: boolean;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
+  onChoiceSelect?: (key: string, value: string) => void;
 }
 
 export const ChatArea: Component<ChatAreaProps> = (props) => {
@@ -108,10 +112,14 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 onRegenerate={props.onRegenerate}
                 onEdit={props.onEdit}
                 onFork={props.onFork}
+                onDelete={props.onDeleteMessage}
+                onRetryFailed={props.onRetryFailed}
+                isRoomClient={props.isRoomClient}
                 swipeInfo={props.swipeInfo?.(msg.id)}
                 onSwitchSwipe={props.onSwitchSwipe ? (direction) => props.onSwitchSwipe!(msg.id, direction) : undefined}
                 formatConfig={props.formatConfig}
                 worldBookKeywords={props.worldBookKeywords}
+                onChoiceSelect={props.onChoiceSelect}
               />
             )}
           </For>

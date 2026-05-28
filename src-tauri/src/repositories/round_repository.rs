@@ -194,6 +194,19 @@ impl RoundRepository {
         Ok(())
     }
 
+    pub async fn mark_aborted(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+        let now = now_ts();
+        sqlx::query(
+            "UPDATE message_rounds SET status = 'aborted', updated_at = ? WHERE id = ?",
+        )
+        .bind(now)
+        .bind(round_id)
+        .execute(db)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
     pub async fn update_timestamp(
         tx: &mut Transaction<'_, sqlx::Sqlite>,
         round_id: i64,
@@ -483,7 +496,7 @@ impl RoundRepository {
         round_id: i64,
         assistant_message_id: i64,
         full_content: &str,
-        hidden_parts: &[crate::repositories::message_repository::PendingMessageContentPart],
+        content_parts: &[crate::repositories::message_repository::PendingMessageContentPart],
         pending_tool_use: &crate::repositories::message_repository::PendingToolUseSkeleton,
     ) -> Result<(), String> {
         if !full_content.is_empty() {
@@ -497,8 +510,7 @@ impl RoundRepository {
         crate::repositories::message_repository::MessageRepository::replace_content_parts(
             db,
             assistant_message_id,
-            full_content,
-            hidden_parts,
+            content_parts,
         )
         .await?;
 

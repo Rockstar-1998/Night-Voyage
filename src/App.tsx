@@ -19,7 +19,8 @@ import { CompletionPresetArea } from './components/CompletionPresetArea';
 import { MobileView } from './components/MobileView';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
-import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, conversationsFork } from './lib/backend';
+import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
+import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, listenMessageReset } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
 import {
   type ApiProviderSummary,
@@ -39,6 +40,7 @@ import {
   chatRegenerateRound,
   chatSubmitInput,
   conversationMembersList,
+  conversationMembersUpdate,
   conversationsCreate,
   conversationsDelete,
   conversationsList,
@@ -91,16 +93,20 @@ import {
   type RoomRoundStateUpdateEvent,
   type RoomPlayerMessageEvent,
   type RoomJoinResult,
+  roomLeave,
 } from './lib/backend';
 
-const toChatMessage = (message: UiMessage): ChatMessage => ({
+const toChatMessage = (message: UiMessage, aiCharacter?: CharacterCard, playerCharacter?: CharacterCard): ChatMessage => ({
   id: String(message.id),
   backendId: message.id,
   sender: message.role === 'assistant' ? 'ai' : 'user',
   senderName:
     message.role === 'assistant'
-      ? 'CHAT A.I+'
-      : message.displayName || '玩家',
+      ? (aiCharacter?.name || 'AI')
+      : (playerCharacter?.name || message.displayName || '玩家'),
+  avatar: message.role === 'assistant'
+    ? toAssetUrl(aiCharacter?.imagePath)
+    : toAssetUrl(playerCharacter?.imagePath),
   content: message.content,
   isStreaming: false,
   roundId: message.roundId,
@@ -136,6 +142,8 @@ type RoomClientSession = {
   port: number;
 };
 
+const DESKTOP_WORKSPACE_IDS = ['chat', 'settings', 'character', 'kb', 'workspace'] as const;
+
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -150,9 +158,13 @@ const DesktopView = (props: {
   onRegenerate: (id: string, roundId?: number) => void;
   onEdit: (id: string, content: string) => void;
   onFork: (id: string) => void;
+  onDeleteMessage?: (id: string) => void;
+  onRetryFailed?: (id: string, roundId?: number) => void;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   onSend: (content: string) => Promise<void> | void;
+  onAbort?: () => void | Promise<void>;
+  replyStatus?: 'idle' | 'connecting' | 'processing' | 'responding';
   activeModal: 'new_chat' | 'join_room' | null;
   setActiveModal: (modal: 'new_chat' | 'join_room' | null) => void;
   isFocusMode: boolean;
@@ -225,6 +237,8 @@ const DesktopView = (props: {
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number }) => Promise<void> | void;
+  currentPlayerCharacter?: CharacterCard;
+  onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
   worldBooks: WorldBookSummary[];
   activeWorldBookEntries: WorldBookEntryRecord[];
   worldBookEntriesLoading: boolean;
@@ -260,7 +274,7 @@ const DesktopView = (props: {
         </div>
       </div>
 
-      <div class={`flex h-full w-full overflow-hidden transition-all duration-500`}>
+      <div class={`flex h-full w-full overflow-hidden transition-all duration-500 bg-transparent`}>
         <Show when={!props.isFocusMode}>
           <WorkspaceSidebar
             activeWorkspace={props.activeWorkspace}
@@ -293,11 +307,11 @@ const DesktopView = (props: {
           </div>
         </Show>
 
-        <div class="flex-1 flex flex-col min-w-0 relative h-full">
+        <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
           <Show
             when={props.activeWorkspace === 'chat'}
             fallback={
-              <div class="w-full h-full">
+              <div class="w-full h-full bg-transparent">
                 <Show when={props.activeWorkspace === 'character'}>
                   <CharacterSidebar
                     npcCharacters={props.npcCharacters}
@@ -341,7 +355,7 @@ const DesktopView = (props: {
                   />
                 </Show>
                 <Show when={props.activeWorkspace === 'workspace'}>
-                  <div class="flex h-full w-full">
+                  <div class="flex h-full w-full bg-transparent">
                     <CompletionPresetArea />
                   </div>
                 </Show>
@@ -358,12 +372,14 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} />
+                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
                   <ChatInputBar
                     onSend={props.onSend}
+                    onAbort={props.onAbort}
+                    replyStatus={props.replyStatus}
                     allowEmptySend={props.allowEmptySend}
                     disabled={props.sending || !props.selectedConversationId}
                     placeholder={props.selectedConversationId ? '输入消息，联机会话可留空后发送表示本轮放弃发言' : '请先选择或创建会话'}
@@ -401,9 +417,189 @@ const DesktopView = (props: {
               plotSummaries={props.plotSummaries}
               onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
               onSavePlotSummary={props.onSavePlotSummary}
+              playerCharacters={props.playerCharacters}
+              currentPlayerCharacter={props.currentPlayerCharacter}
+              onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
             />
           </div>
         </Show>
+      </div>
+    </div>
+  );
+};
+
+const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
+  const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
+
+  return (
+    <div class="relative h-screen w-full bg-transparent font-sans overflow-hidden text-mist-solid">
+      <div class="absolute top-0 left-0 w-full z-50 pointer-events-none">
+        <div class="pointer-events-auto">
+          <TitleBar />
+        </div>
+      </div>
+
+      <div class={`flex h-full w-full overflow-hidden transition-all duration-500 bg-transparent`}>
+        <Show when={!props.isFocusMode}>
+          <WorkspaceSidebar
+            activeWorkspace={props.activeWorkspace}
+            onWorkspaceChange={props.onWorkspaceChange}
+          />
+        </Show>
+
+        <div class="flex-1 min-w-0 h-full">
+          <WorkspaceTransitionStage activeWorkspace={props.activeWorkspace} paneIds={DESKTOP_WORKSPACE_IDS}>
+            {(workspaceId) => {
+              switch (workspaceId) {
+                case 'chat':
+                  return (
+                    <>
+                      <Show when={!props.isFocusMode}>
+                        <div class="flex-none">
+                          <SessionSidebar
+                            sessions={props.sessions}
+                            npcCharacters={props.npcCharacters}
+                            selectedConversationId={props.selectedConversationId}
+                            selectedConversationMembers={props.selectedConversationMembers}
+                            loading={props.sessionsLoading}
+                            onSelect={props.onSelectConversation}
+                            onNewChat={() => props.setActiveModal('new_chat')}
+                            onJoinRoom={() => props.setActiveModal('join_room')}
+                            onDeleteConversation={props.onDeleteConversation}
+                          />
+                        </div>
+                      </Show>
+
+                      <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
+                        <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between">
+                          <span>{props.selectedConversationTitle ?? 'No conversation selected'}</span>
+                          <Show when={props.currentRoundState}>
+                            <span>
+                              {props.currentRoundState?.status} / waiting {props.currentRoundState?.waitingMemberIds.length ?? 0}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="flex-1 overflow-hidden flex flex-col pt-2">
+                          <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
+                        </div>
+                        <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
+                          <div class="max-w-4xl mx-auto">
+                            <ChatInputBar
+                              onSend={props.onSend}
+                              onAbort={props.onAbort}
+                              replyStatus={props.replyStatus}
+                              allowEmptySend={props.allowEmptySend}
+                              disabled={props.sending || !props.selectedConversationId}
+                              placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-col relative">
+                        <button
+                          onClick={props.toggleFocusMode}
+                          class="absolute -left-12 top-1/2 -translate-y-1/2 z-40 p-2.5 rounded-l-2xl bg-accent text-white shadow-xl border border-white/10 opacity-40 hover:opacity-100 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                          title={props.isFocusMode ? 'Exit focus mode' : 'Enter focus mode'}
+                          aria-label={props.isFocusMode ? 'Exit focus mode' : 'Enter focus mode'}
+                        >
+                          <Show when={props.isFocusMode} fallback={<Maximize2 size={18} />}>
+                            <Minimize2 size={18} />
+                          </Show>
+                        </button>
+                        <RightDrawer
+                          selectedConversationId={props.selectedConversationId}
+                          selectedCharacter={props.selectedCharacter}
+                          selectedPresetId={props.selectedPresetId ?? null}
+                          selectedWorldBookId={props.selectedWorldBookId ?? null}
+                          presetSummaries={props.presetSummaries}
+                          worldBooks={props.worldBooks}
+                          onSaveConversationBindings={props.onSaveConversationBindings}
+                          overlaySummary={props.characterStateOverlaySummary}
+                          overlayStatus={props.characterStateOverlayStatus}
+                          overlayError={props.characterStateOverlayError}
+                          plotSummaryMode={props.plotSummaryMode ?? 'ai'}
+                          plotSummaries={props.plotSummaries}
+                          onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
+                          onSavePlotSummary={props.onSavePlotSummary}
+                          playerCharacters={props.playerCharacters}
+                          currentPlayerCharacter={props.currentPlayerCharacter}
+                          onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
+                        />
+                      </div>
+                    </>
+                  );
+                case 'settings':
+                  return (
+                    <>
+                      <div class="flex-none">
+                        <SettingsSidebar
+                          activeCategory={activeSettingCategory()}
+                          onCategoryChange={setActiveSettingCategory}
+                        />
+                      </div>
+                      <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
+                        <SettingsArea
+                          activeCategory={activeSettingCategory()}
+                          providers={props.providers}
+                          modelsByProvider={props.providerModels}
+                          loading={props.providersLoading}
+                          fetchingModelsFor={props.fetchingModelsFor}
+                          onFetchModels={props.onFetchModels}
+                          onSaveProvider={props.onSaveProvider}
+                          onDeleteProvider={props.onDeleteProvider}
+                          onTestClaudeNative={props.onTestClaudeNative}
+                          enableDynamicEffects={props.enableDynamicEffects}
+                          onSetEnableDynamicEffects={props.onSetEnableDynamicEffects}
+                          formatConfig={props.formatConfig ?? DEFAULT_FORMAT_CONFIG}
+                          onSetFormatConfig={props.onSetFormatConfig}
+                        />
+                      </div>
+                    </>
+                  );
+                case 'character':
+                  return (
+                    <div class="flex-1 min-w-0 h-full bg-transparent">
+                      <CharacterSidebar
+                        npcCharacters={props.npcCharacters}
+                        playerCharacters={props.playerCharacters}
+                        worldBooks={props.worldBooks}
+                        providers={props.providers}
+                        loading={props.characterLoading}
+                        onCreateCharacter={props.onCreateCharacter}
+                        onUpdateCharacter={props.onUpdateCharacter}
+                        onDeleteCharacter={props.onDeleteCharacter}
+                      />
+                    </div>
+                  );
+                case 'kb':
+                  return (
+                    <div class="flex-1 min-w-0 h-full bg-transparent">
+                      <WorldBookSidebar
+                        worldBooks={props.worldBooks}
+                        activeEntries={props.activeWorldBookEntries}
+                        entriesLoading={props.worldBookEntriesLoading}
+                        onLoadEntries={props.onLoadWorldBookEntries}
+                        onCreateWorldBook={props.onCreateWorldBook}
+                        onUpdateWorldBook={props.onUpdateWorldBook}
+                        onDeleteWorldBook={props.onDeleteWorldBook}
+                        onUpsertEntry={props.onUpsertWorldBookEntry}
+                        onDeleteEntry={props.onDeleteWorldBookEntry}
+                      />
+                    </div>
+                  );
+                case 'workspace':
+                  return (
+                    <div class="flex h-full w-full bg-transparent">
+                      <CompletionPresetArea />
+                    </div>
+                  );
+                default:
+                  return null;
+              }
+            }}
+          </WorkspaceTransitionStage>
+        </div>
       </div>
     </div>
   );
@@ -439,6 +635,8 @@ function App() {
   const [enableDynamicEffects, setEnableDynamicEffects] = createSignal(true);
   const [formatConfig, setFormatConfig] = createSignal<MessageFormatConfig>(DEFAULT_FORMAT_CONFIG);
   const [roomClientSession, setRoomClientSession] = createSignal<RoomClientSession | null>(null);
+  const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'processing' | 'responding'>('idle');
+  const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -461,6 +659,16 @@ function App() {
     return [...npcCharacters, ...playerCharacters].find((character) => character.id === hostCharacterId) ?? null;
   });
   const hostMember = createMemo(() => selectedConversationMembers.find((member) => member.memberRole === 'host') ?? null);
+  const currentAiCharacter = createMemo(() => {
+    const hostCharacterId = selectedConversation()?.hostCharacterId;
+    if (hostCharacterId == null) return undefined;
+    return npcCharacters.find((c) => c.id === hostCharacterId);
+  });
+  const currentPlayerCharacter = createMemo(() => {
+    const hm = hostMember();
+    if (!hm?.playerCharacterId) return undefined;
+    return playerCharacters.find((c) => c.id === hm.playerCharacterId);
+  });
   const allowEmptySend = createMemo(() => activeRoomClientSession() !== null || selectedConversation()?.conversationType === 'online');
   const worldBookKeywords = createMemo(() => {
     return activeWorldBookEntries.flatMap((entry) => entry.keywords ?? []);
@@ -560,7 +768,7 @@ function App() {
         plotSummariesList(conversationId),
       ]);
 
-      setMessages(messageList.map(toChatMessage));
+      setMessages(messageList.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter())));
       setSelectedConversationMembers(members);
       setCurrentRoundState(roundState);
       setPlotSummaries(summaryList);
@@ -599,7 +807,8 @@ function App() {
       id: String(messageId),
       backendId: messageId,
       sender: 'ai',
-      senderName: 'CHAT A.I+',
+      senderName: currentAiCharacter()?.name || 'AI',
+      avatar: toAssetUrl(currentAiCharacter()?.imagePath),
       content: '',
       isStreaming: true,
       roundId,
@@ -625,6 +834,7 @@ function App() {
     if (!conversationId) return;
 
     setSending(true);
+    setReplyStatus('connecting');
     try {
       const roomSession = activeRoomClientSession();
       if (roomSession) {
@@ -640,59 +850,121 @@ function App() {
       if (allowEmptySend() && hostMember()) {
         const result = await chatSubmitInput(conversationId, hostMember()!.id, content);
         if (result.visibleUserMessage) {
-          upsertUserMessage(toChatMessage(result.visibleUserMessage));
+          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter()));
         }
         if (result.assistantMessage) {
           upsertAssistantMessage({
-            ...toChatMessage(result.assistantMessage),
+            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
             isStreaming: true,
           });
           queueCharacterStateOverlay();
+        } else {
+          console.warn('[handleSend] chatSubmitInput returned no assistantMessage — auto_dispatched may be false, round=', result.round?.status);
+        }
+        setCurrentRoundState(result.round);
+      } else if (providerId) {
+        const result = await sendMessage(conversationId, providerId, content);
+        if (result.visibleUserMessage) {
+          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter()));
+        }
+        if (result.assistantMessage) {
+          upsertAssistantMessage({
+            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
+            isStreaming: true,
+          });
+          queueCharacterStateOverlay();
+        } else {
+          console.warn('[handleSend] sendMessage returned no assistantMessage — auto_dispatched may be false, round=', result.round?.status);
         }
         setCurrentRoundState(result.round);
       } else {
-        if (!providerId) return;
-        const result = await sendMessage(conversationId, providerId, content);
-        if (result.visibleUserMessage) {
-          upsertUserMessage(toChatMessage(result.visibleUserMessage));
-        }
-        if (result.assistantMessage) {
-          upsertAssistantMessage({
-            ...toChatMessage(result.assistantMessage),
-            isStreaming: true,
-          });
-          queueCharacterStateOverlay();
-        }
-        setCurrentRoundState(result.round);
+        console.error('[handleSend] Cannot send: no provider bound and no host member found. conversationId=', conversationId);
+        return;
       }
       await refreshSessions();
+    } catch (err) {
+      console.error('[handleSend] Error sending message:', err);
+      setReplyStatus('idle');
+      window.alert(`发送消息失败：${toErrorMessage(err)}`);
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleAbortReply = async () => {
+    const roundId = abortingRoundId();
+    if (!roundId) {
+      const streamingMsg = messages.find((m) => m.sender === 'ai' && m.isStreaming);
+      if (streamingMsg?.roundId) {
+        setAbortingRoundId(streamingMsg.roundId);
+        try {
+          await abortRoundStream(streamingMsg.roundId);
+          setReplyStatus('idle');
+          setAbortingRoundId(null);
+          setMessages(
+            (m) => m.roundId === streamingMsg.roundId && m.sender === 'ai',
+            (m) => ({ ...m, isStreaming: false }),
+          );
+        } catch (error) {
+          console.error('[conversation-debug] frontend:abort_reply:error', {
+            roundId: streamingMsg.roundId,
+            error,
+          });
+          window.alert(`中断回复失败：${toErrorMessage(error)}`);
+        }
+      }
+      return;
+    }
+
+    try {
+      await abortRoundStream(roundId);
+      setReplyStatus('idle');
+      setAbortingRoundId(null);
+      setMessages(
+        (m) => m.roundId === roundId && m.sender === 'ai',
+        (m) => ({ ...m, isStreaming: false }),
+      );
+    } catch (error) {
+      console.error('[conversation-debug] frontend:abort_reply:error', {
+        roundId,
+        error,
+      });
+      window.alert(`中断回复失败：${toErrorMessage(error)}`);
     }
   };
 
   const handleRegenerate = async (id: string, roundId?: number) => {
     const conversationId = selectedConversationId();
     const providerId = selectedConversation()?.providerId;
+    const memberId = hostMember()?.id;
     if (!conversationId || !roundId) return;
 
     const msg = messages.find(m => m.id === id);
     const backendId = msg?.backendId;
 
     try {
-      const result = (providerId && backendId)
-        ? await regenerateMessage(conversationId, providerId, backendId)
-        : await chatRegenerateRound(conversationId, roundId);
+      const result = (providerId && backendId && memberId)
+        ? await regenerateMessage(conversationId, memberId, providerId, backendId)
+        : await chatRegenerateRound(conversationId, memberId!, roundId);
 
       upsertAssistantMessage({
-        ...toChatMessage(result.assistantMessage),
+        ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
         isStreaming: true,
       });
       setCurrentRoundState(result.round);
+      setReplyStatus('connecting');
+      setAbortingRoundId(roundId);
       queueCharacterStateOverlay();
       try {
         const refreshedMessages = await messagesList(conversationId);
-        setMessages(refreshedMessages.map(toChatMessage));
+        const mapped = refreshedMessages.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter()));
+        if (result.round.status === 'streaming' || result.round.status === 'queued') {
+          const activeAi = mapped.find((m) => m.sender === 'ai' && m.roundId === roundId && m.isActiveInRound !== false);
+          if (activeAi) {
+            activeAi.isStreaming = true;
+          }
+        }
+        setMessages(mapped);
       } catch { /* keep current state */ }
     } catch (error) {
       console.error('[conversation-debug] frontend:regenerate:error', {
@@ -703,7 +975,33 @@ function App() {
         backendId: backendId ?? null,
         error,
       });
+      setReplyStatus('idle');
+      setAbortingRoundId(null);
       window.alert(`重新回复失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleRetryFailed = async (_id: string, roundId?: number) => {
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id;
+    if (!conversationId || !roundId || !memberId) return;
+
+    try {
+      const result = await retryFailedRound(conversationId, memberId, roundId);
+
+      updateMessageContent(result.assistantMessage.id, () => ({
+        content: '',
+        isStreaming: true,
+        error: undefined,
+        structuredFields: undefined,
+      }));
+
+      setCurrentRoundState(result.round);
+      setReplyStatus('connecting');
+      setAbortingRoundId(roundId);
+    } catch (error) {
+      console.error('[handleRetryFailed] error:', error);
+      window.alert(`自动重试失败：${toErrorMessage(error)}`);
     }
   };
 
@@ -735,6 +1033,41 @@ function App() {
         error,
       });
       window.alert(`创建会话分支失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleDeleteMessage = async (id: string) => {
+    const msg = messages.find(m => m.id === id);
+    const backendId = msg?.backendId;
+    if (!backendId) return;
+
+    try {
+      await messagesDelete(backendId);
+
+      if (msg?.sender === 'ai' && msg?.roundId != null) {
+        setMessages((list) => list.filter((m) => m.roundId !== msg.roundId));
+        if (msg.isStreaming) {
+          setReplyStatus('idle');
+          setAbortingRoundId(null);
+        }
+      } else {
+        setMessages((list) => list.filter((m) => m.id !== id));
+        if (msg?.sender === 'user') {
+          const streamingAi = messages.find((m) => m.sender === 'ai' && m.isStreaming && m.roundId === msg.roundId);
+          if (streamingAi) {
+            setReplyStatus('idle');
+            setAbortingRoundId(null);
+            setMessages((list) => list.filter((m) => m.id !== streamingAi.id));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[conversation-debug] frontend:delete_message:error', {
+        messageId: id,
+        backendId,
+        error,
+      });
+      window.alert(`删除消息失败：${toErrorMessage(error)}`);
     }
   };
 
@@ -776,7 +1109,7 @@ function App() {
 
     try {
       const result = await messagesSwitchSwipe(msg.roundId, targetBackendId);
-      upsertAssistantMessage(toChatMessage(result));
+      upsertAssistantMessage(toChatMessage(result, currentAiCharacter(), currentPlayerCharacter()));
     } catch (error) {
       console.error('[conversation-debug] frontend:swipe_switch:error', {
         messageId,
@@ -801,6 +1134,14 @@ function App() {
 
   const handleDeleteConversation = async (id: number) => {
     try {
+      // If this is a remote room session, leave the room instead of deleting
+      const remote = roomClientSession();
+      if (remote && remote.conversation.id === id) {
+        await roomLeave();
+        handleRoomLeft();
+        return;
+      }
+
       await conversationsDelete(id);
       if (selectedConversationId() === id) {
         setSelectedConversationId(null);
@@ -923,6 +1264,19 @@ function App() {
     await refreshConversationContext(conversationId);
   };
 
+  const handleSwitchPlayerCharacter = async (playerCharacterId: number) => {
+    const hm = hostMember();
+    const conversationId = selectedConversationId();
+    if (!hm || conversationId == null) {
+      throw new Error('当前未选择会话或未找到宿主成员，无法切换玩家角色卡。');
+    }
+    await conversationMembersUpdate({
+      memberId: hm.id,
+      playerCharacterId,
+    });
+    await refreshConversationContext(conversationId);
+  };
+
   const handleCreateWorldBook = async (payload: { title: string; description?: string; imagePath?: string }) => {
     await worldBooksCreate(payload);
     await refreshWorldBooks();
@@ -1007,7 +1361,7 @@ function App() {
     setActiveWorkspace('chat');
     setSelectedConversationId(result.conversation.id);
     setSelectedConversationMembers(result.members ?? []);
-    setMessages((result.recentMessages ?? []).map(toChatMessage));
+    setMessages((result.recentMessages ?? []).map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter())));
     setCurrentRoundState(result.roundState ?? null);
     setActiveModal(null);
   };
@@ -1059,6 +1413,42 @@ function App() {
             content: `${message.content}${delta}`,
             isStreaming: true,
           }));
+          setReplyStatus('responding');
+          setAbortingRoundId(payload.roundId);
+          break;
+        }
+        case 'string_field_delta': {
+          const delta = payload.textDelta ?? '';
+          const fieldKey = payload.partType ?? '';
+          if (!delta || !fieldKey) break;
+          const normalizedDelta = delta.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+          upsertStreamingAssistant(payload.messageId, payload.roundId);
+          updateMessageContent(payload.messageId, (message) => {
+            const existing = message.structuredFields ?? {};
+            const field = existing[fieldKey] ?? '';
+            return {
+              structuredFields: { ...existing, [fieldKey]: field + normalizedDelta },
+              isStreaming: true,
+            } as any;
+          });
+          setReplyStatus('responding');
+          setAbortingRoundId(payload.roundId);
+          break;
+        }
+        case 'object_field_complete': {
+          const fieldKey = payload.partType ?? '';
+          const jsonStr = payload.jsonDelta ?? '';
+          if (!fieldKey || !jsonStr) break;
+          upsertStreamingAssistant(payload.messageId, payload.roundId);
+          updateMessageContent(payload.messageId, (message) => {
+            const existing = message.structuredFields ?? {};
+            return {
+              structuredFields: { ...existing, [fieldKey]: jsonStr },
+              isStreaming: true,
+            } as any;
+          });
+          setReplyStatus('responding');
+          setAbortingRoundId(payload.roundId);
           break;
         }
         case 'message_stop': {
@@ -1066,6 +1456,8 @@ function App() {
           updateMessageContent(payload.messageId, () => ({
             isStreaming: false,
           }));
+          setReplyStatus('idle');
+          setAbortingRoundId(null);
           break;
         }
         case 'thinking_delta': {
@@ -1087,11 +1479,26 @@ function App() {
 
     const errorUnlisten = await listenStreamError((payload) => {
       if (payload.conversationId !== selectedConversationId()) return;
+      console.error('[llm-stream-error]', payload.error, 'messageId=', payload.messageId, 'roundId=', payload.roundId);
       upsertStreamingAssistant(payload.messageId, payload.roundId);
       updateMessageContent(payload.messageId, () => ({
         isStreaming: false,
         error: payload.error,
       }));
+      setReplyStatus('idle');
+      setAbortingRoundId(null);
+    });
+
+    const messageResetUnlisten = await listenMessageReset((payload) => {
+      if (payload.conversationId !== selectedConversationId()) return;
+      updateMessageContent(payload.messageId, () => ({
+        content: '',
+        isStreaming: true,
+        error: undefined,
+        structuredFields: undefined,
+      }));
+      setReplyStatus('connecting');
+      setAbortingRoundId(payload.roundId);
     });
 
     const roundUnlisten = await listenRoundState((payload) => {
@@ -1129,6 +1536,8 @@ function App() {
 
     const roomChunkUnlisten = await listenRoomStreamChunk((payload: RoomStreamChunkEvent) => {
       if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives stream data via llm-stream-event; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
       upsertStreamingAssistant(payload.messageId, payload.roundId);
       updateMessageContent(payload.messageId, (message) => ({
         content: `${message.content}${payload.delta}`,
@@ -1138,6 +1547,8 @@ function App() {
 
     const roomStreamEndUnlisten = await listenRoomStreamEnd((payload: RoomStreamEndEvent) => {
       if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives stream end via llm-stream-event; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
       upsertStreamingAssistant(payload.messageId, payload.roundId);
       updateMessageContent(payload.messageId, () => ({
         isStreaming: false,
@@ -1153,6 +1564,11 @@ function App() {
       const conversationId = payload.conversationId ?? selectedConversationId();
       if (conversationId !== selectedConversationId()) return;
       if (payload.actionType === 'skipped') return;
+
+      // On the host side, skip the host's own messages (already displayed via chatSubmitInput result).
+      // Other players' messages forwarded by the server must still be shown.
+      const host = hostMember();
+      if (!activeRoomClientSession() && host && payload.memberId === host.id) return;
 
       upsertUserMessage({
         id: payload.messageId != null
@@ -1238,6 +1654,7 @@ function App() {
     onCleanup(() => {
       chunkUnlisten();
       errorUnlisten();
+      messageResetUnlisten();
       roundUnlisten();
       overlayUpdatedUnlisten();
       overlayErrorUnlisten();
@@ -1269,23 +1686,27 @@ function App() {
   return (
     <>
       <AuroraBackground
-        isActive={selectedConversationId() !== null}
+        isActive={activeWorkspace() === 'chat' && selectedConversationId() !== null}
         characterImageUrl={toAssetUrl(selectedCharacter()?.imagePath)}
         enableAurora={enableDynamicEffects()}
       />
       <Show
         when={isMobile()}
         fallback={
-          <DesktopView
+          <AnimatedDesktopView
             messages={visibleMessages()}
             activeWorkspace={activeWorkspace()}
             onWorkspaceChange={setActiveWorkspace}
             onRegenerate={handleRegenerate}
             onEdit={handleEditMessage}
             onFork={handleForkMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onRetryFailed={handleRetryFailed}
             swipeInfo={getSwipeInfo}
             onSwitchSwipe={handleSwitchSwipe}
             onSend={handleSend}
+            onAbort={handleAbortReply}
+            replyStatus={replyStatus()}
             activeModal={activeModal()}
             setActiveModal={setActiveModal}
             isFocusMode={isFocusMode()}
@@ -1326,6 +1747,8 @@ function App() {
             onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
             onSavePlotSummary={handleSavePlotSummary}
             onSaveConversationBindings={handleSaveConversationBindings}
+            currentPlayerCharacter={currentPlayerCharacter()}
+            onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
             worldBooks={worldBooks}
             activeWorldBookEntries={activeWorldBookEntries}
             worldBookEntriesLoading={worldBookEntriesLoading()}
@@ -1367,11 +1790,18 @@ function App() {
           onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
           onSavePlotSummary={handleSavePlotSummary}
           onSaveConversationBindings={handleSaveConversationBindings}
+          playerCharacters={playerCharacters}
+          currentPlayerCharacter={currentPlayerCharacter()}
+          onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
           worldBooks={worldBooks}
           onSend={handleSend}
+          onAbort={handleAbortReply}
+          replyStatus={replyStatus()}
           onRegenerate={handleRegenerate}
           onEdit={handleEditMessage}
           onFork={handleForkMessage}
+          onDeleteMessage={handleDeleteMessage}
+          onRetryFailed={handleRetryFailed}
           swipeInfo={getSwipeInfo}
           onSwitchSwipe={handleSwitchSwipe}
           onSelectConversation={setSelectedConversationId}
@@ -1388,6 +1818,7 @@ function App() {
         isOpen={activeModal() === 'new_chat'}
         onClose={() => setActiveModal(null)}
         npcCharacters={npcCharacters}
+        playerCharacters={playerCharacters}
         worldBooks={worldBooks}
         providers={providers}
         creating={sending()}

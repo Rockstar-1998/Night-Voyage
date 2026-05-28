@@ -67,7 +67,7 @@ pub async fn plot_summaries_update_mode(
         if let Some(provider_id) = provider_id {
             spawn_plot_summary_processing_task(app, state.db.clone(), conversation_id, provider_id);
         }
-    } else {
+    } else if normalized_mode == "manual" {
         let _ = list_plot_summaries(&state.db, conversation_id).await?;
     }
 

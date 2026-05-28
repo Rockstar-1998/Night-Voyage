@@ -9,7 +9,10 @@ use crate::{
     llm::ChatMessage,
     services::{
         character_state_overlays::load_latest_character_state_overlay_block,
-        plot_summaries::{load_completed_plot_summary_round_ids_before, load_plot_summary_blocks},
+        plot_summaries::{
+            load_completed_plot_summary_round_ids_before, load_plot_summary_blocks,
+            load_plot_summary_mode, PLOT_SUMMARY_MODE_DISABLED,
+        },
         provider_adapter::adapt_prompt_compile_result_to_openai_messages,
         world_book_matcher::{
             load_triggered_world_book_entries, WorldBookTriggerSource, WorldBookTriggerSourceKind,
@@ -74,15 +77,14 @@ pub enum PromptBlockKind {
     PresetRule,
     MultiplayerProtocol,
     CharacterBase,
+    PlayerBase,
     WorldBookMatch,
     // TODO: WorldVariable layer is not yet implemented. PlotSummary layer already covers its functionality to some extent.
     WorldVariable,
     PlotSummary,
     RetrievedDetail,
-    ExampleMessage,
     RecentHistory,
     CurrentUser,
-    PrefillSeed,
 }
 
 impl PromptBlockKind {
@@ -91,14 +93,13 @@ impl PromptBlockKind {
             Self::PresetRule => 100,
             Self::MultiplayerProtocol => 150,
             Self::CharacterBase => 200,
+            Self::PlayerBase => 250,
             Self::WorldBookMatch => 300,
             Self::WorldVariable => 400,
             Self::PlotSummary => 500,
             Self::RetrievedDetail => 600,
-            Self::ExampleMessage => 700,
             Self::RecentHistory => 800,
             Self::CurrentUser => 900,
-            Self::PrefillSeed => 1000,
         }
     }
 
@@ -107,14 +108,13 @@ impl PromptBlockKind {
             Self::PresetRule => "PresetRule",
             Self::MultiplayerProtocol => "MultiplayerProtocol",
             Self::CharacterBase => "CharacterBase",
+            Self::PlayerBase => "PlayerBase",
             Self::WorldBookMatch => "WorldBookMatch",
             Self::WorldVariable => "WorldVariable",
             Self::PlotSummary => "PlotSummary",
             Self::RetrievedDetail => "RetrievedDetail",
-            Self::ExampleMessage => "ExampleMessage",
             Self::RecentHistory => "RecentHistory",
             Self::CurrentUser => "CurrentUser",
-            Self::PrefillSeed => "PrefillSeed",
         }
     }
 }
@@ -126,6 +126,9 @@ pub enum PromptBlockSource {
         block_id: Option<i64>,
     },
     Character {
+        character_id: i64,
+    },
+    Player {
         character_id: i64,
     },
     WorldBook {
@@ -169,20 +172,19 @@ pub struct CompiledSamplingParams {
     pub thinking_enabled: Option<bool>,
     pub thinking_budget_tokens: Option<i64>,
     pub beta_features: Vec<String>,
+    pub structured_output_schema: Option<String>,
+    pub structured_output_display: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PresetCompilePreviewData {
     pub system_blocks: Vec<PromptBlock>,
-    pub example_blocks: Vec<PromptBlock>,
     pub params: CompiledSamplingParams,
 }
 
 #[derive(Debug, Clone, Default)]
 struct LoadedPresetCompilerData {
     blocks: Vec<PromptBlock>,
-    example_blocks: Vec<PromptBlock>,
-    prefill_seed: Option<PromptBlock>,
     output_validators: Vec<CompiledOutputValidator>,
     params: CompiledSamplingParams,
 }
@@ -201,6 +203,8 @@ struct LoadedPresetProviderOverrideData {
     thinking_enabled_override: Option<bool>,
     thinking_budget_tokens_override: Option<i64>,
     beta_features_override: Option<Vec<String>>,
+    structured_output_schema_override: Option<String>,
+    structured_output_display_override: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +223,36 @@ pub(crate) struct CompiledOutputValidator {
     source: PromptBlockSource,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RetryOutputValidationMode {
+    MustMatch,
+    MustNotMatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryOutputValidatorSnapshot {
+    pub mode: RetryOutputValidationMode,
+    pub pattern: String,
+    pub error_message: String,
+    pub title: Option<String>,
+}
+
+impl From<&CompiledOutputValidator> for RetryOutputValidatorSnapshot {
+    fn from(value: &CompiledOutputValidator) -> Self {
+        Self {
+            mode: match value.mode {
+                OutputValidationMode::MustMatch => RetryOutputValidationMode::MustMatch,
+                OutputValidationMode::MustNotMatch => RetryOutputValidationMode::MustNotMatch,
+            },
+            pattern: value.pattern.clone(),
+            error_message: value.error_message.clone(),
+            title: value.title.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct OutputValidatorConfig {
@@ -233,6 +267,8 @@ struct PromptTemplateRenderContext {
     current_user: PromptTemplateCurrentUserContext,
     #[serde(skip_serializing_if = "Option::is_none")]
     character: Option<PromptTemplateCharacterContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    player_character: Option<PromptTemplateCharacterContext>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,8 +333,6 @@ enum PresetBlockDirective {
     SystemTemplate {
         normalized_block_type: String,
     },
-    PrefillLiteral,
-    PrefillTemplate,
     OutputValidator {
         mode: OutputValidationMode,
         config: OutputValidatorConfig,
@@ -308,7 +342,6 @@ enum PresetBlockDirective {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetBlockValidationKind {
     System,
-    Prefill,
     OutputValidator,
 }
 
@@ -332,10 +365,8 @@ pub struct PromptCompileDebugReport {
 #[derive(Debug, Clone)]
 pub struct PromptCompileResult {
     pub system_blocks: Vec<PromptBlock>,
-    pub example_blocks: Vec<PromptBlock>,
     pub history_blocks: Vec<PromptBlock>,
     pub current_user_block: PromptBlock,
-    pub prefill_seed: Option<PromptBlock>,
     pub(crate) output_validators: Vec<CompiledOutputValidator>,
     pub params: CompiledSamplingParams,
     pub debug: PromptCompileDebugReport,
@@ -347,10 +378,10 @@ struct ConversationCompileContext {
     world_book_id: Option<i64>,
     preset_id: Option<i64>,
     conversation_type: String,
+    player_character_id: Option<i64>,
 }
 
 const TEMPLATE_BLOCK_TYPE_PREFIX: &str = "template:";
-const COMPILER_PREFILL_BLOCK_TYPE: &str = "compiler:prefill";
 const COMPILER_REGEX_MUST_MATCH_BLOCK_TYPE: &str = "compiler:regex:must_match";
 const COMPILER_REGEX_MUST_NOT_MATCH_BLOCK_TYPE: &str = "compiler:regex:must_not_match";
 const MAX_WORLD_BOOK_TRIGGER_HISTORY_BLOCKS: usize = 6;
@@ -359,19 +390,53 @@ const DEFAULT_MAX_WORLD_BOOK_TOKENS: usize = 512;
 
 impl PromptCompileResult {
     pub fn validate_output_text(&self, content: &str) -> Result<(), String> {
-        for validator in &self.output_validators {
-            let is_match = validator.regex.is_match(content);
-            let violation = match validator.mode {
-                OutputValidationMode::MustMatch => !is_match,
-                OutputValidationMode::MustNotMatch => is_match,
-            };
-            if violation {
-                return Err(validator.error_message.clone());
-            }
-        }
-
-        Ok(())
+        validate_output_text_with_validators(content, &self.output_validators)
     }
+
+    pub fn retry_output_validator_snapshot(&self) -> Vec<RetryOutputValidatorSnapshot> {
+        self.output_validators
+            .iter()
+            .map(RetryOutputValidatorSnapshot::from)
+            .collect()
+    }
+}
+
+pub fn validate_output_text_with_retry_snapshot(
+    content: &str,
+    validators: &[RetryOutputValidatorSnapshot],
+) -> Result<(), String> {
+    for validator in validators {
+        let regex = Regex::new(&validator.pattern)
+            .map_err(|err| format!("retry snapshot regex pattern is invalid: {err}"))?;
+        let is_match = regex.is_match(content);
+        let violation = match validator.mode {
+            RetryOutputValidationMode::MustMatch => !is_match,
+            RetryOutputValidationMode::MustNotMatch => is_match,
+        };
+        if violation {
+            return Err(validator.error_message.clone());
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_output_text_with_validators(
+    content: &str,
+    validators: &[CompiledOutputValidator],
+) -> Result<(), String> {
+    for validator in validators {
+        let is_match = validator.regex.is_match(content);
+        let violation = match validator.mode {
+            OutputValidationMode::MustMatch => !is_match,
+            OutputValidationMode::MustNotMatch => is_match,
+        };
+        if violation {
+            return Err(validator.error_message.clone());
+        }
+    }
+
+    Ok(())
 }
 
 pub fn validate_preset_block_definition(
@@ -383,9 +448,6 @@ pub fn validate_preset_block_definition(
     Ok(match directive {
         PresetBlockDirective::SystemLiteral { .. }
         | PresetBlockDirective::SystemTemplate { .. } => PresetBlockValidationKind::System,
-        PresetBlockDirective::PrefillLiteral | PresetBlockDirective::PrefillTemplate => {
-            PresetBlockValidationKind::Prefill
-        }
         PresetBlockDirective::OutputValidator { .. } => PresetBlockValidationKind::OutputValidator,
     })
 }
@@ -443,11 +505,22 @@ pub async fn compile_prompt(
         }
         None => None,
     };
+    let player_character_data = match context.player_character_id {
+        Some(player_character_id) => {
+            eprintln!("[prompt-compiler] compile_prompt: step=load_player_character_compile_data player_character_id={}", player_character_id);
+            load_character_compile_data(db, player_character_id).await.map_err(|err| {
+                eprintln!("[prompt-compiler] compile_prompt: ERROR at load_player_character_compile_data: {}", err);
+                err
+            })?
+        }
+        None => None,
+    };
     let render_context = build_runtime_template_render_context(
         &context,
         input,
         &current_user_block,
         character_data.as_ref(),
+        player_character_data.as_ref(),
     );
 
     eprintln!(
@@ -482,6 +555,14 @@ pub async fn compile_prompt(
         ));
     }
     let mut latest_character_state_overlay_text = None;
+    let plot_summary_enabled = load_plot_summary_mode(db, input.conversation_id)
+        .await
+        .unwrap_or_else(|err| {
+            eprintln!("[prompt-compiler] compile_prompt: failed to load plot_summary_mode: {}, assuming disabled", err);
+            PLOT_SUMMARY_MODE_DISABLED.to_string()
+        })
+        != PLOT_SUMMARY_MODE_DISABLED;
+
     if let Some(character_data) = character_data.as_ref() {
         if let Some(character_block) = build_character_base_block(character_data) {
             debug
@@ -489,40 +570,53 @@ pub async fn compile_prompt(
                 .push(format!("character:{}", character_data.character_id));
             system_blocks.push(character_block);
         }
-        if let Some(character_state_overlay_block) = load_latest_character_state_overlay_block(
-            db,
-            input.conversation_id,
-            character_data.character_id,
-            input.target_round_id,
-            &mut debug,
-        )
-        .await?
-        {
-            latest_character_state_overlay_text =
-                Some(character_state_overlay_block.content.clone());
-            system_blocks.push(character_state_overlay_block);
+        if plot_summary_enabled {
+            if let Some(character_state_overlay_block) = load_latest_character_state_overlay_block(
+                db,
+                input.conversation_id,
+                character_data.character_id,
+                input.target_round_id,
+                &mut debug,
+            )
+            .await?
+            {
+                latest_character_state_overlay_text =
+                    Some(character_state_overlay_block.content.clone());
+                system_blocks.push(character_state_overlay_block);
+            }
+        }
+    }
+    if let Some(player_data) = player_character_data.as_ref() {
+        if let Some(player_block) = build_player_base_block(player_data) {
+            debug.input_sources.push(format!("player_character:{}", player_data.character_id));
+            system_blocks.push(player_block);
         }
     }
 
-    let plot_summary_blocks =
-        load_plot_summary_blocks(db, input.conversation_id, input.target_round_id, &mut debug)
-            .await
-            .map_err(|err| {
-                eprintln!(
-                    "[prompt-compiler] compile_prompt: ERROR at load_plot_summary_blocks: {}",
+    let (plot_summary_blocks, summarized_round_ids) = if plot_summary_enabled {
+        let blocks =
+            load_plot_summary_blocks(db, input.conversation_id, input.target_round_id, &mut debug)
+                .await
+                .map_err(|err| {
+                    eprintln!(
+                        "[prompt-compiler] compile_prompt: ERROR at load_plot_summary_blocks: {}",
+                        err
+                    );
                     err
-                );
-                err
-            })?;
-    let summarized_round_ids = load_completed_plot_summary_round_ids_before(
-        db,
-        input.conversation_id,
-        input.target_round_id,
-    )
-    .await.map_err(|err| {
-        eprintln!("[prompt-compiler] compile_prompt: ERROR at load_completed_plot_summary_round_ids_before: {}", err);
-        err
-    })?;
+                })?;
+        let round_ids = load_completed_plot_summary_round_ids_before(
+            db,
+            input.conversation_id,
+            input.target_round_id,
+        )
+        .await.map_err(|err| {
+            eprintln!("[prompt-compiler] compile_prompt: ERROR at load_completed_plot_summary_round_ids_before: {}", err);
+            err
+        })?;
+        (blocks, round_ids)
+    } else {
+        (Vec::new(), HashSet::new())
+    };
 
     eprintln!(
         "[prompt-compiler] compile_prompt: step=load_recent_history_blocks conversation_id={}",
@@ -571,10 +665,8 @@ pub async fn compile_prompt(
 
     let mut result = PromptCompileResult {
         system_blocks,
-        example_blocks: preset_compiler_data.example_blocks,
         history_blocks,
         current_user_block,
-        prefill_seed: preset_compiler_data.prefill_seed,
         output_validators: preset_compiler_data.output_validators,
         params: preset_compiler_data.params,
         debug,
@@ -640,7 +732,6 @@ pub async fn compile_preset_preview_data(
 
     Ok(PresetCompilePreviewData {
         system_blocks: preset_compiler_data.blocks,
-        example_blocks: preset_compiler_data.example_blocks,
         params: preset_compiler_data.params,
     })
 }
@@ -805,11 +896,88 @@ fn build_character_base_block(character_data: &CharacterCompileData) -> Option<P
     ))
 }
 
+fn build_player_base_block(character_data: &CharacterCompileData) -> Option<PromptBlock> {
+    let content = build_player_system_message(character_data)?;
+    Some(build_block(
+        PromptBlockKind::PlayerBase,
+        PromptRole::System,
+        Some("Player Base".to_string()),
+        content,
+        PromptBlockSource::Player {
+            character_id: character_data.character_id,
+        },
+        true,
+    ))
+}
+
+fn build_player_system_message(character_data: &CharacterCompileData) -> Option<String> {
+    let mut sections = Vec::new();
+    if !character_data.name.is_empty() {
+        sections.push(format!("Player Name: {}", character_data.name));
+    }
+    if !character_data.tags.is_empty() {
+        sections.push(format!(
+            "Player Tags: {}",
+            character_data.tags.join(", ")
+        ));
+    }
+
+    if !character_data.base_sections.is_empty() {
+        sections.extend(
+            character_data
+                .base_sections
+                .iter()
+                .filter_map(build_player_base_section_message),
+        );
+    } else if !character_data.description.is_empty() {
+        sections.push(format!(
+            "Player Description: {}",
+            character_data.description
+        ));
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
+}
+
+fn build_player_base_section_message(
+    section: &CharacterBaseSectionCompileData,
+) -> Option<String> {
+    let content = section.content.trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    let title = section
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(default_player_base_section_title(&section.section_key));
+
+    Some(format!("[{title}]\n{content}"))
+}
+
+fn default_player_base_section_title(section_key: &str) -> &'static str {
+    match section_key {
+        "identity" => "Player Identity",
+        "persona" => "Player Persona",
+        "background" => "Player Background",
+        "rules" => "Player Rules",
+        "custom" => "Player Custom",
+        _ => "Player Base",
+    }
+}
+
 fn build_runtime_template_render_context(
     context: &ConversationCompileContext,
     input: &PromptCompileInput,
     current_user_block: &PromptBlock,
     character_data: Option<&CharacterCompileData>,
+    player_character_data: Option<&CharacterCompileData>,
 ) -> PromptTemplateRenderContext {
     PromptTemplateRenderContext {
         conversation: PromptTemplateConversationContext {
@@ -842,6 +1010,17 @@ fn build_runtime_template_render_context(
                     content: section.content.clone(),
                 })
                 .collect(),
+        }),
+        player_character: player_character_data.map(|pd| PromptTemplateCharacterContext {
+            id: pd.character_id,
+            name: pd.name.clone(),
+            description: pd.description.clone(),
+            tags: pd.tags.clone(),
+            base_sections: pd.base_sections.iter().map(|section| PromptTemplateCharacterBaseSectionContext {
+                section_key: section.section_key.clone(),
+                title: section.title.clone(),
+                content: section.content.clone(),
+            }).collect(),
         }),
     }
 }
@@ -878,6 +1057,7 @@ fn build_preview_template_render_context(
                 content: "Preview character identity".to_string(),
             }],
         }),
+        player_character: None,
     }
 }
 
@@ -886,8 +1066,9 @@ async fn load_conversation_compile_context(
     conversation_id: i64,
 ) -> Result<ConversationCompileContext, String> {
     let row = sqlx::query(
-        "SELECT COALESCE(host_character_id, character_id) AS host_character_id, world_book_id, preset_id, conversation_type \
-         FROM conversations WHERE id = ? LIMIT 1",
+        "SELECT COALESCE(c.host_character_id, c.character_id) AS host_character_id, c.world_book_id, c.preset_id, c.conversation_type, cm.player_character_id \
+         FROM conversations c LEFT JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.member_role = 'host' AND cm.is_active = 1 \
+         WHERE c.id = ? LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_one(db)
@@ -901,6 +1082,7 @@ async fn load_conversation_compile_context(
         conversation_type: row
             .try_get("conversation_type")
             .unwrap_or_else(|_| "single".to_string()),
+        player_character_id: row.try_get("player_character_id").ok(),
     })
 }
 
@@ -939,7 +1121,7 @@ async fn load_preset_compiler_data(
 
     let row = sqlx::query(
         "SELECT temperature, max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-         thinking_enabled, thinking_budget_tokens, beta_features \
+         thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display \
          FROM presets WHERE id = ? LIMIT 1",
     )
     .bind(preset_id)
@@ -947,7 +1129,25 @@ async fn load_preset_compiler_data(
     .await
     .map_err(|err| err.to_string())?;
 
-    let row = row.ok_or_else(|| format!("conversation preset {preset_id} was not found"))?;
+    let row = match row {
+        Some(r) => r,
+        None => {
+            let all_presets: Vec<(i64, String)> = sqlx::query_as(
+                "SELECT id, name FROM presets ORDER BY id ASC",
+            )
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+            eprintln!(
+                "[prompt-compiler] ERROR: conversation preset {preset_id} was not found. Available presets: {:?}",
+                all_presets
+            );
+            return Err(format!(
+                "conversation preset {preset_id} was not found. Available presets: {}",
+                all_presets.iter().map(|(id, name)| format!("[{}] {}", id, name)).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    };
     let temperature: Option<f64> = row.try_get("temperature").ok();
     let max_output_tokens: Option<i64> = row.try_get("max_output_tokens").ok();
     let top_p: Option<f64> = row.try_get("top_p").ok();
@@ -964,6 +1164,8 @@ async fn load_preset_compiler_data(
     let beta_features: Vec<String> = beta_features_raw
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default();
+    let structured_output_schema: Option<String> = row.try_get("structured_output_schema").ok().flatten();
+    let structured_output_display: Option<String> = row.try_get("structured_output_display").ok().flatten();
     let base_stop_sequences = load_preset_stop_sequences(db, preset_id).await?;
     let provider_override =
         load_preset_provider_override_data(db, preset_id, provider_kind, debug).await?;
@@ -979,6 +1181,8 @@ async fn load_preset_compiler_data(
         || thinking_budget_tokens.is_some()
         || !beta_features.is_empty()
         || !base_stop_sequences.is_empty()
+        || structured_output_schema.is_some()
+        || structured_output_display.is_some()
     {
         debug
             .input_sources
@@ -991,7 +1195,6 @@ async fn load_preset_compiler_data(
     }
 
     let mut blocks = Vec::new();
-    let mut prefill_seed = None;
     let mut output_validators = Vec::new();
     let rows = sqlx::query(
         "SELECT id, block_type, title, content \
@@ -1059,46 +1262,6 @@ async fn load_preset_compiler_data(
                     true,
                 ));
             }
-            PresetBlockDirective::PrefillLiteral => {
-                if prefill_seed.is_some() {
-                    return Err(format!(
-                        "preset {preset_id} has multiple enabled prefill blocks"
-                    ));
-                }
-                prefill_seed = Some(build_block(
-                    PromptBlockKind::PrefillSeed,
-                    PromptRole::Assistant,
-                    title,
-                    content,
-                    PromptBlockSource::Preset {
-                        preset_id,
-                        block_id: Some(block_id),
-                    },
-                    true,
-                ));
-            }
-            PresetBlockDirective::PrefillTemplate => {
-                if prefill_seed.is_some() {
-                    return Err(format!(
-                        "preset {preset_id} has multiple enabled prefill blocks"
-                    ));
-                }
-                let rendered = render_prompt_template(&content, render_context, &descriptor)?;
-                if rendered.trim().is_empty() {
-                    return Err(format!("{descriptor} rendered empty prefill content"));
-                }
-                prefill_seed = Some(build_block(
-                    PromptBlockKind::PrefillSeed,
-                    PromptRole::Assistant,
-                    title,
-                    rendered,
-                    PromptBlockSource::Preset {
-                        preset_id,
-                        block_id: Some(block_id),
-                    },
-                    true,
-                ));
-            }
             PresetBlockDirective::OutputValidator { mode, config } => {
                 output_validators.push(build_output_validator(
                     mode,
@@ -1114,58 +1277,8 @@ async fn load_preset_compiler_data(
         }
     }
 
-    let mut example_blocks = Vec::new();
-    let example_rows = sqlx::query(
-        "SELECT id, role, content \
-         FROM preset_examples \
-         WHERE preset_id = ? AND is_enabled = 1 \
-         ORDER BY sort_order ASC, id ASC",
-    )
-    .bind(preset_id)
-    .fetch_all(db)
-    .await
-    .map_err(|err| err.to_string())?;
-
-    for row in example_rows {
-        let example_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
-        let role: String = row.try_get("role").unwrap_or_default();
-        let content: String = row.try_get("content").unwrap_or_default();
-        if content.trim().is_empty() {
-            return Err(format!(
-                "preset {preset_id} example {example_id} has empty content"
-            ));
-        }
-
-        let prompt_role = match role.as_str() {
-            "user" => PromptRole::User,
-            "assistant" => PromptRole::Assistant,
-            _ => {
-                return Err(format!(
-                    "preset {preset_id} example {example_id} has invalid role: {role}"
-                ))
-            }
-        };
-
-        debug
-            .input_sources
-            .push(format!("preset:{preset_id}:example:{example_id}:{role}"));
-        example_blocks.push(build_block(
-            PromptBlockKind::ExampleMessage,
-            prompt_role,
-            Some(format!("Preset Example {example_id}")),
-            content,
-            PromptBlockSource::Preset {
-                preset_id,
-                block_id: Some(example_id),
-            },
-            true,
-        ));
-    }
-
     Ok(LoadedPresetCompilerData {
         blocks,
-        example_blocks,
-        prefill_seed,
         output_validators,
         params: CompiledSamplingParams {
             temperature: provider_override.temperature_override.or(temperature),
@@ -1193,6 +1306,8 @@ async fn load_preset_compiler_data(
             beta_features: provider_override
                 .beta_features_override
                 .unwrap_or(beta_features),
+            structured_output_schema: provider_override.structured_output_schema_override.or(structured_output_schema),
+            structured_output_display: provider_override.structured_output_display_override.or(structured_output_display),
         },
     })
 }
@@ -1218,17 +1333,15 @@ fn parse_preset_block_directive(
             ));
         }
         validate_prompt_template_syntax(content, descriptor)?;
-        return Ok(if normalized_block_type == "prefill" {
-            PresetBlockDirective::PrefillTemplate
-        } else {
-            PresetBlockDirective::SystemTemplate {
-                normalized_block_type: normalized_block_type.to_string(),
-            }
+        return Ok(PresetBlockDirective::SystemTemplate {
+            normalized_block_type: normalized_block_type.to_string(),
         });
     }
 
     match block_type {
-        COMPILER_PREFILL_BLOCK_TYPE => Ok(PresetBlockDirective::PrefillLiteral),
+        "compiler:prefill" => Err(format!(
+            "{descriptor} uses deprecated block_type 'compiler:prefill' which is no longer supported. Please remove this block from the preset."
+        )),
         COMPILER_REGEX_MUST_MATCH_BLOCK_TYPE => Ok(PresetBlockDirective::OutputValidator {
             mode: OutputValidationMode::MustMatch,
             config: parse_output_validator_config(content, descriptor)?,
@@ -1314,9 +1427,7 @@ fn preset_block_is_disabled(
         | PresetBlockDirective::SystemTemplate {
             normalized_block_type,
         } => Some(normalized_block_type.as_str()),
-        PresetBlockDirective::PrefillLiteral
-        | PresetBlockDirective::PrefillTemplate
-        | PresetBlockDirective::OutputValidator { .. } => None,
+        PresetBlockDirective::OutputValidator { .. } => None,
     };
 
     disabled_block_types.contains(raw_block_type)
@@ -1370,7 +1481,8 @@ async fn load_preset_provider_override_data(
         "SELECT temperature_override, max_output_tokens_override, top_p_override, top_k_override, \
          presence_penalty_override, frequency_penalty_override, response_mode_override, \
          stop_sequences_override, disabled_block_types, \
-         thinking_enabled_override, thinking_budget_tokens_override, beta_features_override \
+         thinking_enabled_override, thinking_budget_tokens_override, beta_features_override, \
+         structured_output_schema_override, structured_output_display_override \
          FROM preset_provider_overrides \
          WHERE preset_id = ? AND provider_kind = ? \
          LIMIT 1",
@@ -1421,6 +1533,8 @@ async fn load_preset_provider_override_data(
             .ok()
             .flatten()
             .and_then(|s: String| serde_json::from_str::<Vec<String>>(&s).ok()),
+        structured_output_schema_override: row.try_get("structured_output_schema_override").ok().flatten(),
+        structured_output_display_override: row.try_get("structured_output_display_override").ok().flatten(),
     })
 }
 
@@ -1766,14 +1880,17 @@ fn normalize_loaded_response_mode(
     field_name: &str,
 ) -> Result<Option<String>, String> {
     let Some(value) = value else {
-        return Ok(None);
+        return Ok(Some("pseudo_xml".to_string()));
     };
 
     let normalized = value.trim();
     match normalized {
-        "" => Ok(None),
-        "text" | "json_object" => Ok(Some(normalized.to_string())),
-        _ => Err(format!("{field_name} must be one of: text, json_object")),
+        "" => Ok(Some("pseudo_xml".to_string())),
+        "pseudo_xml" | "structured_json" => Ok(Some(normalized.to_string())),
+        "text" | "json_object" => Ok(Some("pseudo_xml".to_string())),
+        _ => Err(format!(
+            "{field_name} must be one of: pseudo_xml, structured_json"
+        )),
     }
 }
 
@@ -1854,14 +1971,7 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
         if trim_first_non_required_system_block(
             result,
             PromptBlockKind::WorldVariable,
-            "budget_trim:character_state_overlay", // TODO: Transitional - will be renamed to "budget_trim:world_variable" when WorldVariable is fully implemented
-        ) {
-            continue;
-        }
-        if trim_first_non_required_system_block(
-            result,
-            PromptBlockKind::ExampleMessage,
-            "budget_trim:example_message",
+            "budget_trim:character_state_overlay",
         ) {
             continue;
         }
@@ -1920,10 +2030,8 @@ fn total_estimated_tokens(result: &PromptCompileResult) -> usize {
     result
         .system_blocks
         .iter()
-        .chain(result.example_blocks.iter())
         .chain(result.history_blocks.iter())
         .chain(std::iter::once(&result.current_user_block))
-        .chain(result.prefill_seed.iter())
         .map(|block| {
             block
                 .token_cost_estimate
@@ -1936,10 +2044,8 @@ fn build_final_block_order(result: &PromptCompileResult) -> Vec<String> {
     result
         .system_blocks
         .iter()
-        .chain(result.example_blocks.iter())
         .chain(result.history_blocks.iter())
         .chain(std::iter::once(&result.current_user_block))
-        .chain(result.prefill_seed.iter())
         .map(|block| {
             if let Some(title) = &block.title {
                 format!("{}({})", block.kind.as_str(), title)
@@ -2029,7 +2135,9 @@ mod tests {
                 response_mode TEXT,
                 thinking_enabled INTEGER,
                 thinking_budget_tokens INTEGER,
-                beta_features TEXT
+                beta_features TEXT,
+                structured_output_schema TEXT DEFAULT 'basic',
+                structured_output_display TEXT DEFAULT NULL
             )",
         )
         .execute(&pool)
@@ -2051,20 +2159,6 @@ mod tests {
         .execute(&pool)
         .await
         .expect("create preset_prompt_blocks");
-
-        sqlx::query(
-            "CREATE TABLE preset_examples (
-                id INTEGER PRIMARY KEY,
-                preset_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                is_enabled INTEGER NOT NULL DEFAULT 1
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create preset_examples");
 
         sqlx::query(
             "CREATE TABLE preset_stop_sequences (
@@ -2094,7 +2188,9 @@ mod tests {
                 disabled_block_types TEXT,
                 thinking_enabled_override INTEGER,
                 thinking_budget_tokens_override INTEGER,
-                beta_features_override TEXT
+                beta_features_override TEXT,
+                structured_output_schema_override TEXT,
+                structured_output_display_override TEXT
             )",
         )
         .execute(&pool)
@@ -2121,7 +2217,7 @@ mod tests {
             .bind(0.9_f64)
             .bind(1.1_f64)
             .bind(0.6_f64)
-            .bind("text")
+            .bind("pseudo_xml")
             .execute(&pool)
             .await
             .expect("insert preset");
@@ -2161,21 +2257,6 @@ mod tests {
             .expect("insert disabled block candidate");
 
             sqlx::query(
-                "INSERT INTO preset_examples (
-                    id, preset_id, role, content, sort_order, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(21_i64)
-            .bind(1_i64)
-            .bind("user")
-            .bind("Example input")
-            .bind(0_i64)
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert example");
-
-            sqlx::query(
                 "INSERT INTO preset_stop_sequences (id, preset_id, stop_text, sort_order)
                  VALUES (?, ?, ?, ?), (?, ?, ?, ?)",
             )
@@ -2206,7 +2287,7 @@ mod tests {
             .bind(0.85_f64)
             .bind(0.4_f64)
             .bind(-0.2_f64)
-            .bind("json_object")
+            .bind("pseudo_xml")
             .bind(json!(["STOP"]).to_string())
             .bind(json!(["internal"]).to_string())
             .execute(&pool)
@@ -2219,13 +2300,12 @@ mod tests {
 
             assert_eq!(preview.system_blocks.len(), 1);
             assert_eq!(preview.system_blocks[0].title.as_deref(), Some("Style"));
-            assert_eq!(preview.example_blocks.len(), 1);
             assert_eq!(preview.params.temperature, Some(0.3));
             assert_eq!(preview.params.max_output_tokens, Some(120));
             assert_eq!(preview.params.top_p, Some(0.85));
             assert_eq!(preview.params.presence_penalty, Some(0.4));
             assert_eq!(preview.params.frequency_penalty, Some(-0.2));
-            assert_eq!(preview.params.response_mode.as_deref(), Some("json_object"));
+            assert_eq!(preview.params.response_mode.as_deref(), Some("pseudo_xml"));
             assert_eq!(preview.params.stop_sequences, vec!["STOP".to_string()]);
         });
     }
@@ -2249,7 +2329,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO preset_prompt_blocks (
                     id, preset_id, block_type, title, content, sort_order, priority, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)",
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(51_i64)
             .bind(2_i64)
@@ -2257,14 +2337,6 @@ mod tests {
             .bind("Style")
             .bind("Use model {{ provider.model_name }} for {{ character.name }}.")
             .bind(0_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .bind(52_i64)
-            .bind(2_i64)
-            .bind("compiler:prefill")
-            .bind("Prefill")
-            .bind("Assistant seed")
-            .bind(1_i64)
             .bind(100_i64)
             .bind(1_i64)
             .bind(53_i64)
@@ -2296,13 +2368,6 @@ mod tests {
             assert_eq!(
                 compiled.blocks[0].content,
                 "Use model preview-model for Preview Character."
-            );
-            assert_eq!(
-                compiled
-                    .prefill_seed
-                    .as_ref()
-                    .map(|block| block.content.as_str()),
-                Some("Assistant seed")
             );
             assert_eq!(compiled.output_validators.len(), 1);
             assert!(compiled.output_validators[0].regex.is_match("forbidden"));
