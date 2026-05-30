@@ -127,16 +127,29 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
     }
   });
 
+  let isFirstRun = true;
+
   createEffect(() => {
     const expanded = isExpanded();
     if (!contentRef) return;
     if (expanded) {
-      contentRef.style.height = '0px';
-      contentRef.style.opacity = '0';
-      animate(contentRef, { height: 'auto', opacity: 1 }, { duration: 0.25, ease: 'easeOut' });
+      if (isFirstRun) {
+        contentRef.style.height = 'auto';
+        contentRef.style.opacity = '1';
+      } else {
+        contentRef.style.height = '0px';
+        contentRef.style.opacity = '0';
+        animate(contentRef, { height: 'auto', opacity: 1 }, { duration: 0.25, ease: 'easeOut' });
+      }
     } else {
-      animate(contentRef, { height: 0, opacity: 0 }, { duration: 0.25, ease: 'easeIn' });
+      if (isFirstRun) {
+        contentRef.style.height = '0px';
+        contentRef.style.opacity = '0';
+      } else {
+        animate(contentRef, { height: 0, opacity: 0 }, { duration: 0.25, ease: 'easeIn' });
+      }
     }
+    isFirstRun = false;
   });
 
   const handleToggle = () => {

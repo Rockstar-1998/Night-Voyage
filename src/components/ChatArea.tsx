@@ -1,4 +1,4 @@
-import { Component, For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { MessageItem, ChatMessage } from './MessageItem';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
@@ -19,6 +19,9 @@ interface ChatAreaProps {
   structuredOutputDisplay?: string;
 }
 
+/** Threshold in pixels: if the user is within this distance from the bottom, consider them "at bottom". */
+const STICKY_THRESHOLD_PX = 60;
+
 export const ChatArea: Component<ChatAreaProps> = (props) => {
   let scrollContainerRef: HTMLDivElement | undefined;
   let thumbRef: HTMLDivElement | undefined;
@@ -27,6 +30,43 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
   let isDragging = false;
   let startY = 0;
   let startScrollTop = 0;
+
+  // ── Auto-scroll state ──
+  // Whether we should auto-scroll to follow streaming content.
+  // Starts true; becomes false when the user manually scrolls away from bottom.
+  // Re-enabled when the user scrolls back to the bottom.
+  const [isSticky, setIsSticky] = createSignal(true);
+  // Track whether the last scroll event was programmatic (auto-scroll) vs user-initiated.
+  let programmaticScroll = false;
+  // RAF handle to batch auto-scroll calls for performance during high-frequency updates.
+  let autoScrollRafId: number | null = null;
+
+  const isStreaming = createMemo(() =>
+    props.messages.some((msg) => msg.isStreaming),
+  );
+
+  const isAtBottom = (): boolean => {
+    if (!scrollContainerRef) return true;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef;
+    return scrollHeight - scrollTop - clientHeight <= STICKY_THRESHOLD_PX;
+  };
+
+  const scrollToBottom = () => {
+    if (!scrollContainerRef) return;
+    programmaticScroll = true;
+    scrollContainerRef.scrollTop = scrollContainerRef.scrollHeight;
+  };
+
+  const scheduleAutoScroll = () => {
+    if (autoScrollRafId !== null) return;
+    autoScrollRafId = requestAnimationFrame(() => {
+      autoScrollRafId = null;
+      if (isSticky() && scrollContainerRef) {
+        scrollToBottom();
+        updateScrollbar();
+      }
+    });
+  };
 
   const updateScrollbar = () => {
     if (!scrollContainerRef) return;
@@ -81,28 +121,69 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
     handleHover(false);
   };
 
+  const handleScroll = () => {
+    updateScrollbar();
+
+    // Distinguish programmatic scrolls from user-initiated ones.
+    if (programmaticScroll) {
+      programmaticScroll = false;
+      return;
+    }
+
+    // User-initiated scroll: update sticky state based on position.
+    if (isAtBottom()) {
+      setIsSticky(true);
+    } else {
+      setIsSticky(false);
+    }
+  };
+
+  // When the message list changes (new message added) and we should be at the bottom.
   createEffect(() => {
-    if (props.messages.length > 0 && scrollContainerRef) {
-      scrollContainerRef.scrollTop = scrollContainerRef.scrollHeight;
+    const msgCount = props.messages.length;
+    if (msgCount > 0 && scrollContainerRef) {
+      // For new messages (user sends or AI starts), always scroll to bottom and re-enable sticky.
+      scrollToBottom();
+      setIsSticky(true);
       updateScrollbar();
     }
   });
 
+  // When streaming content updates (message content changes), auto-scroll if sticky.
+  // We use a ResizeObserver on the content container to detect height changes from streaming.
   onMount(() => {
-    const resizeObserver = new ResizeObserver(updateScrollbar);
+    const resizeObserver = new ResizeObserver(() => {
+      updateScrollbar();
+      // During streaming, if sticky, schedule a scroll to bottom.
+      if (isStreaming() && isSticky()) {
+        scheduleAutoScroll();
+      }
+    });
     if (scrollContainerRef) {
       resizeObserver.observe(scrollContainerRef);
       const content = scrollContainerRef.firstElementChild;
       if (content) resizeObserver.observe(content);
     }
-    onCleanup(() => resizeObserver.disconnect());
+    onCleanup(() => {
+      resizeObserver.disconnect();
+      if (autoScrollRafId !== null) {
+        cancelAnimationFrame(autoScrollRafId);
+        autoScrollRafId = null;
+      }
+    });
   });
+
+  const handleScrollToBottomClick = () => {
+    setIsSticky(true);
+    scrollToBottom();
+    updateScrollbar();
+  };
 
   return (
     <div class="flex-1 overflow-hidden relative group/area">
       <div
         ref={scrollContainerRef}
-        onScroll={updateScrollbar}
+        onScroll={handleScroll}
         class="absolute inset-0 overflow-y-auto px-4 py-8 no-scrollbar"
       >
         <div class="flex flex-col gap-2 max-w-4xl mx-auto">
@@ -141,6 +222,20 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      {/* Scroll-to-bottom floating button: visible during streaming when user scrolled away */}
+      <Show when={isStreaming() && !isSticky()}>
+        <button
+          onClick={handleScrollToBottomClick}
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-full bg-accent/80 hover:bg-accent text-white text-xs font-medium shadow-lg border border-white/10 backdrop-blur-sm transition-all hover:scale-105 active:scale-95"
+          title="跟进最新内容"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          跟进最新内容
+        </button>
+      </Show>
 
       <div
         class="absolute top-2 right-1.5 bottom-2 w-2 z-50 pointer-events-none"

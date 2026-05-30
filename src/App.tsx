@@ -474,29 +474,53 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                       </Show>
 
                       <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
-                        <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between">
-                          <span>{props.selectedConversationTitle ?? 'No conversation selected'}</span>
-                          <Show when={props.currentRoundState}>
-                            <span>
-                              {props.currentRoundState?.status} / waiting {props.currentRoundState?.waitingMemberIds.length ?? 0}
-                            </span>
-                          </Show>
-                        </div>
-                        <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                          <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
-                        </div>
-                        <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
-                          <div class="max-w-4xl mx-auto">
-                            <ChatInputBar
-                              onSend={props.onSend}
-                              onAbort={props.onAbort}
-                              replyStatus={props.replyStatus}
-                              allowEmptySend={props.allowEmptySend}
-                              disabled={props.sending || !props.selectedConversationId}
-                              placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
-                            />
-                          </div>
-                        </div>
+                        <WorkspaceTransitionStage
+                          activeWorkspace={props.selectedConversationId || 'empty'}
+                          paneIds={['empty', ...props.sessions.map((s) => s.id)]}
+                        >
+                          {(sessionId) => {
+                            const safeTitle = createMemo((prev: string | undefined) => {
+                              if (sessionId === props.selectedConversationId) return props.selectedConversationTitle;
+                              return prev || 'No conversation selected';
+                            });
+                            const safeMessages = createMemo((prev: typeof props.messages | undefined) => {
+                              if (sessionId === props.selectedConversationId) return props.messages;
+                              return prev || [];
+                            });
+                            const safeRoundState = createMemo((prev: typeof props.currentRoundState | undefined) => {
+                              if (sessionId === props.selectedConversationId) return props.currentRoundState;
+                              return prev;
+                            });
+
+                            return (
+                              <div class="h-full w-full flex flex-col relative bg-transparent overflow-hidden">
+                                <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between" data-workspace-title>
+                                  <span>{safeTitle()}</span>
+                                  <Show when={safeRoundState()}>
+                                    <span>
+                                      {safeRoundState()?.status} / waiting {safeRoundState()?.waitingMemberIds.length ?? 0}
+                                    </span>
+                                  </Show>
+                                </div>
+                                <div class="flex-1 overflow-hidden flex flex-col pt-2">
+                                  <ChatArea messages={safeMessages()} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                                </div>
+                                <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
+                                  <div class="max-w-4xl mx-auto">
+                                    <ChatInputBar
+                                      onSend={props.onSend}
+                                      onAbort={props.onAbort}
+                                      replyStatus={props.replyStatus}
+                                      allowEmptySend={props.allowEmptySend}
+                                      disabled={props.sending || !props.selectedConversationId}
+                                      placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        </WorkspaceTransitionStage>
                       </div>
 
                       <div class="flex flex-col relative">
