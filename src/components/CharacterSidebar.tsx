@@ -1,6 +1,8 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
+import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 import {
   importManagedImageFile,
   resolveImageSrc,
@@ -200,7 +202,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
           </IconButton>
         </div>
 
-        <div class="flex items-center justify-between gap-4 rounded-xl border border-white/5 bg-xuanqing p-3">
+        <div class="flex items-center justify-between gap-4 border-b border-white/10 pb-4 mb-4">
           <div>
             <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">视图切换</div>
             <div class="text-sm text-mist-solid/40 mt-1">当前：{activeTab() === 'npc' ? '对话角色' : '我的设定'}</div>
@@ -224,41 +226,48 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
             </IconButton>
           </div>
         </div>
-
-        <div class="relative group">
-          <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={18} />
-          <input
-            type="text"
-            value={search()}
-            onInput={(e) => setSearch(e.currentTarget.value)}
-            placeholder={activeTab() === 'player' ? '搜索我的角色...' : '搜索角色卡...'}
-            class="w-full bg-xuanqing border border-white/5 rounded-xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
-          />
-        </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto px-8 pb-24 custom-scrollbar">
-        <Show when={!props.loading} fallback={<div class="text-sm text-mist-solid/35">正在加载角色...</div>}>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            <For each={filteredCharacters()}>
+      <div class="relative flex-1 w-full min-h-0">
+        <WorkspaceTransitionStage activeWorkspace={activeTab()} paneIds={['npc', 'player']}>
+          {(tabId) => (
+            <Switch fallback={<div />}>
+              <Match when={tabId === 'npc'}>
+                <div class="absolute inset-0 flex flex-col">
+                  <div class="px-8 mb-6 flex-shrink-0">
+                    <div class="relative group">
+                      <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={18} />
+                      <input
+                        type="text"
+                        value={search()}
+                        onInput={(e) => setSearch(e.currentTarget.value)}
+                        placeholder="搜索对话角色..."
+                        class="w-full bg-transparent border-b border-white/20 rounded-none py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent transition-all placeholder:text-mist-solid/20"
+                      />
+                    </div>
+                  </div>
+                  <div class="flex-1 overflow-y-auto px-8 pb-24 custom-scrollbar">
+                    <Show when={!props.loading} fallback={<div class="text-sm text-mist-solid/35">正在加载角色...</div>}>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <For each={filteredCharacters().filter(c => c.cardType === "npc")}>
               {(character) => (
-                <div class="group relative aspect-video rounded-2xl overflow-hidden bg-xuanqing border border-white/10 cursor-pointer hover:border-accent/40 transition-all shadow-2xl hover:shadow-accent/10">
-                  <div class="absolute inset-0 bg-accent/5" />
+                <div class="group relative aspect-video overflow-hidden border-b-2 border-l-2 border-white/10 cursor-pointer hover:border-accent/40 transition-all">
+                  
                   <img
                     src={resolveImageSrc(
                       character.imagePath,
                       `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`,
                     )}
                     alt={character.name}
-                    class="w-full h-full object-cover opacity-50 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700"
+                    class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
                   />
-                  <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+                  
                   <div class="absolute bottom-0 left-0 right-0 p-4">
                     <h3 class="text-lg font-bold text-white mb-2 drop-shadow-lg">{character.name}</h3>
                     <div class="flex flex-wrap gap-2">
                       <For each={character.tags}>
                         {(tag) => (
-                          <span class="text-[10px] px-2 py-0.5 rounded-md bg-accent/20 text-accent/90 border border-accent/10 backdrop-blur-sm">
+                          <span class="text-[9px] px-2 py-0.5 rounded-none border border-current font-bold uppercase tracking-widest text-mist-solid/60 group-hover:text-accent transition-colors">
                             {tag}
                           </span>
                         )}
@@ -293,13 +302,93 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                 </div>
               )}
             </For>
-          </div>
-        </Show>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              </Match>
+              <Match when={tabId === 'player'}>
+                <div class="absolute inset-0 flex flex-col">
+                  <div class="px-8 mb-6 flex-shrink-0">
+                    <div class="relative group">
+                      <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={18} />
+                      <input
+                        type="text"
+                        value={search()}
+                        onInput={(e) => setSearch(e.currentTarget.value)}
+                        placeholder="搜索我的角色..."
+                        class="w-full bg-transparent border-b border-white/20 rounded-none py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent transition-all placeholder:text-mist-solid/20"
+                      />
+                    </div>
+                  </div>
+                  <div class="flex-1 overflow-y-auto px-8 pb-24 custom-scrollbar">
+                    <Show when={!props.loading} fallback={<div class="text-sm text-mist-solid/35">正在加载角色...</div>}>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <For each={filteredCharacters().filter(c => c.cardType === "player")}>
+              {(character) => (
+                <div class="group relative aspect-video overflow-hidden border-b-2 border-l-2 border-white/10 cursor-pointer hover:border-accent/40 transition-all">
+                  
+                  <img
+                    src={resolveImageSrc(
+                      character.imagePath,
+                      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`,
+                    )}
+                    alt={character.name}
+                    class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
+                  />
+                  
+                  <div class="absolute bottom-0 left-0 right-0 p-4">
+                    <h3 class="text-lg font-bold text-white mb-2 drop-shadow-lg">{character.name}</h3>
+                    <div class="flex flex-wrap gap-2">
+                      <For each={character.tags}>
+                        {(tag) => (
+                          <span class="text-[9px] px-2 py-0.5 rounded-none border border-current font-bold uppercase tracking-widest text-mist-solid/60 group-hover:text-accent transition-colors">
+                            {tag}
+                          </span>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                  <div class="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
+                    <IconButton
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openModal(character);
+                      }}
+                      label={`编辑角色 ${character.name}`}
+                      size="sm"
+                      class="bg-white/10 text-white"
+                    >
+                      <Pencil size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void props.onDeleteCharacter(character.id);
+                      }}
+                      label={`删除角色 ${character.name}`}
+                      tone="danger"
+                      size="sm"
+                      class="bg-white/10"
+                    >
+                      <Trash2 size={14} />
+                    </IconButton>
+                  </div>
+                </div>
+              )}
+            </For>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              </Match>
+              </Switch>
+            )}
+          </WorkspaceTransitionStage>
       </div>
 
-      <Show when={isModalOpen()}>
-        <div class="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div class="w-full max-w-2xl bg-xuanqing border border-white/10 rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+      <div class={`fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm transition-all duration-300 ease-out ${isModalOpen() ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}>
+          <div class={`w-full max-w-2xl bg-xuanqing border-y-2 border-white/10 p-8 shadow-2xl transition-all duration-300 ease-out delay-75 ${isModalOpen() ? "scale-100 translate-y-0 opacity-100" : "scale-[0.98] translate-y-4 opacity-0"}`}>
             <h2 class="text-xl font-bold text-white mb-6">{editingId() != null ? '编辑人设' : '创建新角色'}</h2>
             <div class="space-y-4 max-h-[70vh] overflow-y-auto px-2 -mx-2 custom-scrollbar">
               <div class="space-y-1">
@@ -308,7 +397,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                   type="text"
                   value={formData().name}
                   onInput={(e) => setFormData({ ...formData(), name: e.currentTarget.value })}
-                  class="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                  class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                 />
               </div>
 
@@ -327,9 +416,9 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                     e.preventDefault();
                     void importImage(e.dataTransfer?.files?.[0]);
                   }}
-                  class="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 flex flex-col gap-3"
+                  class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >
-                  <img src={previewSrc()} alt="preview" class="w-full h-40 object-cover rounded-xl bg-black/20" />
+                  <img src={previewSrc()} alt="preview" class="w-full h-40 object-cover bg-black/20 border border-white/5" />
                   <div class="flex items-center justify-between gap-3">
                     <div class="text-xs text-mist-solid/40 break-all">{formData().imagePath || '拖入图片到这里，或点击右侧按钮上传并保存到应用目录'}</div>
                     <IconButton
@@ -349,7 +438,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                 <textarea
                   value={formData().description}
                   onInput={(e) => setFormData({ ...formData(), description: e.currentTarget.value })}
-                  class="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid min-h-24 custom-scrollbar"
+                  class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-24 custom-scrollbar"
                 />
                 <p class="text-[11px] text-mist-solid/35 leading-5">
                   当结构化基础层段落为空时，后端会回退到这段描述文本。
@@ -361,7 +450,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                   type="text"
                   value={formData().tags}
                   onInput={(e) => setFormData({ ...formData(), tags: e.currentTarget.value })}
-                  class="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                  class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                 />
               </div>
 
@@ -383,30 +472,25 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                 </div>
                 <Show
                   when={formData().baseSections.length > 0}
-                  fallback={<div class="text-xs text-mist-solid/35 rounded-2xl border border-dashed border-white/10 bg-white/5 px-4 py-3">暂无结构化基础层段落，当前会仅显示兼容描述回退文本。</div>}
+                  fallback={<div class="text-xs text-mist-solid/35 border-l-2 border-dashed border-white/20 pl-4 py-2 mb-4">暂无结构化基础层段落，当前会仅显示兼容描述回退文本。</div>}
                 >
                   <div class="space-y-3">
                     <For each={formData().baseSections}>
                       {(section, idx) => (
-                        <div class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+                        <div class="border-l-2 border-white/10 pl-4 py-2 space-y-4 mb-6">
                           <div class="flex items-center justify-between gap-3">
                             <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_120px] gap-3 flex-1">
-                              <select
-                                value={section.sectionKey}
-                                onChange={(e) => {
-                                  const next = [...formData().baseSections];
-                                  next[idx()] = {
-                                    ...next[idx()],
-                                    sectionKey: e.currentTarget.value as CharacterBaseSectionKey,
-                                  };
-                                  setFormData({ ...formData(), baseSections: next });
-                                }}
-                                class="w-full bg-white/5 border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid appearance-none"
-                              >
-                                <For each={BASE_SECTION_OPTIONS}>
-                                  {(option) => <option value={option.value}>{option.label}</option>}
-                                </For>
-                              </select>
+                              <Select
+  value={section.sectionKey}
+  onChange={(val) => {
+    const next = [...formData().baseSections];
+    next[idx()] = { ...next[idx()], sectionKey: val };
+    setFormData({ ...formData(), baseSections: next });
+  }}
+  options={[
+  ...(BASE_SECTION_OPTIONS).map(option => ({ label: option.label, value: (option.value)?.toString() }))
+  ]}
+/>
                               <input
                                 type="number"
                                 value={section.sortOrder}
@@ -416,7 +500,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                                   setFormData({ ...formData(), baseSections: next });
                                 }}
                                 placeholder="排序"
-                                class="w-full bg-white/5 border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                                class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                               />
                             </div>
                             <IconButton
@@ -440,7 +524,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                               setFormData({ ...formData(), baseSections: next });
                             }}
                             placeholder="段落标题（可选）"
-                            class="w-full bg-white/5 border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                           />
                           <textarea
                             value={section.content}
@@ -450,7 +534,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                               setFormData({ ...formData(), baseSections: next });
                             }}
                             placeholder="输入该基础层段落正文，例如身份底座、人格底座、背景事实或长期规则。"
-                            class="w-full bg-white/5 border border-white/5 rounded-xl px-3 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid min-h-24 custom-scrollbar"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-24 custom-scrollbar"
                           />
                         </div>
                       )}
@@ -481,7 +565,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                             next[idx()] = e.currentTarget.value;
                             setFormData({ ...formData(), firstMessages: next });
                           }}
-                          class="flex-1 bg-white/5 border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid min-h-20 custom-scrollbar"
+                          class="flex-1 bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-20 custom-scrollbar"
                         />
                         <IconButton
                           onClick={() => {
@@ -502,25 +586,25 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/5">
                   <div class="space-y-1">
                     <span class="text-[10px] text-mist-solid/40">关联世界书</span>
-                    <select
-                      value={formData().defaultWorldBookId}
-                      onChange={(e) => setFormData({ ...formData(), defaultWorldBookId: e.currentTarget.value })}
-                      class="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-accent/40 text-mist-solid appearance-none"
-                    >
-                      <option value="">无关联</option>
-                      <For each={props.worldBooks}>{(book) => <option value={book.id}>{book.title}</option>}</For>
-                    </select>
+                    <Select
+  value={formData().defaultWorldBookId}
+  onChange={(val) => setFormData({ ...formData(), defaultWorldBookId: val })}
+  options={[
+  { label: "无关联", value: "" },
+  ...(props.worldBooks).map(book => ({ label: book.title, value: (book.id)?.toString() }))
+  ]}
+/>
                   </div>
                   <div class="space-y-1">
                     <span class="text-[10px] text-mist-solid/40">模型 API</span>
-                    <select
-                      value={formData().defaultProviderId}
-                      onChange={(e) => setFormData({ ...formData(), defaultProviderId: e.currentTarget.value })}
-                      class="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-accent/40 text-mist-solid appearance-none"
-                    >
-                      <option value="">跟随系统默认</option>
-                      <For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For>
-                    </select>
+                    <Select
+  value={formData().defaultProviderId}
+  onChange={(val) => setFormData({ ...formData(), defaultProviderId: val })}
+  options={[
+  { label: "跟随系统默认", value: "" },
+  ...(props.providers).map(provider => ({ label: provider.name, value: (provider.id)?.toString() }))
+  ]}
+/>
                   </div>
                 </div>
               </Show>
@@ -541,7 +625,6 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
             </div>
           </div>
         </div>
-      </Show>
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import { Component, For, Show, createEffect, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { ArrowRightToLine, Plus, Save, Trash2 } from '../lib/icons';
 import type { PresetDetail, PresetSemanticOptionRecord } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
@@ -227,8 +228,9 @@ export const SchemaConfigPanel: Component<{
   };
 
   return (
-    <Show when={props.isOpen}>
-      <div class="fixed inset-y-0 right-0 w-[460px] bg-xuanqing/95 backdrop-blur-2xl border-l border-white/5 z-[900] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+    <>
+      <div class={`fixed inset-0 z-[890] bg-xuanqing/40 transition-all duration-300 ease-out ${props.isOpen ? "opacity-100 backdrop-blur-sm pointer-events-auto" : "opacity-0 backdrop-blur-none pointer-events-none"}`} onClick={props.onClose} />
+      <div class={`fixed inset-y-0 right-0 w-[460px] bg-xuanqing/95 backdrop-blur-2xl border-l border-white/5 z-[900] shadow-2xl flex flex-col transition-all duration-300 ease-out ${props.isOpen ? "translate-x-0" : "translate-x-full"}`}>
         <div class="h-16 flex items-center justify-between px-6 border-b border-white/5 flex-shrink-0">
           <div class="flex items-center gap-2 text-mist-solid">
             <div>
@@ -257,13 +259,13 @@ export const SchemaConfigPanel: Component<{
 
             <For each={keys()}>
               {(key, index) => (
-                <div class="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-3">
+                <div class="border-b border-white/10 pb-6 space-y-4">
                   <div class="flex items-center justify-between gap-3">
                     <input
                       type="text"
                       value={key.name}
                       onInput={(e) => updateKey(index(), { name: e.currentTarget.value })}
-                      class="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                      class="flex-1 bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                       placeholder="键名"
                     />
                     <Show when={!key.linkedBySemanticOption}>
@@ -279,7 +281,7 @@ export const SchemaConfigPanel: Component<{
                   </div>
 
                   <Show when={key.linkedBySemanticOption}>
-                    <div class="text-[11px] px-3 py-1.5 rounded-lg border border-accent/20 bg-accent/10 text-accent">
+                    <div class="text-[11px] px-3 py-1.5 rounded-none border-l-2 border-accent/40 text-accent">
                       受语义组「{key.linkedBySemanticOption}」控制
                     </div>
                   </Show>
@@ -287,15 +289,13 @@ export const SchemaConfigPanel: Component<{
                   <div class="grid grid-cols-2 gap-3">
                     <div class="space-y-1">
                       <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">类型</label>
-                      <select
-                        value={key.type}
-                        onChange={(e) => updateKey(index(), { type: e.currentTarget.value as SchemaKeyConfig['type'] })}
-                        class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                      >
-                        <For each={SCHEMA_TYPES}>
-                          {(t) => <option value={t}>{t}</option>}
-                        </For>
-                      </select>
+                      <Select
+  value={key.type}
+  onChange={(val) => updateKey(index(), { type: val as SchemaKeyConfig['type'] })}
+  options={[
+  ...(SCHEMA_TYPES).map(t => ({ label: t, value: (t)?.toString() }))
+  ]}
+/>
                     </div>
                     <div class="space-y-1">
                       <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">描述</label>
@@ -303,7 +303,7 @@ export const SchemaConfigPanel: Component<{
                         type="text"
                         value={key.description}
                         onInput={(e) => updateKey(index(), { description: e.currentTarget.value })}
-                        class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                        class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                         placeholder="键的描述..."
                       />
                     </div>
@@ -313,31 +313,26 @@ export const SchemaConfigPanel: Component<{
                     <div class="space-y-3 pl-4 border-l border-white/10 mt-2">
                       <div class="space-y-1">
                         <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">对象模式</label>
-                        <select
-                          value={key.objectKind ?? 'additional_properties'}
-                          onChange={(e) => updateKey(index(), { 
-                            objectKind: e.currentTarget.value as any,
-                            properties: e.currentTarget.value === 'fixed_properties' ? (key.properties ?? []) : undefined
-                          })}
-                          class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                        >
-                          <option value="additional_properties">自由键值对 (Map)</option>
-                          <option value="fixed_properties">固定子键列表 (Object)</option>
-                        </select>
+                        <Select
+  value={key.objectKind ?? 'additional_properties'}
+  onChange={(val) => updateKey(index(), { objectKind: val })}
+  options={[
+  { label: "自由键值对 (Map)", value: "additional_properties" },
+  { label: "固定子键列表 (Object)", value: "fixed_properties" }
+  ]}
+/>
                       </div>
 
                       <Show when={key.objectKind === 'fixed_properties'} fallback={
                         <div class="space-y-1">
                           <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">additionalProperties 类型</label>
-                          <select
-                            value={key.additionalPropertiesType ?? 'string'}
-                            onChange={(e) => updateKey(index(), { additionalPropertiesType: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                          >
-                            <For each={SCHEMA_TYPES}>
-                              {(t) => <option value={t}>{t}</option>}
-                            </For>
-                          </select>
+                          <Select
+  value={key.additionalPropertiesType ?? 'string'}
+  onChange={(val) => updateKey(index(), { additionalPropertiesType: val })}
+  options={[
+  ...(SCHEMA_TYPES).map(t => ({ label: t, value: (t)?.toString() }))
+  ]}
+/>
                         </div>
                       }>
                         <div class="space-y-2">
@@ -359,7 +354,7 @@ export const SchemaConfigPanel: Component<{
 
                           <For each={key.properties ?? []}>
                             {(subKey, subIndex) => (
-                              <div class="bg-black/20 border border-white/5 rounded-xl p-3 space-y-2 relative">
+                              <div class="border-l-2 border-white/10 pl-3 space-y-2 relative mb-4">
                                 <div class="flex items-center justify-between gap-2">
                                   <input
                                     type="text"
@@ -369,7 +364,7 @@ export const SchemaConfigPanel: Component<{
                                       newProps[subIndex()] = { ...subKey, name: e.currentTarget.value };
                                       updateKey(index(), { properties: newProps });
                                     }}
-                                    class="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-xs text-mist-solid focus:outline-none focus:border-accent/40"
+                                    class="flex-1 bg-transparent border-b border-white/20 rounded-none px-1 py-1 text-xs text-mist-solid focus:outline-none focus:border-accent transition-all"
                                     placeholder="子键名 (如 A)"
                                   />
                                   <button
@@ -387,20 +382,20 @@ export const SchemaConfigPanel: Component<{
 
                                 <div class="grid grid-cols-2 gap-2">
                                   <div>
-                                    <select
-                                      value={subKey.type}
-                                      onChange={(e) => {
-                                        const newProps = [...(key.properties ?? [])];
-                                        newProps[subIndex()] = { ...subKey, type: e.currentTarget.value as any };
-                                        updateKey(index(), { properties: newProps });
-                                      }}
-                                      class="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-mist-solid focus:outline-none"
-                                    >
-                                      <option value="string">string</option>
-                                      <option value="number">number</option>
-                                      <option value="integer">integer</option>
-                                      <option value="boolean">boolean</option>
-                                    </select>
+                                    <Select
+  value={subKey.type}
+  onChange={(val) => {
+    const newProps = [...(key.properties ?? [])];
+    newProps[subIndex()] = { ...subKey, type: val };
+    updateKey(index(), { properties: newProps });
+  }}
+  options={[
+  { label: "string", value: "string" },
+  { label: "number", value: "number" },
+  { label: "integer", value: "integer" },
+  { label: "boolean", value: "boolean" }
+  ]}
+/>
                                   </div>
                                   <div>
                                     <input
@@ -411,7 +406,7 @@ export const SchemaConfigPanel: Component<{
                                         newProps[subIndex()] = { ...subKey, description: e.currentTarget.value };
                                         updateKey(index(), { properties: newProps });
                                       }}
-                                      class="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-mist-solid focus:outline-none"
+                                      class="w-full bg-transparent border-b border-white/20 rounded-none px-1 py-1 text-[11px] text-mist-solid focus:outline-none focus:border-accent transition-all"
                                       placeholder="描述..."
                                     />
                                   </div>
@@ -441,15 +436,13 @@ export const SchemaConfigPanel: Component<{
                   <Show when={key.type === 'array'}>
                     <div class="space-y-1">
                       <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">items 类型</label>
-                      <select
-                        value={key.itemsType ?? 'string'}
-                        onChange={(e) => updateKey(index(), { itemsType: e.currentTarget.value })}
-                        class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                      >
-                        <For each={SCHEMA_TYPES}>
-                          {(t) => <option value={t}>{t}</option>}
-                        </For>
-                      </select>
+                      <Select
+  value={key.itemsType ?? 'string'}
+  onChange={(val) => updateKey(index(), { itemsType: val })}
+  options={[
+  ...(SCHEMA_TYPES).map(t => ({ label: t, value: (t)?.toString() }))
+  ]}
+/>
                     </div>
                   </Show>
 
@@ -510,6 +503,6 @@ export const SchemaConfigPanel: Component<{
           </div>
         </div>
       </div>
-    </Show>
+    </>
   );
 };

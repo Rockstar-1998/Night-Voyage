@@ -42,11 +42,11 @@ export const CompletionSidebar: Component<{
                     <input
                         type="text"
                         placeholder="搜索预设组..."
-                        class="w-full bg-xuanqing border border-white/5 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
+                        class="w-full bg-transparent border-b border-white/20 rounded-none py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-accent transition-all placeholder:text-mist-solid/20"
                     />
                 </div>
 
-                <div class="w-full flex items-center justify-between gap-4 py-3 px-4 rounded-xl bg-white/5 border border-white/5 text-mist-solid/60">
+                <div class="w-full flex items-center justify-between gap-4 border-b border-white/10 pb-4 mb-4 text-mist-solid/60">
                     <div>
                         <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">预留操作</div>
                         <div class="text-sm mt-1">新建预设组</div>
@@ -63,19 +63,13 @@ export const CompletionSidebar: Component<{
                         {(group) => (
                             <button
                                 onClick={() => props.onGroupChange(group.id)}
-                                class={`flex items-center justify-between p-4 rounded-2xl transition-all group ${props.activeGroup === group.id
-                                    ? 'bg-accent text-white shadow-lg shadow-accent/20'
-                                    : 'text-mist-solid/40 hover:bg-white/5 hover:text-mist-solid/60'
-                                    }`}
+                                class={`flex items-center justify-between p-4 border-l-2 transition-all group ${props.activeGroup === group.id ? 'border-accent text-white' : 'border-transparent text-mist-solid/40 hover:border-white/10 hover:text-mist-solid/60'}`}
                             >
                                 <div class="flex items-center gap-3">
                                     <Folder size={18} class={props.activeGroup === group.id ? 'text-white' : 'text-accent/60'} />
                                     <span class="text-sm font-medium">{group.name}</span>
                                 </div>
-                                <span class={`text-[10px] px-1.5 py-0.5 rounded-md border ${props.activeGroup === group.id
-                                    ? 'bg-white/20 border-white/20'
-                                    : 'bg-white/5 border-white/5'
-                                    }`}>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded-none border border-current">
                                     {group.count}
                                 </span>
                             </button>

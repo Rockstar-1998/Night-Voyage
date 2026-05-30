@@ -1,4 +1,5 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { Select } from './ui/Select';
 import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Pencil, Save, Sparkles, UserRound } from '../lib/icons';
 import { animate } from '../lib/animate';
 import type { CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
@@ -204,16 +205,14 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
 
   return (
     <>
-      <Show when={isOpen()}>
-        <div
-          class="fixed inset-0 bg-xuanqing/40 backdrop-blur-sm z-40 transition-opacity"
+      <div
+          class={`fixed inset-0 bg-xuanqing/40 z-40 transition-all duration-300 ease-out ${isOpen() ? 'opacity-100 backdrop-blur-sm pointer-events-auto' : 'opacity-0 backdrop-blur-none pointer-events-none'}`}
           onClick={toggleDrawer}
         />
-      </Show>
 
       <button
         onClick={toggleDrawer}
-        class={`fixed top-1/2 right-0 -translate-y-1/2 z-30 bg-accent/80 hover:bg-accent text-white p-1.5 py-4 rounded-l-2xl shadow-[0_0_20px_rgba(0,0,0,0.3)] border-l border-y border-white/10 backdrop-blur-md transition-all hover:pr-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${isOpen() ? 'translate-x-full opacity-0' : ''}`}
+        class={`fixed top-[55%] right-0 -translate-y-1/2 z-30 bg-black/40 hover:bg-black/60 text-mist-solid/60 hover:text-accent p-2 rounded-l-xl border-l border-y border-white/10 backdrop-blur-md transition-all hover:pr-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${isOpen() ? 'translate-x-full opacity-0' : ''}`}
         title="打开层状态抽屉"
         aria-label="打开层状态抽屉"
       >
@@ -242,7 +241,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </div>
           </Show>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-200 flex items-center justify-center">
                 <Layers3 size={18} />
@@ -252,35 +251,31 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                 <p class="text-xs text-mist-solid/40">在当前聊天上下文中直接切换预设与世界书绑定。</p>
               </div>
             </div>
-            <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3 text-sm text-mist-solid/75 leading-6 space-y-1">
+            <div class="px-1 py-2 text-sm text-mist-solid/75 leading-6 space-y-1 border-l-2 border-white/20">
               <p>{selectedPresetLabel()}</p>
               <p>{selectedWorldBookLabel()}</p>
             </div>
             <div class="space-y-2">
               <label class="text-xs uppercase tracking-widest text-mist-solid/35">预设绑定</label>
-              <select
-                value={bindingPresetId()}
-                onChange={(event) => setBindingPresetId(event.currentTarget.value)}
-                class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid outline-none focus:border-accent/40"
-              >
-                <option value="">保持当前预设</option>
-                <For each={props.presetSummaries}>
-                  {(preset) => <option value={preset.id}>{preset.name}</option>}
-                </For>
-              </select>
+              <Select
+  value={bindingPresetId()}
+  onChange={(val) => setBindingPresetId(event.currentTarget.value)}
+  options={[
+  { label: "保持当前预设", value: "" },
+  ...(props.presetSummaries).map(preset => ({ label: preset.name, value: (preset.id)?.toString() }))
+  ]}
+/>
             </div>
             <div class="space-y-2">
               <label class="text-xs uppercase tracking-widest text-mist-solid/35">世界书绑定</label>
-              <select
-                value={bindingWorldBookId()}
-                onChange={(event) => setBindingWorldBookId(event.currentTarget.value)}
-                class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid outline-none focus:border-accent/40"
-              >
-                <option value="">保持当前世界书</option>
-                <For each={props.worldBooks}>
-                  {(worldBook) => <option value={worldBook.id}>{worldBook.title}</option>}
-                </For>
-              </select>
+              <Select
+  value={bindingWorldBookId()}
+  onChange={(val) => setBindingWorldBookId(event.currentTarget.value)}
+  options={[
+  { label: "保持当前世界书", value: "" },
+  ...(props.worldBooks).map(worldBook => ({ label: worldBook.title, value: (worldBook.id)?.toString() }))
+  ]}
+/>
             </div>
             <div class="flex items-center justify-between gap-3">
               <p class="text-xs text-mist-solid/40 leading-5">本轮支持绑定与切换；若要清空绑定，可后续补专用入口。</p>
@@ -296,7 +291,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </div>
           </section>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center">
                 <UserRound size={18} />
@@ -310,7 +305,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
               when={props.currentPlayerCharacter}
               fallback={<div class="text-sm text-mist-solid/45">当前会话未绑定玩家角色卡。</div>}
             >
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3 flex items-center gap-3">
+              <div class="px-1 py-2 flex items-center gap-3 border-l-2 border-white/20">
                 <Show when={props.currentPlayerCharacter?.imagePath} fallback={<div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-mist-solid/40"><UserRound size={16} /></div>}>
                   <img src={toAssetUrl(props.currentPlayerCharacter?.imagePath)} alt="" class="w-8 h-8 rounded-lg object-cover" />
                 </Show>
@@ -320,19 +315,13 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             <Show when={props.playerCharacters.length > 0}>
               <div class="space-y-2">
                 <label class="text-xs uppercase tracking-widest text-mist-solid/35">切换角色卡</label>
-                <select
-                  value={props.currentPlayerCharacter?.id ?? ''}
-                  disabled={switchingPlayerCharacter()}
-                  onChange={(event) => {
-                    const val = event.currentTarget.value;
-                    if (val) void handleSwitchPlayerCharacter(Number(val));
-                  }}
-                  class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid outline-none focus:border-accent/40 disabled:opacity-50"
-                >
-                  <For each={props.playerCharacters}>
-                    {(pc) => <option value={pc.id}>{pc.name}</option>}
-                  </For>
-                </select>
+                <Select
+  value={props.currentPlayerCharacter?.id?.toString() ?? ''}
+  onChange={(val) => { if (val) switchPlayerCharacter(Number(val)); }} disabled={switchingPlayerCharacter()}
+  options={[
+  ...(props.playerCharacters).map(pc => ({ label: pc.name, value: (pc.id)?.toString() }))
+  ]}
+/>
               </div>
             </Show>
             <Show when={switchingPlayerCharacter()}>
@@ -340,7 +329,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </Show>
           </section>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-4">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center">
                 <Layers3 size={18} />
@@ -356,7 +345,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </div>
           </section>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-4">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-accent/20 text-accent flex items-center justify-center">
                 <UserRound size={18} />
@@ -371,14 +360,14 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
               fallback={<div class="text-sm text-mist-solid/45">当前会话未绑定可展示的角色卡。</div>}
             >
               <div class="space-y-3">
-                <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+                <div class="px-1 py-2 border-l-2 border-white/20">
                   <p class="text-xs uppercase tracking-widest text-mist-solid/35">角色</p>
                   <p class="text-sm font-semibold text-white mt-1">{props.selectedCharacter?.name}</p>
                 </div>
                 <Show
                   when={baseSections().length > 0}
                   fallback={
-                    <div class="rounded-xl border border-dashed border-white/10 bg-black/10 px-3 py-3 text-sm text-mist-solid/70 whitespace-pre-wrap">
+                    <div class="px-1 py-2 text-sm text-mist-solid/70 whitespace-pre-wrap border-l-2 border-dashed border-white/20">
                       {fallbackDescription() || '当前没有结构化基础层段落，也没有兼容描述回退文本。'}
                     </div>
                   }
@@ -386,7 +375,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                   <div class="space-y-3">
                     <For each={baseSections()}>
                       {(section) => (
-                        <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3 space-y-2">
+                        <div class="px-1 py-2 space-y-2 border-l-2 border-white/20">
                           <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-semibold text-white">{section.title || getSectionLabel(section.sectionKey)}</p>
                             <span class="text-[10px] uppercase tracking-widest text-mist-solid/35">#{section.sortOrder}</span>
@@ -401,7 +390,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </Show>
           </section>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-4">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
                 <Sparkles size={18} />
@@ -428,7 +417,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             </div>
           </section>
 
-          <section class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <p class="text-sm font-semibold text-white">第 5 层：剧情总结时间线</p>
@@ -485,12 +474,12 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
 
             <Show
               when={sortedPlotSummaries().length > 0}
-              fallback={<div class="rounded-xl border border-dashed border-white/10 bg-black/10 px-4 py-4 text-sm text-mist-solid/55">当前会话还没有剧情总结条目。</div>}
+              fallback={<div class="px-1 py-4 text-sm text-mist-solid/55 border-l-2 border-dashed border-white/20">当前会话还没有剧情总结条目。</div>}
             >
               <div class="space-y-4">
                 <For each={sortedPlotSummaries()}>
                   {(summary) => (
-                    <div class="rounded-2xl border border-white/10 bg-black/10 px-4 py-4 space-y-3">
+                    <div class="px-4 py-4 space-y-3 border-l-2 border-white/10 hover:border-white/30 transition-colors">
                       <div class="flex items-start justify-between gap-3">
                         <div>
                           <p class="text-sm font-semibold text-white">摘要 {summary.batchIndex}</p>
@@ -519,7 +508,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                       <Show when={canEdit(summary)}>
                         <div class="space-y-2">
                           <textarea
-                            class="w-full min-h-[8rem] rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6 outline-none focus:border-accent/40 resize-y"
+                            class="w-full min-h-[8rem] bg-transparent border-b border-white/20 rounded-none px-1 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6 outline-none focus:border-accent transition-all resize-y custom-scrollbar"
                             value={draftText(summary)}
                             onInput={(event) => handleDraftInput(summary.batchIndex, event.currentTarget.value)}
                             placeholder="输入条目式剧情总结，例如：主角一行人从酒馆出发，到达山谷。\n委托：已接受\nXX 的状态：犯困"
@@ -544,7 +533,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                       </Show>
 
                       <Show when={!canEdit(summary) && summary.summaryText}>
-                        <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6">
+                        <div class="px-1 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6 border-l-2 border-white/20">
                           {summary.summaryText}
                         </div>
                       </Show>

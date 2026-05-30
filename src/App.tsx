@@ -396,7 +396,7 @@ const DesktopView = (props: {
           <div class="flex flex-col relative">
             <button
               onClick={props.toggleFocusMode}
-              class="absolute -left-12 top-1/2 -translate-y-1/2 z-40 p-2.5 rounded-l-2xl bg-accent text-white shadow-xl border border-white/10 opacity-40 hover:opacity-100 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              class="fixed top-[45%] right-0 -translate-y-1/2 z-30 bg-black/40 hover:bg-black/60 text-mist-solid/60 hover:text-accent p-2 rounded-l-xl border-l border-y border-white/10 backdrop-blur-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               title={props.isFocusMode ? '退出专注模式' : '进入专注模式'}
               aria-label={props.isFocusMode ? '退出专注模式' : '进入专注模式'}
             >
@@ -502,7 +502,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                       <div class="flex flex-col relative">
                         <button
                           onClick={props.toggleFocusMode}
-                          class="absolute -left-12 top-1/2 -translate-y-1/2 z-40 p-2.5 rounded-l-2xl bg-accent text-white shadow-xl border border-white/10 opacity-40 hover:opacity-100 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                          class="fixed top-[45%] right-0 -translate-y-1/2 z-30 bg-black/40 hover:bg-black/60 text-mist-solid/60 hover:text-accent p-2 rounded-l-xl border-l border-y border-white/10 backdrop-blur-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                           title={props.isFocusMode ? 'Exit focus mode' : 'Enter focus mode'}
                           aria-label={props.isFocusMode ? 'Exit focus mode' : 'Enter focus mode'}
                         >

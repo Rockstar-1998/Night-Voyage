@@ -246,17 +246,18 @@ const StructuredResponseRenderer: Component<{
       <For each={fieldEntries()}>
         {([_key, field]) => (
           <Show when={field.kind === 'object'}>
-            <div class="flex flex-wrap gap-2 mt-3">
+            <div class="flex flex-col gap-2 mt-4">
               <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
                 {([optKey, optValue]) => (
                   <button
-                    class="px-4 py-2 bg-accent/20 border border-accent/30 rounded-lg text-sm text-mist-solid hover:bg-accent/30 transition-colors"
+                    class="group flex flex-col md:flex-row items-start md:items-center gap-4 px-5 py-3.5 bg-xuanqing/40 border border-white/5 hover:border-accent/40 hover:bg-white/[0.04] transition-all text-left rounded-none w-full relative overflow-hidden"
                     onClick={() => {
                       props.onChoiceSelect?.(optKey, optValue);
                     }}
                   >
-                    <span class="text-accent/80 font-semibold mr-1">{optKey}</span>
-                    <span class="text-mist-solid/70">{optValue}</span>
+                    <div class="absolute inset-y-0 left-0 w-[2px] bg-white/10 group-hover:bg-accent transition-colors"></div>
+                    <span class="text-accent font-black tracking-widest uppercase text-xs w-4 shrink-0 mt-0.5">{optKey}</span>
+                    <span class="text-mist-solid/80 text-sm leading-relaxed">{optValue}</span>
                   </button>
                 )}
               </For>

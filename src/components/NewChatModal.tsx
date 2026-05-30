@@ -1,4 +1,5 @@
 import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { ArrowLeft, ArrowRight, Book, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
 import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
@@ -191,8 +192,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   };
 
   return (
-    <Show when={props.isOpen}>
-      <div class="fixed inset-0 z-[2000] flex flex-col bg-xuanqing/98 backdrop-blur-3xl animate-in fade-in duration-500 overflow-hidden">
+    <div class={`fixed inset-0 z-[2000] flex flex-col bg-xuanqing/98 backdrop-blur-3xl transition-all duration-300 ease-out overflow-hidden ${props.isOpen ? 'opacity-100 pointer-events-auto scale-100' : 'opacity-0 pointer-events-none scale-105'}`}>
         <div class="h-20 flex items-center justify-between px-10 border-b border-white/5">
           <div>
             <h2 class="text-xl font-bold text-white leading-none mb-1">新建会话</h2>
@@ -231,27 +231,24 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                           setTitle(character.name);
                         }
                       }}
-                      class={`relative aspect-video rounded-3xl overflow-hidden border-2 text-left transition-all ${selectedCharacterId() === character.id
-                        ? 'border-accent shadow-[0_0_30px_rgba(58,109,140,0.3)] scale-[1.02]'
-                        : 'border-white/5 hover:border-white/20'}`}
+                      class={`relative aspect-video text-left transition-all group ${selectedCharacterId() === character.id ? 'scale-[1.02] shadow-2xl z-10' : 'opacity-60 hover:opacity-100'}`}
                     >
                       <img
                         src={resolveImageSrc(character.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`)}
                         alt={character.name}
-                        class="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700"
+                        class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
                       />
-                      <div class="absolute inset-0 bg-accent/5" />
-                      <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                      
                       <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <h3 class="text-xl font-bold text-white mb-2">{character.name}</h3>
+                        <h3 class={`text-xl font-bold mb-2 transition-colors ${selectedPlayerCharacterId() === character.id ? 'text-purple-400' : 'text-white'}`}>{character.name}</h3>
                         <div class="flex flex-wrap gap-2">
                           <For each={character.tags.slice(0, 3)}>
-                            {(tag) => <span class="text-[9px] px-2 py-0.5 rounded-md bg-accent text-white font-bold">{tag}</span>}
+                            {(tag) => <span class={`text-[9px] px-2 py-0.5 rounded-none border border-current font-bold uppercase tracking-widest ${selectedPlayerCharacterId() === character.id ? 'text-purple-400' : 'text-mist-solid/60'}`}>{tag}</span>}
                           </For>
                         </div>
                       </div>
                       <Show when={selectedCharacterId() === character.id}>
-                        <div class="absolute top-4 right-4 bg-accent p-2 rounded-full text-white shadow-lg">
+                        <div class="absolute top-4 right-4 text-accent drop-shadow-lg">
                           <CheckCircle2 size={16} />
                         </div>
                       </Show>
@@ -269,19 +266,16 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                   {(character) => (
                     <button
                       onClick={() => setSelectedPlayerCharacterId(character.id)}
-                      class={`relative aspect-video rounded-3xl overflow-hidden border-2 text-left transition-all ${selectedPlayerCharacterId() === character.id
-                        ? 'border-purple-500 shadow-[0_0_30px_rgba(168,85,247,0.3)] scale-[1.02]'
-                        : 'border-white/5 hover:border-white/20'}`}
+                      class={`relative aspect-video text-left transition-all group ${selectedPlayerCharacterId() === character.id ? 'scale-[1.02] shadow-2xl z-10' : 'opacity-60 hover:opacity-100'}`}
                     >
                       <img
                         src={resolveImageSrc(character.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`)}
                         alt={character.name}
-                        class="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700"
+                        class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
                       />
-                      <div class="absolute inset-0 bg-purple-500/5" />
-                      <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                      
                       <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <h3 class="text-xl font-bold text-white mb-2">{character.name}</h3>
+                        <h3 class={`text-xl font-bold mb-2 transition-colors ${selectedPlayerCharacterId() === character.id ? 'text-purple-400' : 'text-white'}`}>{character.name}</h3>
                         <div class="flex flex-wrap gap-2">
                           <For each={character.tags.slice(0, 3)}>
                             {(tag) => <span class="text-[9px] px-2 py-0.5 rounded-md bg-purple-500 text-white font-bold">{tag}</span>}
@@ -289,7 +283,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                         </div>
                       </div>
                       <Show when={selectedPlayerCharacterId() === character.id}>
-                        <div class="absolute top-4 right-4 bg-purple-500 p-2 rounded-full text-white shadow-lg">
+                        <div class="absolute top-4 right-4 text-purple-400 drop-shadow-lg">
                           <CheckCircle2 size={16} />
                         </div>
                       </Show>
@@ -300,20 +294,20 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
             </Show>
 
             <Show when={step() === 2}>
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div class="space-y-4 p-6 rounded-3xl bg-white/5 border border-white/5">
-                  <h3 class="text-xl font-bold text-white">角色实例</h3>
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                <div class="space-y-6">
+                  <div class="border-b border-white/10 pb-4"><h3 class="text-xl font-bold text-white">角色实例</h3></div>
                   <Show when={selectedCharacter()}>
-                    <div class="relative rounded-2xl overflow-hidden border border-white/10 bg-black/20 min-h-[220px]">
+                    <div class="relative min-h-[200px] border-l border-white/10 pl-6">
                       <img
                         src={resolveImageSrc(selectedCharacter()?.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(selectedCharacter()?.name || 'character')}`)}
                         alt={selectedCharacter()?.name}
-                        class="absolute inset-0 w-full h-full object-cover opacity-45"
+                        class="absolute inset-0 w-[400px] h-full object-cover grayscale opacity-30" style={{ "-webkit-mask-image": "linear-gradient(to right, black 0%, transparent 100%)", "mask-image": "linear-gradient(to right, black 0%, transparent 100%)" }}
                       />
-                      <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-                      <div class="relative z-10 p-6 flex flex-col justify-end min-h-[220px]">
-                        <h4 class="text-2xl font-black text-white mb-2">{selectedCharacter()?.name}</h4>
-                        <p class="text-sm text-mist-solid/70 line-clamp-3">{selectedCharacter()?.description || '暂无描述'}</p>
+                      
+                      <div class="relative z-10 flex flex-col justify-center min-h-[200px]">
+                        <h4 class="text-3xl font-black text-white mb-3">{selectedCharacter()?.name}</h4>
+                        <p class="text-sm text-mist-solid/70 line-clamp-4 max-w-sm">{selectedCharacter()?.description || '暂无描述'}</p>
                       </div>
                     </div>
                   </Show>
@@ -323,7 +317,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       value={title()}
                       onInput={(e) => setTitle(e.currentTarget.value)}
                       placeholder={selectedCharacter()?.name || '请输入会话标题'}
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40"
+                      class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                     />
                   </div>
                   <Show when={(selectedCharacter()?.firstMessages?.length ?? 0) > 0}>
@@ -334,10 +328,10 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                           {(msg, idx) => (
                             <button
                               onClick={() => setSelectedOpeningIndex(idx())}
-                              class={`w-full text-left p-3 rounded-xl border transition-all ${
+                              class={`w-full text-left py-3 px-1 border-b transition-all ${
                                 selectedOpeningIndex() === idx()
-                                  ? 'bg-accent/10 border-accent/40 text-white'
-                                  : 'bg-white/5 border-white/5 text-mist-solid/60 hover:bg-white/10'
+                                  ? 'border-accent text-white'
+                                  : 'border-white/10 text-mist-solid/60 hover:text-mist-solid'
                               }`}
                             >
                               <div class="flex items-start gap-2">
@@ -349,10 +343,10 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                         </For>
                         <button
                           onClick={() => setSelectedOpeningIndex(-1)}
-                          class={`w-full text-left p-3 rounded-xl border transition-all ${
+                          class={`w-full text-left py-3 px-1 border-b transition-all ${
                             selectedOpeningIndex() === -1
-                              ? 'bg-accent/10 border-accent/40 text-white'
-                              : 'bg-white/5 border-white/5 text-mist-solid/40 hover:bg-white/10'
+                              ? 'border-accent text-white'
+                              : 'border-white/10 text-mist-solid/40 hover:text-mist-solid/70'
                           }`}
                         >
                           <span class="text-sm">不发送开场消息</span>
@@ -362,14 +356,14 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                   </Show>
                 </div>
 
-                <div class="space-y-4 p-6 rounded-3xl bg-white/5 border border-white/5">
-                  <h3 class="text-xl font-bold text-white">实例配置</h3>
+                <div class="space-y-6">
+                  <div class="border-b border-white/10 pb-4"><h3 class="text-xl font-bold text-white">实例配置</h3></div>
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">会话模式</label>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div class={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-4 ${conversationType() === 'single'
-                        ? 'bg-accent/10 border-accent text-white'
-                        : 'bg-white/5 border-white/10 text-mist-solid/60 hover:bg-white/10'}`}>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div class={`py-4 border-l-2 pl-4 transition-all flex items-center justify-between gap-4 ${conversationType() === 'single'
+                        ? 'border-accent text-white'
+                        : 'border-white/10 text-mist-solid/60 hover:border-white/30'}`}>
                         <div>
                           <div class="font-bold">单人会话</div>
                           <div class="text-xs text-mist-solid/40 mt-2">私有单聊实例</div>
@@ -384,9 +378,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                           <User size={16} />
                         </IconButton>
                       </div>
-                      <div class={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-4 ${conversationType() === 'online'
-                        ? 'bg-purple-500/10 border-purple-500 text-white'
-                        : 'bg-white/5 border-white/10 text-mist-solid/60 hover:bg-white/10'}`}>
+                      <div class={`py-4 border-l-2 pl-4 transition-all flex items-center justify-between gap-4 ${conversationType() === 'online'
+                        ? 'border-purple-500 text-white'
+                        : 'border-white/10 text-mist-solid/60 hover:border-white/30'}`}>
                         <div>
                           <div class="font-bold">联机会话</div>
                           <div class="text-xs text-mist-solid/40 mt-2">本地房间轮次实例</div>
@@ -406,26 +400,25 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
 
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">世界书</label>
-                    <select
-                      value={selectedWorldBookId() ?? ''}
-                      onChange={(e) => setSelectedWorldBookId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40"
-                    >
-                      <option value="">不绑定世界书</option>
-                      <For each={props.worldBooks}>{(book) => <option value={book.id}>{book.title}</option>}</For>
-                    </select>
+                    <Select
+  value={selectedWorldBookId()?.toString() ?? ''}
+  onChange={(val) => setSelectedWorldBookId(val ? Number(val) : undefined)}
+  options={[
+  { label: "不绑定世界书", value: "" },
+  ...(props.worldBooks).map(book => ({ label: book.title, value: (book.id)?.toString() }))
+  ]}
+/>
                   </div>
 
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">API 档案</label>
-                    <select
-                      value={selectedProviderId() ?? ''}
-                      onChange={(e) => setSelectedProviderId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40"
-                    >
-                      <option value="">请选择 API 档案</option>
-                      <For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name} · {provider.modelName}</option>}</For>
-                    </select>
+                    <Select
+  value={selectedProviderId()?.toString() ?? ''}
+  onChange={(val) => setSelectedProviderId(val ? Number(val) : undefined)}
+  options={[
+  { label: "请选择 API 档案", value: "" }
+  ]}
+/>
                     <Show when={conversationType() === 'online' && !selectedProviderId()}>
                       <p class="text-[11px] leading-relaxed text-mist-solid/40">
                         联机会话会由房主端聚合成员发言并请求模型回复，因此需要先选择 API 档案。
@@ -438,7 +431,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                     <div>预设系统本轮尚未接后端，本入口当前仅保留结构位，不参与真实创建流程。</div>
                   </div>
                   <Show when={conversationType() === 'online'}>
-                    <div class="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-5 space-y-4">
+                    <div class="border-l-2 border-purple-500/30 pl-5 py-2 space-y-4">
                       <div class="flex items-center gap-3">
                         <div class="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400">
                           <Radio size={16} />
@@ -453,7 +446,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                         when={!roomResult()}
                         fallback={
                           <div class="space-y-4">
-                            <div class="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+                            <div class="flex items-center justify-between gap-3 border-b border-white/10 px-1 py-3">
                               <div class="text-sm text-mist-solid/80">
                                 {roomResult()?.hostAddress}:{roomResult()?.port}
                               </div>
@@ -485,7 +478,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                               value={roomPort()}
                               onInput={(e) => setRoomPort(e.currentTarget.value)}
                               placeholder="例如 8080"
-                              class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid placeholder-mist-solid/25"
+                              class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all placeholder-mist-solid/25"
                             />
                           </div>
                           <div class="space-y-2">
@@ -495,7 +488,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                               value={roomPassphrase()}
                               onInput={(e) => setRoomPassphrase(e.currentTarget.value)}
                               placeholder="留空表示无密码"
-                              class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid placeholder-mist-solid/25"
+                              class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all placeholder-mist-solid/25"
                             />
                           </div>
                           <Show when={roomError()}>
@@ -570,6 +563,5 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
           </div>
         </div>
       </div>
-    </Show>
   );
 };

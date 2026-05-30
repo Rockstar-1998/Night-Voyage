@@ -1,4 +1,5 @@
 import { Component, For, Show, createEffect, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { ArrowRightToLine, Plus, Save, SlidersHorizontal, Trash2 } from '../lib/icons';
 import type { PresetDetail } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
@@ -151,8 +152,9 @@ export const CompletionParametersPanel: Component<{
   const saveLabel = () => (props.mode === 'create' ? '创建预设' : props.saving ? '保存中...' : '保存设置');
 
   return (
-    <Show when={props.isOpen}>
-      <div class="fixed inset-y-0 right-0 w-[460px] bg-xuanqing/95 backdrop-blur-2xl border-l border-white/5 z-[900] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+    <>
+      <div class={`fixed inset-0 z-[890] bg-xuanqing/40 transition-all duration-300 ease-out ${props.isOpen ? "opacity-100 backdrop-blur-sm pointer-events-auto" : "opacity-0 backdrop-blur-none pointer-events-none"}`} onClick={props.onClose} />
+      <div class={`fixed inset-y-0 right-0 w-[460px] bg-xuanqing/95 backdrop-blur-2xl border-l border-white/5 z-[900] shadow-2xl flex flex-col transition-all duration-300 ease-out ${props.isOpen ? "translate-x-0" : "translate-x-full"}`}>
         <div class="h-16 flex items-center justify-between px-6 border-b border-white/5 flex-shrink-0">
           <div class="flex items-center gap-2 text-mist-solid">
             <SlidersHorizontal size={18} class="text-accent" />
@@ -176,7 +178,7 @@ export const CompletionParametersPanel: Component<{
               </div>
             </Show>
 
-            <div class="bg-white/5 rounded-2xl p-4 border border-white/5 space-y-4">
+            <div class="border-b border-white/10 pb-6 space-y-4">
               <div class="grid grid-cols-1 gap-4">
                 <div class="space-y-2">
                   <label class="text-xs font-bold text-mist-solid/40 uppercase tracking-widest block">预设名称</label>
@@ -184,7 +186,7 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().name}
                     onInput={(e) => updateDraft({ name: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                     placeholder="输入预设名称..."
                   />
                 </div>
@@ -194,7 +196,7 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().category}
                     onInput={(e) => updateDraft({ category: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                     placeholder="如 general / roleplay / creative"
                   />
                 </div>
@@ -203,14 +205,14 @@ export const CompletionParametersPanel: Component<{
                   <textarea
                     value={draft().description}
                     onInput={(e) => updateDraft({ description: e.currentTarget.value })}
-                    class="w-full min-h-24 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40 resize-none"
+                    class="w-full min-h-24 bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all resize-none"
                     placeholder="简述该预设面向的用途与风格..."
                   />
                 </div>
               </div>
             </div>
 
-            <div class="bg-white/5 rounded-2xl p-4 border border-white/5 space-y-4">
+            <div class="border-b border-white/10 pb-6 space-y-4">
               <h3 class="text-xs font-bold text-mist-solid/40 uppercase tracking-widest">基础采样参数</h3>
               <div class="grid grid-cols-2 gap-4">
                 <div class="space-y-2">
@@ -219,7 +221,7 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().temperature}
                     onInput={(e) => updateDraft({ temperature: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                   />
                 </div>
                 <div class="space-y-2">
@@ -228,7 +230,7 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().maxOutputTokens}
                     onInput={(e) => updateDraft({ maxOutputTokens: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                   />
                 </div>
                 <div class="space-y-2">
@@ -237,19 +239,19 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().topP}
                     onInput={(e) => updateDraft({ topP: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                   />
                 </div>
                 <div class="space-y-2">
                   <label class="text-xs text-mist-solid/50">Response Mode</label>
-                  <select
+                  <Select
                     value={draft().responseMode}
-                    onChange={(e) => updateDraft({ responseMode: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                  >
-                    <option value="pseudo_xml">伪 XML</option>
-                    <option value="structured_json">结构化输出</option>
-                  </select>
+                    onChange={(val) => updateDraft({ responseMode: val })}
+                    options={[
+                      { label: "伪 XML", value: "pseudo_xml" },
+                      { label: "结构化输出", value: "structured_json" }
+                    ]}
+                  />
                 </div>
                 <Show when={draft().responseMode === 'structured_json'}>
                   <div class="space-y-2 mt-2">
@@ -262,7 +264,7 @@ export const CompletionParametersPanel: Component<{
                         onInput={(e) => updateDraft({ structuredOutputSchema: e.currentTarget.value })}
                         placeholder="留空 = 提示词驱动（仅要求模型输出 JSON，不约束结构）"
                         rows={8}
-                        class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent/40 resize-y"
+                        class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent transition-all resize-y"
                       />
                     }>
                       <div class="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-mist-solid/60 space-y-2">
@@ -284,7 +286,7 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().presencePenalty}
                     onInput={(e) => updateDraft({ presencePenalty: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                   />
                 </div>
                 <div class="space-y-2">
@@ -293,24 +295,24 @@ export const CompletionParametersPanel: Component<{
                     type="text"
                     value={draft().frequencyPenalty}
                     onInput={(e) => updateDraft({ frequencyPenalty: e.currentTarget.value })}
-                    class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                   />
                 </div>
               </div>
             </div>
 
-            <div class="bg-white/5 rounded-2xl p-4 border border-white/5 space-y-3">
+            <div class="border-b border-white/10 pb-6 space-y-3">
               <h3 class="text-xs font-bold text-mist-solid/40 uppercase tracking-widest">停止序列</h3>
               <textarea
                 value={draft().stopSequencesText}
                 onInput={(e) => updateDraft({ stopSequencesText: e.currentTarget.value })}
-                class="w-full min-h-28 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40 resize-none"
+                class="w-full min-h-28 bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all resize-none"
                 placeholder="每行一个 stop sequence，或用逗号分隔..."
               />
               <p class="text-[11px] text-mist-solid/35 leading-5">基础编辑入口已接入。保存时会自动去重并交给后端做最终校验。</p>
             </div>
 
-            <div class="bg-white/5 rounded-2xl p-4 border border-white/5 space-y-4">
+            <div class="border-b border-white/10 pb-6 space-y-4">
               <div class="flex items-center justify-between gap-4">
                 <div>
                   <h3 class="text-xs font-bold text-mist-solid/40 uppercase tracking-widest">Provider Overrides</h3>
@@ -324,7 +326,7 @@ export const CompletionParametersPanel: Component<{
               <div class="space-y-4">
                 <For each={draft().providerOverrides}>
                   {(override, index) => (
-                    <div class="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-4">
+                    <div class="border-l-2 border-white/10 pl-4 py-2 space-y-4">
                       <div class="flex items-center justify-between gap-4">
                         <div class="text-sm font-bold text-mist-solid">Provider Override #{index() + 1}</div>
                         <IconButton onClick={() => removeProviderOverride(index())} label="删除 Provider Override" tone="danger" size="md">
@@ -339,7 +341,7 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.providerKind}
                             onInput={(e) => updateProviderOverride(index(), { providerKind: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                             placeholder="如 openai_compatible"
                           />
                         </div>
@@ -349,7 +351,7 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.temperatureOverride}
                             onInput={(e) => updateProviderOverride(index(), { temperatureOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                           />
                         </div>
                         <div class="space-y-2">
@@ -358,7 +360,7 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.maxOutputTokensOverride}
                             onInput={(e) => updateProviderOverride(index(), { maxOutputTokensOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                           />
                         </div>
                         <div class="space-y-2">
@@ -367,20 +369,20 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.topPOverride}
                             onInput={(e) => updateProviderOverride(index(), { topPOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                           />
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-mist-solid/50">Response Mode Override</label>
-                          <select
+                          <Select
                             value={override.responseModeOverride}
-                            onChange={(e) => updateProviderOverride(index(), { responseModeOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
-                          >
-                            <option value="">默认（继承预设）</option>
-                            <option value="pseudo_xml">伪 XML</option>
-                            <option value="structured_json">结构化输出</option>
-                          </select>
+                            onChange={(val) => updateProviderOverride(index(), { responseModeOverride: val })}
+                            options={[
+                              { label: "默认（继承预设）", value: "" },
+                              { label: "伪 XML", value: "pseudo_xml" },
+                              { label: "结构化输出", value: "structured_json" }
+                            ]}
+                          />
                         </div>
                         <Show when={override.responseModeOverride === 'structured_json'}>
                           <div class="space-y-2 mt-2">
@@ -390,7 +392,7 @@ export const CompletionParametersPanel: Component<{
                               onInput={(e) => updateProviderOverride(index(), { structuredOutputSchemaOverride: e.currentTarget.value })}
                               placeholder="留空 = 使用预设默认 Schema"
                               rows={6}
-                              class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent/40 resize-y"
+                              class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid font-mono focus:outline-none focus:border-accent transition-all resize-y"
                             />
                           </div>
                         </Show>
@@ -400,7 +402,7 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.presencePenaltyOverride}
                             onInput={(e) => updateProviderOverride(index(), { presencePenaltyOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                           />
                         </div>
                         <div class="space-y-2">
@@ -409,7 +411,7 @@ export const CompletionParametersPanel: Component<{
                             type="text"
                             value={override.frequencyPenaltyOverride}
                             onInput={(e) => updateProviderOverride(index(), { frequencyPenaltyOverride: e.currentTarget.value })}
-                            class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all"
                           />
                         </div>
                         <div class="space-y-2 col-span-2">
@@ -417,7 +419,7 @@ export const CompletionParametersPanel: Component<{
                           <textarea
                             value={override.stopSequencesOverrideText}
                             onInput={(e) => updateProviderOverride(index(), { stopSequencesOverrideText: e.currentTarget.value })}
-                            class="w-full min-h-24 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40 resize-none"
+                            class="w-full min-h-24 bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all resize-none"
                             placeholder="每行一个 stop sequence，或用逗号分隔..."
                           />
                         </div>
@@ -426,7 +428,7 @@ export const CompletionParametersPanel: Component<{
                           <textarea
                             value={override.disabledBlockTypesText}
                             onInput={(e) => updateProviderOverride(index(), { disabledBlockTypesText: e.currentTarget.value })}
-                            class="w-full min-h-24 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-mist-solid focus:outline-none focus:border-accent/40 resize-none"
+                            class="w-full min-h-24 bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all resize-none"
                             placeholder="每行一个 blockType，或用逗号分隔..."
                           />
                         </div>
@@ -461,6 +463,6 @@ export const CompletionParametersPanel: Component<{
           </div>
         </div>
       </div>
-    </Show>
+    </>
   );
 };

@@ -1,4 +1,5 @@
 import { Component, Show, createEffect, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { Lock, Power, Save, Sparkles, Terminal, Trash2, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
 
@@ -92,7 +93,7 @@ export const CompletionDetailModal: Component<{
                     value={form().title}
                     disabled={existingLockedBlock()}
                     onInput={(e) => setForm({ ...form(), title: e.currentTarget.value })}
-                    class="w-full bg-white/5 border border-white/5 rounded-2xl p-4 text-lg font-medium focus:outline-none focus:border-accent/40 text-mist-solid transition-all disabled:opacity-40"
+                    class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-lg font-medium focus:outline-none focus:border-accent transition-all text-mist-solid disabled:opacity-40"
                     placeholder="输入条目标题..."
                   />
                 </div>
@@ -105,25 +106,24 @@ export const CompletionDetailModal: Component<{
                       value={form().blockType}
                       disabled={existingLockedBlock()}
                       onInput={(e) => setForm({ ...form(), blockType: e.currentTarget.value })}
-                      class="w-full bg-white/5 border border-white/5 rounded-2xl p-4 text-sm focus:outline-none focus:border-accent/40 text-mist-solid transition-all disabled:opacity-40"
+                      class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid disabled:opacity-40 appearance-none"
                       placeholder="如 style / format / custom:..."
                     />
                   </div>
                   <div class="space-y-3">
                     <label class="text-xs font-bold text-mist-solid/30 uppercase tracking-widest">作用域</label>
-                    <select
-                      value={form().scope}
-                      disabled={existingLockedBlock()}
-                      onChange={(e) => setForm({ ...form(), scope: e.currentTarget.value })}
-                      class="w-full bg-white/5 border border-white/5 rounded-2xl p-4 text-sm focus:outline-none focus:border-accent/40 text-mist-solid transition-all disabled:opacity-40"
-                    >
-                      <option value="global">global</option>
-                      <option value="chat_only">chat_only</option>
-                      <option value="group_only">group_only</option>
-                      <option value="single_only">single_only</option>
-                      <option value="completion_only">completion_only</option>
-                      <option value="agent_only">agent_only</option>
-                    </select>
+                    <Select
+  value={form().scope}
+  onChange={(val) => setForm({ ...form(), scope: val })} disabled={existingLockedBlock()}
+  options={[
+  { label: "global", value: "global" },
+  { label: "chat_only", value: "chat_only" },
+  { label: "group_only", value: "group_only" },
+  { label: "single_only", value: "single_only" },
+  { label: "completion_only", value: "completion_only" },
+  { label: "agent_only", value: "agent_only" }
+  ]}
+/>
                   </div>
                 </div>
 
@@ -135,12 +135,12 @@ export const CompletionDetailModal: Component<{
                       value={form().priority}
                       disabled={existingLockedBlock()}
                       onInput={(e) => setForm({ ...form(), priority: Number.isFinite(e.currentTarget.valueAsNumber) ? e.currentTarget.valueAsNumber : 100 })}
-                      class="w-full bg-white/5 border border-white/5 rounded-2xl p-4 text-sm focus:outline-none focus:border-accent/40 text-mist-solid transition-all disabled:opacity-40"
+                      class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid disabled:opacity-40 appearance-none"
                     />
                   </div>
                   <div class="space-y-3">
                     <label class="text-xs font-bold text-mist-solid/30 uppercase tracking-widest">启用状态</label>
-                    <div class={`w-full rounded-2xl border px-4 py-4 flex items-center justify-between gap-4 transition-all ${form().isEnabled ? 'border-accent/40 bg-accent/15 text-accent' : 'border-white/10 bg-white/5 text-mist-solid/60'}`}>
+                    <div class={`w-full border-b-2 py-3 px-1 flex items-center justify-between gap-4 transition-all ${form().isEnabled ? 'border-accent text-accent' : 'border-white/20 text-mist-solid/60'}`}>
                       <div>
                         <div class="text-sm font-bold">{form().isEnabled ? '已启用' : '未启用'}</div>
                         <div class="text-[11px] mt-1 text-mist-solid/45">点击右侧图标切换当前条目状态。</div>
@@ -162,7 +162,7 @@ export const CompletionDetailModal: Component<{
               </div>
 
               <div class="space-y-6">
-                <div class="rounded-3xl border border-white/5 bg-white/5 p-5 space-y-4">
+                <div class="border-l-2 border-white/10 pl-5 py-2 space-y-4">
                   <div class="flex items-center gap-2 text-xs font-bold text-mist-solid/30 uppercase tracking-widest">
                     <Lock size={14} />
                     条目锁
@@ -181,13 +181,13 @@ export const CompletionDetailModal: Component<{
                     value={form().lockReason ?? ''}
                     disabled={existingLockedBlock() || !form().isLocked}
                     onInput={(e) => setForm({ ...form(), lockReason: e.currentTarget.value })}
-                    class="w-full min-h-24 bg-black/20 border border-white/10 rounded-2xl p-4 text-sm text-mist-solid focus:outline-none focus:border-accent/40 disabled:opacity-40"
+                    class="w-full min-h-24 bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-40"
                     placeholder="填写锁定原因，帮助其他人理解为何不能改动..."
                   />
                   <p class="text-[11px] leading-5 text-mist-solid/40">当前后端会把锁定条目视为不可修改、不可禁用、不可删除、不可重排的完整锁。</p>
                 </div>
 
-                <div class="rounded-3xl border border-white/5 bg-white/5 p-5 space-y-4">
+                <div class="border-l-2 border-white/10 pl-5 py-2 space-y-4">
                   <div class="flex items-center gap-2 text-xs font-bold text-mist-solid/30 uppercase tracking-widest">
                     <Sparkles size={14} />
                     互斥组
@@ -197,7 +197,7 @@ export const CompletionDetailModal: Component<{
                     value={form().exclusiveGroupKey ?? ''}
                     disabled={existingLockedBlock()}
                     onInput={(e) => setForm({ ...form(), exclusiveGroupKey: e.currentTarget.value })}
-                    class="w-full bg-black/20 border border-white/10 rounded-2xl p-4 text-sm text-mist-solid focus:outline-none focus:border-accent/40 disabled:opacity-40"
+                    class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-40"
                     placeholder="机器键，如 style / narration-tone"
                   />
                   <input
@@ -205,7 +205,7 @@ export const CompletionDetailModal: Component<{
                     value={form().exclusiveGroupLabel ?? ''}
                     disabled={existingLockedBlock()}
                     onInput={(e) => setForm({ ...form(), exclusiveGroupLabel: e.currentTarget.value })}
-                    class="w-full bg-black/20 border border-white/10 rounded-2xl p-4 text-sm text-mist-solid focus:outline-none focus:border-accent/40 disabled:opacity-40"
+                    class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-40"
                     placeholder="显示名，如 文风组"
                   />
                   <p class="text-[11px] leading-5 text-mist-solid/40">同一组中只能启用一个条目。当前前端会在保存前阻止明显冲突，最终仍以后端校验为准。</p>
@@ -219,7 +219,7 @@ export const CompletionDetailModal: Component<{
                 value={form().content}
                 disabled={existingLockedBlock()}
                 onInput={(e) => setForm({ ...form(), content: e.currentTarget.value })}
-                class="w-full min-h-[280px] bg-white/5 border border-white/5 rounded-3xl p-5 text-sm focus:outline-none focus:border-accent/40 text-mist-solid transition-all resize-y font-mono disabled:opacity-40"
+                class="w-full min-h-[280px] bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid resize-y font-mono disabled:opacity-40"
                 placeholder="输入会注入到提示词层的具体内容..."
               />
             </div>

@@ -259,7 +259,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
   });
 
   return (
-    <div class="group relative flex flex-col gap-2 w-full max-w-4xl mx-auto py-6 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl backdrop-blur-sm">
+    <div class="group relative flex flex-col gap-3 w-full max-w-4xl mx-auto py-8 transition-colors px-4">
       <div class={`flex items-start gap-4 ${isUser() ? 'flex-row-reverse' : ''}`}>
         <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-accent to-emerald-400 flex items-center justify-center text-white font-bold shrink-0 overflow-hidden shadow-sm">
           {props.message.avatar ? (

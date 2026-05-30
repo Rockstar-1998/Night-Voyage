@@ -451,7 +451,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
       const block = item.block;
       return (
         <Show when={block.isLocked} fallback={
-          <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 transition-all hover:border-accent/30 hover:bg-xuanqing/60">
+          <div class="py-4 border-b border-white/5 transition-all hover:border-accent/30 group">
             <div class="flex items-start gap-4">
               <IconButton
                 onClick={() => void handleToggleBlock(block)}
@@ -461,9 +461,9 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                 active={block.isEnabled}
                 class={`mt-0.5 ${block.isEnabled ? 'text-accent' : 'text-mist-solid/20'}`}
               >
-                <Show when={block.isEnabled} fallback={<span class="text-2xl leading-none">◯</span>}>
-                  <span class="text-2xl leading-none">⬤</span>
-                </Show>
+                <div class={`flex items-center justify-center w-4 h-4 border rounded-full transition-colors ${block.isEnabled ? 'border-accent bg-accent/20' : 'border-mist-solid/30'}`}>
+                  {block.isEnabled && <div class="w-2 h-2 rounded-full bg-accent" />}
+                </div>
               </IconButton>
               <button
                 onClick={() => openBlockEditor(block)}
@@ -490,7 +490,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
             </div>
           </div>
         }>
-          <div class="relative rounded-2xl border border-amber-500/20 bg-amber-500/5 transition-all hover:border-amber-400/30 hover:bg-amber-500/10">
+          <div class="relative py-4 border-b border-white/5 transition-all hover:border-amber-400/30 group">
             <button
               onClick={() => openBlockEditor(block)}
               class="w-full text-left p-4 pr-12"
@@ -531,7 +531,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
 
     const group = item.group;
     return (
-      <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 space-y-3">
+      <div class="py-4 border-b border-white/5 space-y-3 transition-all hover:border-accent/30">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
@@ -549,7 +549,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
         <div class="space-y-2">
           <For each={group.flatOptions}>
             {(option) => (
-              <div class={`relative rounded-2xl border ${option.isSelected ? 'border-accent/40 bg-accent/10' : 'border-white/10 bg-black/10 hover:border-accent/20 hover:bg-xuanqing/50'}`}>
+              <div class={`relative py-3 transition-all ${option.isSelected ? 'border-l-2 border-accent pl-4' : 'pl-4 border-l-2 border-transparent hover:border-accent/40'}`}>
                 <button
                   type="button"
                   onClick={() => void handleToggleSemanticOption(group.id, option.id, group.selectionMode)}
@@ -557,9 +557,11 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                   class="w-full text-left px-4 py-3 pr-20 transition-all disabled:opacity-40"
                 >
                   <div class="flex items-start gap-3">
-                    <span class={`mt-0.5 text-lg leading-none ${option.isSelected ? 'text-accent' : 'text-mist-solid/25'}`}>
-                      {item.isChoice ? (option.isSelected ? '◉' : '○') : (option.isSelected ? '☑' : '☐')}
-                    </span>
+                    <div class={`mt-1 shrink-0 flex items-center justify-center w-4 h-4 border transition-colors ${item.isChoice ? 'rounded-full' : 'rounded-sm'} ${option.isSelected ? 'border-accent bg-accent/20' : 'border-mist-solid/30'}`}>
+                      {option.isSelected && (
+                        item.isChoice ? <div class="w-2 h-2 rounded-full bg-accent" /> : <div class="w-2 h-2 bg-accent" style={{ "clip-path": "polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%)" }} />
+                      )}
+                    </div>
                     <div class="min-w-0 flex-1 space-y-2">
                       <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-sm font-bold text-mist-solid">{option.label}</span>
@@ -1157,7 +1159,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
             <p class="text-xs text-mist-solid/35 mt-1">真实读取后端预设数据，支持完整 CRUD、治理设置和编译预览。</p>
           </div>
           <div class="space-y-3">
-            <div class="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+            <div class="flex items-center gap-3 border-l-2 border-white/10 bg-transparent px-4 py-3">
               <div class="min-w-0 flex-1">
                 <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">列表操作</div>
                 <div class="text-sm text-mist-solid/40 mt-1">刷新预设列表或创建新预设。</div>
@@ -1195,9 +1197,9 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                 {(preset) => (
                   <button
                     onClick={() => setSelectedPresetId(preset.id)}
-                    class={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${selectedPresetId() === preset.id
-                      ? 'border-accent/40 bg-accent/10 shadow-lg shadow-accent/10'
-                      : 'border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/10'
+                    class={`w-full text-left py-4 px-2 border-b border-white/5 transition-all ${selectedPresetId() === preset.id
+                      ? 'text-accent border-accent/30'
+                      : 'text-mist-solid hover:text-white hover:border-white/20'
                     }`}
                   >
                     <div class="flex items-center justify-between gap-3">
@@ -1230,7 +1232,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                 placeholder="搜索条目 (标题、类型、内容、互斥组、锁定原因)..."
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                class="w-full bg-xuanqing border border-white/5 rounded-xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
+                class="w-full bg-transparent border-b border-white/20 rounded-none py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent transition-all placeholder:text-mist-solid/20"
               />
             </div>
           </div>
@@ -1337,7 +1339,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                 const detail = () => detailAccessor();
                 return (
                   <div class="space-y-6">
-                    <div class="rounded-3xl border border-white/5 bg-white/5 px-6 py-5">
+                    <div class="space-y-4 pt-4 pb-6 border-b border-white/5">
                       <div class="flex items-start justify-between gap-4">
                         <div class="min-w-0">
                           <div class="text-lg font-bold text-mist-solid truncate">{detail().preset.name}</div>
@@ -1368,7 +1370,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
                       </div>
                     </Show>
 
-                    <div class="rounded-3xl border border-white/5 bg-white/5 p-5 text-sm text-mist-solid/70">
+                    <div class="py-5 text-sm text-mist-solid/70">
                       <div class="flex items-start gap-3">
                         <AlertTriangle size={18} class="text-amber-300 shrink-0 mt-0.5" />
                         <div class="space-y-2">

@@ -52,17 +52,17 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
         <h1 data-workspace-title class="text-3xl font-black text-white tracking-tighter uppercase italic">Sessions</h1>
 
         <div class="relative group">
-          <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={20} />
+          <Search class="absolute left-0 top-1/2 -translate-y-1/2 text-mist-solid/20 group-focus-within:text-accent transition-colors" size={20} />
           <input
             type="text"
             placeholder="搜索航次..."
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
-            class="w-full bg-xuanqing border border-white/5 rounded-2xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:border-accent/40 focus:ring-4 focus:ring-accent/5 transition-all placeholder:text-mist-solid/20"
+            class="w-full bg-transparent border-b border-white/20 rounded-none py-3.5 pl-8 pr-4 text-sm focus:outline-none focus:border-accent transition-all placeholder:text-mist-solid/20"
           />
         </div>
 
-        <div class="flex items-center justify-between gap-4 rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
+        <div class="flex items-center justify-between gap-4 border-b border-white/10 pb-6">
           <div>
             <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">快速操作</div>
             <div class="text-sm text-mist-solid/40 mt-1">创建或加入会话</div>
@@ -92,20 +92,22 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                     <div class="flex flex-col gap-2">
                       <div
                         onClick={() => props.onSelect?.(session.id)}
-                        class={`group p-4 rounded-[1.75rem] border text-left transition-all cursor-pointer relative overflow-hidden backdrop-blur-sm ${props.selectedConversationId === session.id
-                          ? 'bg-accent/10 border-accent/40 shadow-[0_12px_32px_rgba(0,0,0,0.35)]'
-                          : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                        class={`group px-4 py-5 -mx-4 text-left transition-all cursor-pointer relative overflow-hidden border-b ${props.selectedConversationId === session.id
+                          ? 'border-accent/40 bg-white/[0.02]'
+                          : 'border-white/5 hover:border-white/10 hover:bg-white/[0.01]'}`}
                       >
-                        <img
-                          src={getSessionImage(session)}
-                          alt={session.title ?? 'session'}
-                          class="absolute inset-0 w-full h-full object-cover opacity-35 transition-all duration-700"
-                        />
-                        <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
+                        <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+                          <img
+                            src={getSessionImage(session)}
+                            alt={session.title ?? 'session'}
+                            class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
+                            style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
+                          />
+                        </div>
                         <div class="relative z-10 flex items-start justify-between gap-3 mb-2">
                           <div>
-                            <h3 class="text-sm font-bold text-white">{session.title ?? '未命名会话'}</h3>
-                            <p class="text-[11px] text-mist-solid/40 mt-1">
+                            <h3 class="text-sm font-bold text-white transition-transform duration-500 group-hover:translate-x-1">{session.title ?? '未命名会话'}</h3>
+                            <p class="text-[11px] text-mist-solid/40 mt-1 transition-transform duration-500 delay-75 group-hover:translate-x-1">
                               {session.memberCount} 人 · {session.pendingMemberCount > 0 ? `等待 ${session.pendingMemberCount} 人` : '本轮已齐'}
                             </p>
                           </div>
@@ -192,20 +194,22 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                   {(session) => (
                     <button
                       onClick={() => props.onSelect?.(session.id)}
-                      class={`group p-4 rounded-[1.75rem] border text-left transition-all relative overflow-hidden backdrop-blur-sm ${props.selectedConversationId === session.id
-                        ? 'bg-accent/10 border-accent/40 shadow-[0_12px_32px_rgba(0,0,0,0.35)]'
-                        : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                      class={`group px-4 py-5 -mx-4 text-left transition-all relative overflow-hidden border-b ${props.selectedConversationId === session.id
+                        ? 'border-accent/40 bg-white/[0.02]'
+                        : 'border-white/5 hover:border-white/10 hover:bg-white/[0.01]'}`}
                     >
-                      <img
-                        src={getSessionImage(session)}
-                        alt={session.title ?? 'session'}
-                        class="absolute inset-0 w-full h-full object-cover opacity-35 transition-all duration-700"
-                      />
-                      <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
+                      <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+                        <img
+                          src={getSessionImage(session)}
+                          alt={session.title ?? 'session'}
+                          class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
+                          style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
+                        />
+                      </div>
                       <div class="relative z-10 flex items-start justify-between gap-3 mb-2">
                         <div>
-                          <h3 class="text-sm font-bold text-white">{session.title ?? '未命名会话'}</h3>
-                          <p class="text-[11px] text-mist-solid/40 mt-1">个人航行</p>
+                          <h3 class="text-sm font-bold text-white transition-transform duration-500 group-hover:translate-x-1">{session.title ?? '未命名会话'}</h3>
+                          <p class="text-[11px] text-mist-solid/40 mt-1 transition-transform duration-500 delay-75 group-hover:translate-x-1">个人航行</p>
                         </div>
                         <div class="flex items-center gap-1">
                           <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">{formatTime(session.updatedAt)}</span>

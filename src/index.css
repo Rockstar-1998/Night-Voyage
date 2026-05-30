@@ -18,6 +18,7 @@ body {
   background: radial-gradient(circle at top right, #0d1a29 0%, var(--color-xuanqing) 100%);
   background-attachment: fixed;
   color: var(--color-mist-solid);
+  color-scheme: dark;
 }
 
 /* Custom Scrollbar Styling - Hidden to allow Custom Motion Scrollbar */
@@ -30,6 +31,26 @@ body {
   /* IE and Edge */
   scrollbar-width: none;
   /* Firefox */
+}
+
+/* Translucent Xuanqing Scrollbar for other lists */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(245, 245, 247, 0.15);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-accent);
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245, 245, 247, 0.15) transparent;
 }
 
 /* Streaming text fade-in animation */

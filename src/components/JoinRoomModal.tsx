@@ -178,7 +178,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
               when={status() !== 'connected'}
               fallback={
                 <div class="flex flex-col gap-6">
-                  <div class="w-full bg-white/5 border border-white/5 p-8 md:p-12 rounded-[3rem] shadow-2xl relative overflow-hidden backdrop-blur-md text-center">
+                  <div class="w-full relative overflow-hidden text-center mt-12">
                     <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 mb-4">
                       <CheckCircle2 size={32} />
                     </div>
@@ -216,7 +216,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                     </div>
                   </div>
 
-                  <div class="w-full bg-white/5 border border-white/5 p-6 rounded-3xl shadow-xl backdrop-blur-md">
+                  <div class="w-full border-t border-white/5 pt-8 mt-8 relative">
                     <div class="flex items-center justify-between mb-4">
                       <h3 class="text-sm font-bold text-white uppercase tracking-widest">房间成员</h3>
                       <span class="text-xs text-mist-solid/40">{members().length} 人在线</span>
@@ -243,7 +243,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                 </div>
               }
             >
-              <div class="w-full bg-white/5 border border-white/5 p-6 md:p-10 rounded-[2.5rem] shadow-2xl relative overflow-hidden backdrop-blur-md">
+              <div class="w-full relative max-w-lg mx-auto mt-12">
                 <div class="space-y-6">
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">房间 IP 地址</label>
@@ -251,7 +251,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                       value={hostAddress()}
                       onInput={(e) => setHostAddress(e.currentTarget.value)}
                       placeholder="例如 192.168.1.100"
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid placeholder-mist-solid/25"
+                      class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-white placeholder-mist-solid/30"
                     />
                   </div>
 
@@ -262,7 +262,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                       value={port()}
                       onInput={(e) => setPort(e.currentTarget.value)}
                       placeholder="例如 8080"
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid placeholder-mist-solid/25"
+                      class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-white placeholder-mist-solid/30"
                     />
                   </div>
 
@@ -272,7 +272,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                       value={displayName()}
                       onInput={(e) => setDisplayName(e.currentTarget.value)}
                       placeholder="在房间中显示的昵称"
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid placeholder-mist-solid/25"
+                      class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-white placeholder-mist-solid/30"
                     />
                   </div>
 

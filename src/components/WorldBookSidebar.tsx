@@ -8,6 +8,8 @@ import {
   type WorldBookSummary,
 } from '../lib/backend';
 import { WorldBookEntryArea } from './WorldBookEntryArea';
+import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
+import { Switch, Match } from 'solid-js';
 import { IconButton } from './ui/IconButton';
 
 interface WorldBookSidebarProps {
@@ -95,20 +97,31 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
 
   return (
     <>
-      <Show
-        when={!selectedBookId() || !activeBook()}
-        fallback={
-          <WorldBookEntryArea
-            book={activeBook()!}
-            entries={props.activeEntries}
-            loading={props.entriesLoading}
-            onBack={() => setSelectedBookId(null)}
-            onUpsertEntry={props.onUpsertEntry}
-            onDeleteEntry={props.onDeleteEntry}
-          />
-        }
-      >
-        <div class="w-full flex flex-col bg-transparent h-full relative pt-10">
+      <div class="relative h-full w-full">
+        <WorkspaceTransitionStage
+          activeWorkspace={(!selectedBookId() || !activeBook()) ? 'list' : 'entry'}
+          paneIds={['list', 'entry']}
+        >
+          {(viewId) => (
+            <Switch fallback={<div />}>
+              <Match when={viewId === 'entry'}>
+                <div class="h-full w-full flex flex-col relative bg-transparent">
+                  <Show when={activeBook()}>
+                    {(safeBook) => (
+                      <WorldBookEntryArea
+                        book={safeBook()}
+                        entries={props.activeEntries}
+                        loading={props.entriesLoading}
+                        onBack={() => setSelectedBookId(null)}
+                        onUpsertEntry={props.onUpsertEntry}
+                        onDeleteEntry={props.onDeleteEntry}
+                      />
+                    )}
+                  </Show>
+                </div>
+              </Match>
+              <Match when={viewId === 'list'}>
+                <div class="w-full flex flex-col bg-transparent h-full relative pt-10">
           <div class="p-8 flex flex-col gap-6">
             <div class="flex items-center justify-between">
               <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">世界书</h1>
@@ -124,7 +137,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                 value={search()}
                 onInput={(e) => setSearch(e.currentTarget.value)}
                 placeholder="搜索世界书..."
-                class="w-full bg-xuanqing border border-white/5 rounded-xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
+                class="w-full bg-transparent border-b-2 border-white/10 py-3 pl-12 pr-4 rounded-none text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
               />
             </div>
           </div>
@@ -133,7 +146,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
             <div class="grid grid-cols-2 xl:grid-cols-3 gap-6">
               <For each={filteredBooks()}>
                 {(book) => (
-                  <div class="group relative aspect-video rounded-2xl overflow-hidden bg-xuanqing border border-white/10 cursor-pointer hover:border-accent/40 transition-all shadow-2xl hover:shadow-accent/10">
+                  <div class="group relative aspect-video overflow-hidden bg-transparent border-b-2 border-l-2 border-white/10 rounded-none cursor-pointer hover:border-accent/40 transition-all shadow-2xl hover:shadow-accent/10">
                     <button
                       onClick={() => {
                         setSelectedBookId(book.id);
@@ -148,7 +161,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                           `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(book.title)}`,
                         )}
                         alt={book.title}
-                        class="absolute inset-0 w-full h-full object-cover opacity-35 group-hover:opacity-60 group-hover:scale-105 transition-all duration-700"
+                        class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:scale-105 transition-all duration-700"
                       />
                       <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
                       <div class="absolute bottom-0 left-0 right-0 p-4">
@@ -194,11 +207,14 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
             </div>
           </div>
         </div>
-      </Show>
+      </Match>
+          </Switch>
+        )}
+        </WorkspaceTransitionStage>
+      </div>
 
-      <Show when={isModalOpen()}>
-        <div class="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div class="w-full max-w-2xl bg-xuanqing border border-white/10 rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+      <div class={`fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm transition-all duration-300 ease-out ${isModalOpen() ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}>
+          <div class={`w-full max-w-2xl bg-xuanqing border-y-2 border-white/10 p-8 shadow-2xl transition-all duration-300 ease-out delay-75 ${isModalOpen() ? "scale-100 translate-y-0 opacity-100" : "scale-[0.98] translate-y-4 opacity-0"}`}>
             <h2 class="text-xl font-bold text-white mb-6">{editingBookId() != null ? '编辑世界书' : '创建世界书'}</h2>
             <div class="space-y-4 max-h-[70vh] overflow-y-auto px-2 -mx-2 custom-scrollbar">
               <div class="space-y-1">
@@ -207,7 +223,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                   type="text"
                   value={formData().title}
                   onInput={(e) => setFormData({ ...formData(), title: e.currentTarget.value })}
-                  class="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                  class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                 />
               </div>
 
@@ -226,7 +242,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                     e.preventDefault();
                     void importImage(e.dataTransfer?.files?.[0]);
                   }}
-                  class="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 flex flex-col gap-3"
+                  class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >
                   <img
                     src={resolveImageSrc(
@@ -234,7 +250,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                       `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(formData().title || 'worldbook')}`,
                     )}
                     alt="worldbook preview"
-                    class="w-full h-40 object-cover rounded-xl bg-black/20"
+                    class="w-full h-40 object-cover bg-black/20"
                   />
                   <div class="flex items-center justify-between gap-3">
                     <div class="text-xs text-mist-solid/40 break-all">{formData().imagePath || '拖入图片到这里，或点击右侧按钮上传并保存到应用目录'}</div>
@@ -255,7 +271,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                 <textarea
                   value={formData().description}
                   onInput={(e) => setFormData({ ...formData(), description: e.currentTarget.value })}
-                  class="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid min-h-24 custom-scrollbar"
+                  class="w-full bg-transparent border-b-2 border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-24 custom-scrollbar"
                 />
               </div>
             </div>
@@ -274,8 +290,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
               </div>
             </div>
           </div>
-        </div>
-      </Show>
+      </div>
     </>
   );
 };

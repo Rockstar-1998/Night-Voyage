@@ -87,7 +87,7 @@ export const ChatInputBar: Component<ChatInputBarProps> = (props) => {
 
   return (
     <div class="w-full max-w-4xl mx-auto p-4">
-      <div class="relative flex items-center bg-wupeng border border-white/5 shadow-2xl focus-within:border-accent/50 transition-all rounded-2xl overflow-hidden px-2 py-2 group">
+      <div class="relative flex items-center bg-transparent border-b-2 border-white/10 shadow-none focus-within:border-accent transition-all rounded-none px-2 py-2 group">
         <textarea
           value={inputValue()}
           onInput={(e) => setInputValue(e.currentTarget.value)}

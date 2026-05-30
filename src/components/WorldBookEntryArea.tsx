@@ -1,4 +1,5 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { ArrowLeft, ChevronDown, ChevronRight, Copy, Info, Plus, Save, Search, ToggleLeft, ToggleRight, Trash2 } from '../lib/icons';
 import type { UpsertWorldBookEntryPayload, WorldBookEntryRecord, WorldBookSummary } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
@@ -95,7 +96,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
   };
 
   return (
-    <div class="h-full w-full flex flex-col bg-transparent overflow-hidden isolate relative animate-in fade-in slide-in-from-right-4 duration-300">
+    <div class="h-full w-full flex flex-col bg-transparent overflow-hidden isolate relative">
       <div class="p-8 flex items-center justify-between border-b border-white/5 bg-transparent">
         <div class="flex items-center gap-4 flex-1">
           <IconButton onClick={props.onBack} label="返回世界书列表" size="lg" class="group">
@@ -113,12 +114,12 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
               placeholder="搜索条目..."
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
-              class="w-full bg-xuanqing border border-white/5 rounded-xl py-2.5 pl-11 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
+              class="w-full bg-transparent border-b border-white/20 rounded-none py-2.5 pl-11 pr-4 text-sm focus:outline-none focus:border-accent/40 transition-all placeholder:text-mist-solid/20"
             />
           </div>
         </div>
         <div class="flex items-center gap-4 pl-4">
-          <div class="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
+          <div class="flex items-center gap-3 border-l-2 border-white/10 bg-transparent px-4 py-3">
             <div class="text-right">
               <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">操作</div>
               <div class="text-sm text-mist-solid/40 mt-1">新增条目</div>
@@ -133,7 +134,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
       <div class="flex-1 overflow-y-auto px-8 py-6 custom-scrollbar relative z-10">
         <Show when={!props.loading} fallback={<div class="text-sm text-mist-solid/35">正在加载条目...</div>}>
           <div class="flex flex-col gap-3 max-w-4xl mx-auto">
-            <div class="rounded-2xl border border-accent/20 bg-accent/5 p-4 text-sm text-mist-solid/80 shadow-lg shadow-accent/5">
+            <div class="border-l-2 border-accent/40 bg-transparent p-4 text-sm text-mist-solid/80 mb-2">
               <div class="flex items-start gap-3">
                 <div class="mt-0.5 text-accent shrink-0">
                   <Info size={18} />
@@ -151,7 +152,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
             </div>
             <For each={filteredEntries()}>
               {(item) => (
-                <div class={`flex flex-col rounded-xl border transition-all ${expandedEntryId() === item.id ? 'bg-xuanqing/80 border-accent/40 shadow-xl' : 'bg-xuanqing/40 border-white/5 hover:border-white/10 hover:bg-xuanqing/60 cursor-pointer'}`}>
+                <div class={`flex flex-col border-b border-white/10 transition-all ${expandedEntryId() === item.id ? 'bg-black/20 border-accent/40' : 'bg-transparent border-transparent hover:bg-white/5 cursor-pointer'}`}>
                   <div
                     class="group flex items-center gap-4 p-4"
                     onClick={() => {
@@ -185,7 +186,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                       </Show>
                     </IconButton>
 
-                    <div class="p-1 rounded-md bg-white/5 text-mist-solid/20 group-hover:text-mist-solid/40 transition-colors">
+                    <div class="p-1 text-mist-solid/20 group-hover:text-mist-solid/40 transition-colors">
                       <Show when={expandedEntryId() === item.id} fallback={<ChevronRight size={16} />}>
                         <ChevronDown size={16} />
                       </Show>
@@ -244,8 +245,9 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                     </div>
                   </div>
 
-                  <Show when={expandedEntryId() === item.id}>
-                    <div class="p-4 pt-0 border-t border-white/5 mt-1 bg-black/10 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div class={`grid transition-all duration-300 ease-in-out ${expandedEntryId() === item.id ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                    <div class="overflow-hidden">
+                      <div class="p-4 pt-0 mt-1">
                       <div class="flex flex-col gap-4 mt-4">
                         <div class="space-y-1">
                           <label class="text-[10px] text-mist-solid/40 uppercase font-bold px-1">标题</label>
@@ -253,7 +255,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                             type="text"
                             value={readDraft(item).title}
                             onInput={(e) => updateDraft(item.id, { title: e.currentTarget.value })}
-                            class="w-full bg-xuanqing border border-white/5 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                            class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
                           />
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -263,20 +265,20 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                               type="text"
                               value={readDraft(item).keywords}
                               onInput={(e) => updateDraft(item.id, { keywords: e.currentTarget.value })}
-                              class="w-full bg-xuanqing border border-white/5 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                              class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
                             />
                             <p class="px-1 text-[11px] text-mist-solid/40 leading-5">使用逗号分隔关键词。V2 运行时会用这些关键词去匹配当前轮输入、最近历史和最新角色状态。</p>
                           </div>
                           <div class="space-y-1">
                             <label class="text-[10px] text-mist-solid/40 uppercase font-bold px-1">触发方式</label>
-                            <select
-                              value={readDraft(item).triggerMode}
-                              onChange={(e) => updateDraft(item.id, { triggerMode: e.currentTarget.value === 'all' ? 'all' : 'any' })}
-                              class="w-full bg-xuanqing border border-white/5 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
-                            >
-                              <option value="any">任一命中</option>
-                              <option value="all">全部命中</option>
-                            </select>
+                            <Select
+  value={readDraft(item).triggerMode}
+  onChange={(val) => updateDraft(item.id, { triggerMode: val === 'all' ? 'all' : 'any' })}
+  options={[
+  { label: "任一命中", value: "any" },
+  { label: "全部命中", value: "all" }
+  ]}
+/>
                             <p class="px-1 text-[11px] text-mist-solid/40 leading-5">任一命中 = 任意关键词出现即可；全部命中 = 所有关键词都要出现。</p>
                           </div>
                           <div class="space-y-1">
@@ -285,7 +287,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                               type="number"
                               value={readDraft(item).sortOrder}
                               onInput={(e) => updateDraft(item.id, { sortOrder: Number.isFinite(e.currentTarget.valueAsNumber) ? e.currentTarget.valueAsNumber : 0 })}
-                              class="w-full bg-xuanqing border border-white/5 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
+                              class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
                             />
                             <p class="px-1 text-[11px] text-mist-solid/40 leading-5">数值越小越靠前；同来源命中时，更容易在上限裁剪前被保留。</p>
                           </div>
@@ -295,7 +297,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                             <textarea
                               value={readDraft(item).content}
                               onInput={(e) => updateDraft(item.id, { content: e.currentTarget.value })}
-                              class="w-full flex-1 min-h-[160px] bg-xuanqing border border-white/5 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid custom-scrollbar"
+                              class="w-full flex-1 min-h-[160px] bg-transparent border-b border-white/20 rounded-none px-1 py-3 text-sm focus:outline-none focus:border-accent/40 text-mist-solid custom-scrollbar"
                             />
                             <p class="px-1 text-[11px] text-mist-solid/40 leading-5">命中后同一条目只会注入一次，不会因为当前轮、最近历史、角色状态同时命中而重复叠加。</p>
                           </div>
@@ -310,8 +312,9 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                         </div>
                       </div>
                     </div>
-                  </Show>
+                  </div>
                 </div>
+              </div>
               )}
             </For>
             <Show when={filteredEntries().length === 0}>

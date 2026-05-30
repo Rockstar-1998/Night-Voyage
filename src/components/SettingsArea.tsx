@@ -1,8 +1,10 @@
-import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, Switch, Match, createEffect, createMemo, createSignal } from 'solid-js';
+import { Select } from './ui/Select';
 import { Save, RefreshCw, CheckCircle2, ChevronDown, Plus, Trash2, Pencil } from '../lib/icons';
 import type { ApiProviderSummary, RemoteModel } from '../lib/backend';
 import { type MessageFormatConfig, type CustomFormatRule } from '../lib/messageFormatter';
 import { IconButton } from './ui/IconButton';
+import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 
 interface ProviderFormState {
   id?: number;
@@ -379,10 +381,12 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
   };
 
   return (
-    <div class="flex-1 flex flex-col h-full bg-transparent overflow-y-auto custom-scrollbar">
-      <div class="max-w-5xl mx-auto w-full px-8 py-16">
-        <Show when={props.activeCategory === 'api'}>
-          <div class="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div class="flex-1 flex flex-col h-full bg-transparent overflow-hidden">
+        <WorkspaceTransitionStage activeWorkspace={props.activeCategory} paneIds={['api', 'appearance']}>
+          {(categoryId) => <Switch fallback={<div />}>
+            <Match when={categoryId === 'api'}>
+          <div class="h-full w-full overflow-y-auto custom-scrollbar">
+            <div class="max-w-5xl mx-auto w-full px-8 py-16 space-y-10">
             <div class="flex items-start justify-between gap-6">
               <div>
                 <h2 class="text-2xl font-bold text-mist-solid mb-2">API 档案</h2>
@@ -390,7 +394,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   管理 OpenAI 兼容与 Anthropic 原生 API 档案，并从服务端拉取模型列表。
                 </p>
               </div>
-              <div class="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
+              <div class="flex items-center gap-3 border-l-2 border-white/10 bg-transparent px-4 py-3">
                 <div class="text-right">
                   <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">
                     操作
@@ -410,10 +414,10 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     {(provider) => (
                       <button
                         onClick={() => handleSelectProvider(provider.id)}
-                        class={`w-full text-left p-4 rounded-2xl border transition-all ${
+                        class={`w-full text-left py-4 px-2 border-b border-white/5 transition-all ${
                           selectedProviderId() === provider.id && !isCreatingNew()
-                            ? 'bg-accent/10 border-accent/30'
-                            : 'bg-white/5 border-white/5 hover:bg-white/10'
+                            ? 'text-accent border-accent/30'
+                            : 'text-mist-solid hover:text-white hover:border-white/20'
                         }`}
                       >
                         <div class="flex items-center justify-between gap-3 mb-2">
@@ -432,7 +436,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                 </Show>
               </div>
 
-              <div class="space-y-6 p-6 rounded-3xl border border-white/5 bg-white/5">
+              <div class="space-y-8 pt-4">
                 <div class="space-y-2">
                   <label class="text-xs font-bold text-mist-solid/30 uppercase tracking-wider">
                     档案名称
@@ -441,7 +445,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     type="text"
                     value={form().name}
                     onInput={(e) => setForm({ ...form(), name: e.currentTarget.value })}
-                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                   />
                 </div>
 
@@ -450,31 +454,15 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     Provider 类型
                   </label>
                   <div class="relative group">
-                    <select
-                      value={form().providerKind}
-                      onChange={(e) => {
-                        const providerKind =
-                          e.currentTarget.value === 'anthropic' ? 'anthropic' : 'openai_compatible';
-                        setClaudeTestError(null);
-                        setClaudeTestResult(null);
-                        setForm({
-                          ...form(),
-                          providerKind,
-                          baseUrl:
-                            providerKind === 'anthropic'
-                              ? 'https://api.anthropic.com'
-                              : 'https://api.openai.com/v1',
-                        });
-                      }}
-                      class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm appearance-none focus:outline-none focus:border-accent/50 transition-all text-mist-solid cursor-pointer"
-                    >
-                      <option value="openai_compatible">openai_compatible</option>
-                      <option value="anthropic">anthropic</option>
-                    </select>
-                    <ChevronDown
-                      size={18}
-                      class="absolute right-4 top-1/2 -translate-y-1/2 text-mist-solid/20 pointer-events-none"
-                    />
+                    <Select
+  value={form().providerKind}
+  onChange={(val) => setForm({ ...form(), providerKind: val })}
+  options={[
+  { label: "openai_compatible", value: "openai_compatible" },
+  { label: "anthropic", value: "anthropic" },
+  { label: "google_gemini", value: "google_gemini" }
+  ]}
+/>
                   </div>
                 </div>
 
@@ -486,7 +474,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     type="text"
                     value={form().baseUrl}
                     onInput={(e) => setForm({ ...form(), baseUrl: e.currentTarget.value })}
-                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                   />
                 </div>
 
@@ -499,7 +487,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     value={form().apiKey}
                     onInput={(e) => setForm({ ...form(), apiKey: e.currentTarget.value })}
                     placeholder={form().id ? '留空表示不更新密钥' : 'sk-...'}
-                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                    class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                   />
                 </div>
 
@@ -508,7 +496,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                 </div>
 
                 <div class="space-y-4 pt-4 border-t border-white/5">
-                  <div class="flex items-center justify-between gap-4">
+                  <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                     <div>
                       <label class="text-xs font-bold text-mist-solid/30 uppercase tracking-wider">
                         模型选择
@@ -549,7 +537,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                             value={form().modelName}
                             onInput={(e) => setForm({ ...form(), modelName: e.currentTarget.value })}
                             placeholder="输入自定义模型名，如 claude-sonnet-4-20250514"
-                            class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid placeholder:text-mist-solid/20"
+                            class="flex-1 bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid placeholder:text-mist-solid/20"
                           />
                           <Show when={form().modelName}>
                             <button
@@ -569,15 +557,13 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   >
                     <div class="space-y-2">
                       <div class="relative group">
-                        <select
-                          value={form().modelName}
-                          onChange={(e) => setForm({ ...form(), modelName: e.currentTarget.value })}
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm appearance-none focus:outline-none focus:border-accent/50 transition-all text-mist-solid cursor-pointer"
-                        >
-                          <For each={currentModels()}>
-                            {(model) => <option value={model.id}>{model.id}</option>}
-                          </For>
-                        </select>
+                        <Select
+  value={form().modelName}
+  onChange={(val) => setForm({ ...form(), modelName: val })}
+  options={[
+  ...(currentModels()).map(model => ({ label: model.id, value: (model.id)?.toString() }))
+  ]}
+/>
                         <ChevronDown
                           size={18}
                           class="absolute right-4 top-1/2 -translate-y-1/2 text-mist-solid/20 pointer-events-none"
@@ -589,7 +575,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                           value={form().modelName}
                           onInput={(e) => setForm({ ...form(), modelName: e.currentTarget.value })}
                           placeholder="或直接输入自定义模型名"
-                          class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-accent/50 transition-all text-mist-solid placeholder:text-mist-solid/20"
+                          class="flex-1 bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-xs focus:outline-none focus:border-accent transition-all text-mist-solid placeholder:text-mist-solid/20"
                         />
                         <Show when={form().modelName}>
                           <button
@@ -607,7 +593,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
 
                 <Show when={form().providerKind === 'anthropic'}>
                   <div class="space-y-4 pt-4 border-t border-white/5">
-                    <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                       <div>
                         <label class="text-xs font-bold text-mist-solid/30 uppercase tracking-wider">
                           Claude 原生测试
@@ -656,7 +642,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                               testModel: e.currentTarget.value,
                             })
                           }
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                          class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                         />
                       </div>
 
@@ -673,7 +659,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                               timeoutSeconds: e.currentTarget.value,
                             })
                           }
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                          class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                         />
                       </div>
 
@@ -690,7 +676,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                               degradedThresholdMs: e.currentTarget.value,
                             })
                           }
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                          class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                         />
                       </div>
 
@@ -707,7 +693,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                               testPrompt: e.currentTarget.value,
                             })
                           }
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                          class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                         />
                       </div>
 
@@ -724,7 +710,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                               maxRetries: e.currentTarget.value,
                             })
                           }
-                          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent/50 transition-all text-mist-solid"
+                          class="w-full bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                         />
                       </div>
                     </div>
@@ -808,10 +794,11 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </div>
             </div>
           </div>
-        </Show>
-
-        <Show when={props.activeCategory === 'appearance'}>
-          <div class="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          </div>
+        </Match>
+        <Match when={categoryId === 'appearance'}>
+          <div class="h-full w-full overflow-y-auto custom-scrollbar">
+            <div class="max-w-5xl mx-auto w-full px-8 py-16 space-y-10">
             <div>
               <h2 class="text-2xl font-bold text-mist-solid mb-2">界面外观</h2>
               <p class="text-mist-solid/40 text-sm">
@@ -819,8 +806,8 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </p>
             </div>
 
-            <div class="p-6 rounded-3xl border border-white/5 bg-white/5 space-y-6">
-              <div class="flex items-center justify-between gap-4">
+            <div class="space-y-6">
+              <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                 <div>
                   <h3 class="text-sm font-bold text-white">动态特效</h3>
                   <p class="text-[11px] text-mist-solid/35 mt-1">
@@ -851,8 +838,8 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </div>
             </div>
 
-            <div class="p-6 rounded-3xl border border-white/5 bg-white/5 space-y-6">
-              <div class="flex items-center justify-between gap-4">
+            <div class="space-y-6">
+              <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                 <div>
                   <h3 class="text-sm font-bold text-white">消息格式化</h3>
                   <p class="text-[11px] text-mist-solid/35 mt-1">
@@ -862,7 +849,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </div>
 
               <div class="space-y-3">
-                <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                   <div>
                     <div class="text-sm text-mist-solid/80">伪 XML 标签折叠</div>
                     <div class="text-[11px] text-mist-solid/35 mt-0.5">将 &lt;scene&gt;...&lt;/scene&gt; 等标签渲染为可折叠块</div>
@@ -887,7 +874,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                 </div>
 
                 <Show when={props.formatConfig.builtinRules.pseudoXml.enabled}>
-                  <div class="flex items-center justify-between gap-4 pl-4">
+                  <div class="flex items-center justify-between gap-4 pl-4 py-4 border-b border-white/5">
                     <div>
                       <div class="text-sm text-mist-solid/80">标签默认展开</div>
                       <div class="text-[11px] text-mist-solid/35 mt-0.5">控制伪 XML 标签块的初始展开或折叠状态</div>
@@ -912,7 +899,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   </div>
                 </Show>
 
-                <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                   <div>
                     <div class="text-sm text-mist-solid/80">斜体灰色文本</div>
                     <div class="text-[11px] text-mist-solid/35 mt-0.5">将 **文本** 渲染为斜体灰色</div>
@@ -936,7 +923,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   </button>
                 </div>
 
-                <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                   <div>
                     <div class="text-sm text-mist-solid/80">青色引号文本</div>
                     <div class="text-[11px] text-mist-solid/35 mt-0.5">将 "引号文本" 渲染为青色</div>
@@ -960,7 +947,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   </button>
                 </div>
 
-                <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                   <div>
                     <div class="text-sm text-mist-solid/80">世界书关键词高亮</div>
                     <div class="text-[11px] text-mist-solid/35 mt-0.5">将世界书触发关键词渲染为紫色</div>
@@ -986,7 +973,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </div>
 
               <div class="border-t border-white/5 pt-4 space-y-3">
-                <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center justify-between gap-4 py-4 border-b border-white/5">
                   <div>
                     <div class="text-sm font-bold text-white">自定义规则</div>
                     <div class="text-[11px] text-mist-solid/35 mt-0.5">添加基于正则表达式的自定义文本高亮规则</div>
@@ -1181,15 +1168,16 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </Show>
             </div>
           </div>
-        </Show>
-
-        <Show when={props.activeCategory !== 'api' && props.activeCategory !== 'appearance'}>
+          </div>
+        </Match>
+        <Match when={categoryId !== 'api' && categoryId !== 'appearance'}>
           <div class="h-[60vh] flex flex-col items-center justify-center text-mist-solid/20">
             <p class="text-xl font-bold mb-2">正在设计中</p>
             <p class="text-sm italic">此功能模块暂未接入真实后端</p>
           </div>
-        </Show>
+        </Match>
+      </Switch>}
+    </WorkspaceTransitionStage>
       </div>
-    </div>
   );
 };
