@@ -115,6 +115,8 @@ export interface PresetSummary {
   frequencyPenalty?: number;
   responseMode?: 'pseudo_xml' | 'structured_json' | string;
   structuredOutputSchema?: string;
+  structuredOutputDisplay?: string;
+  contextIncludedKeys?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -234,6 +236,7 @@ export interface PresetSemanticOptionRecord {
   blocks: PresetSemanticOptionBlockRecord[];
   examples: PresetSemanticOptionExampleRecord[];
   children: PresetSemanticOptionRecord[];
+  linkedSchemaKeys?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -583,6 +586,7 @@ export interface PresetSemanticOptionInput {
   blocks?: PresetPromptBlockInput[];
   examples?: PresetExampleInput[];
   children?: PresetSemanticOptionInput[];
+  linkedSchemaKeys?: string[];
 }
 
 export interface PresetSemanticGroupInput {
@@ -606,6 +610,8 @@ export interface CreatePresetPayload {
   frequencyPenalty?: number;
   responseMode?: 'pseudo_xml' | 'structured_json' | string;
   structuredOutputSchema?: string;
+  structuredOutputDisplay?: string;
+  contextIncludedKeys?: string;
   blocks?: PresetPromptBlockInput[];
   examples?: PresetExampleInput[];
   stopSequences?: PresetStopSequenceInput[];

@@ -25,6 +25,7 @@ export type FormatNode =
   | QuoteNode
   | KeywordNode
   | CustomNode
+  | FormatErrorNode
   | StructuredResponseNode;
 
 export interface TextNode {
@@ -60,6 +61,11 @@ export interface CustomNode {
   color: string;
   italic: boolean;
   bold: boolean;
+}
+
+export interface FormatErrorNode {
+  kind: 'format_error';
+  message: string;
 }
 
 export interface StructuredField {
@@ -138,6 +144,10 @@ function parseInlineRules(
 
   let fragments: FormatNode[] = [{ kind: 'text', text }];
 
+  for (const rule of config.customRules) {
+    fragments = applyCustomRule(fragments, rule);
+  }
+
   if (config.builtinRules.worldBookKeyword.enabled && worldBookKeywords.length > 0) {
     fragments = applyWorldBookKeywords(fragments, worldBookKeywords);
   }
@@ -151,10 +161,6 @@ function parseInlineRules(
 
   if (config.builtinRules.cyanQuote.enabled) {
     fragments = applyCyanQuoteRule(fragments);
-  }
-
-  for (const rule of config.customRules) {
-    fragments = applyCustomRule(fragments, rule);
   }
 
   return fragments;
@@ -276,7 +282,19 @@ function applyCustomRule(
   rule: CustomFormatRule
 ): FormatNode[] {
   const result: FormatNode[] = [];
-  const regex = new RegExp(rule.pattern, 'gd');
+  let regex: RegExp;
+  try {
+    regex = new RegExp(rule.pattern, 'gd');
+  } catch (error) {
+    return [
+      {
+        kind: 'format_error',
+        message: `自定义格式规则「${rule.name}」正则无效：${error instanceof Error ? error.message : String(error)}`,
+      },
+      ...nodes,
+    ];
+  }
+
   for (const node of nodes) {
     if (node.kind !== 'text') {
       result.push(node);
@@ -286,6 +304,9 @@ function applyCustomRule(
     let match: RegExpExecArray | null;
     let lastEnd = 0;
     const text = node.text;
+    const localResult: FormatNode[] = [];
+    let groupError: FormatNode | null = null;
+
     while ((match = regex.exec(text)) !== null) {
       if (match[0].length === 0) {
         regex.lastIndex++;
@@ -293,14 +314,22 @@ function applyCustomRule(
       }
       const matchStart = match.index;
       const matchEnd = match.index + match[0].length;
-      const [groupStart, groupEnd] = match.indices![rule.groupIndex];
+      const groupRange = match.indices?.[rule.groupIndex];
+      if (!groupRange || groupRange[0] == null || groupRange[1] == null) {
+        groupError = {
+          kind: 'format_error',
+          message: `自定义格式规则「${rule.name}」的匹配组 ${rule.groupIndex} 不存在或未命中。`,
+        };
+        break;
+      }
+      const [groupStart, groupEnd] = groupRange;
       if (matchStart > lastEnd) {
-        result.push({ kind: 'text', text: text.slice(lastEnd, matchStart) });
+        localResult.push({ kind: 'text', text: text.slice(lastEnd, matchStart) });
       }
       if (groupStart > matchStart) {
-        result.push({ kind: 'text', text: text.slice(matchStart, groupStart) });
+        localResult.push({ kind: 'text', text: text.slice(matchStart, groupStart) });
       }
-      result.push({
+      localResult.push({
         kind: 'custom',
         text: text.slice(groupStart, groupEnd),
         ruleId: rule.id,
@@ -309,13 +338,18 @@ function applyCustomRule(
         bold: rule.bold,
       });
       if (groupEnd < matchEnd) {
-        result.push({ kind: 'text', text: text.slice(groupEnd, matchEnd) });
+        localResult.push({ kind: 'text', text: text.slice(groupEnd, matchEnd) });
       }
       lastEnd = matchEnd;
     }
-    if (lastEnd < text.length) {
-      result.push({ kind: 'text', text: text.slice(lastEnd) });
+    if (groupError) {
+      result.push(groupError, node);
+      continue;
     }
+    if (lastEnd < text.length) {
+      localResult.push({ kind: 'text', text: text.slice(lastEnd) });
+    }
+    result.push(...localResult);
   }
   return result;
 }

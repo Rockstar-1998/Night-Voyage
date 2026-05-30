@@ -77,6 +77,7 @@ const getSectionLabel = (sectionKey: string) => {
 export const MobileView: Component<MobileViewProps> = (props) => {
   const [activeView, setActiveView] = createSignal<'sessions' | 'chat'>('sessions');
   const [isDrawerOpen, setIsDrawerOpen] = createSignal(false);
+  const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
 
   let drawerRef: HTMLDivElement | undefined;
   let overlayRef: HTMLDivElement | undefined;
@@ -205,7 +206,7 @@ export const MobileView: Component<MobileViewProps> = (props) => {
             </div>
 
             <div class="flex-1 overflow-hidden pt-3">
-              <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
+              <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
             </div>
             <div class="px-4 pb-6 pt-2">
               <ChatInputBar

@@ -1676,3 +1676,61 @@ type RetryFailedRoundResult = {
 - Keep `llm-stream-error` as the first-failure UI entry.
 - Add `llm-stream-event` with `eventKind = "message_reset"` before replay starts so the host renderer clears stale partial content.
 - Room broadcasts add optional `reset: true` on `room:stream_chunk` to clear stale partial content for room clients before replay chunks arrive.
+
+## 2026-05-28 Phase 17 Update（Schema 可视化编辑器 + 上下文控制 + 显示行为 + 语义组协调）
+
+This section supersedes older conflicting bullets elsewhere in this document.
+
+### Feature Goal
+
+- Schema 可视化编辑器：替换原有的 JSON Schema textarea，提供卡片式编辑界面
+- 上下文标签剔除：历史消息中的 JSON 键可按配置过滤，避免不必要的键（如"思考"）进入上下文
+- 显示行为配置：前端可配置每个 Schema 键的默认展开/收起状态
+- 语义组 → Schema 联动：语义组选项可关联 Schema 键，勾选/取消时自动添加/移除对应键
+
+### 数据库迁移
+
+- 新增迁移 `0030_preset_context_included_keys.sql`：
+  - `presets` 表新增 `context_included_keys TEXT NULL`
+  - `preset_semantic_options` 表新增 `linked_schema_keys TEXT NULL`
+
+### 新增字段说明
+
+- `context_included_keys`：JSON 字符串，格式 `{"思考": false, "正文": true, "选项": true}`，`null` 表示未配置（等价于所有键都包含，向后兼容）
+- `linked_schema_keys`：JSON 字符串，格式 `["选项"]` 或 `["选项", "ASMR音效"]`，表示当该选项被勾选时，应在 Schema 中存在这些键
+
+### 预设命令 DTO 扩展
+
+- `PresetSummary` 新增 `contextIncludedKeys: Option<String>`
+- `PresetSemanticOptionRecord` 新增 `linkedSchemaKeys: Option<String>`
+- `PresetSemanticOptionInput` 新增 `linkedSchemaKeys: Option<Vec<String>>`
+- `PresetCompilePreviewParams` 新增 `contextIncludedKeys: Option<String>`
+- `presets_create` 和 `presets_update` 新增 `contextIncludedKeys` 参数
+- `PortablePresetMeta` 新增 `contextIncludedKeys` 字段（导出/导入支持）
+
+### Prompt Compiler 上下文过滤
+
+- 新增 `filter_structured_content` 辅助函数：对 assistant 角色历史消息的 JSON content，按 `context_included_keys` 配置过滤键
+- 仅当 `response_mode == "structured_json"` 且 `context_included_keys` 不为 null 时激活
+- `context_included_keys` 中值为 `false` 的键从历史消息 JSON 中移除
+- 未出现在映射中的键默认保留（`unwrap_or(true)`）
+- 非 JSON 内容不报错，原样返回
+- `CompiledSamplingParams` 新增 `context_included_keys: Option<String>`
+
+### 前端契约变更
+
+- `PresetSummary` 接口新增 `contextIncludedKeys?: string`、`structuredOutputDisplay?: string`
+- `PresetSemanticOptionRecord` 接口新增 `linkedSchemaKeys?: string[]`
+- `PresetSemanticOptionInput` 接口新增 `linkedSchemaKeys?: string[]`
+- `CreatePresetPayload` 接口新增 `contextIncludedKeys?: string`、`structuredOutputDisplay?: string`
+- 新增 `SchemaConfigPanel` 组件：可视化 Schema 编辑器面板
+- `CompletionParametersPanel` 新增 `onOpenSchemaConfig?: () => void` prop
+- `CompletionPresetArea` 新增 Schema 配置面板入口按钮和 `handleSchemaConfigSave` 保存逻辑
+- `CompletionPresetArea` 预设条目展示从分组渲染改为按 `sortOrder` 统一排序渲染
+- `handleToggleSemanticOption` 新增 Schema 同步逻辑：勾选语义组选项时自动添加关联键到 Schema，取消时移除
+
+### 本阶段非目标
+
+- 不实现 `linkedSchemaKeys` 的后端写入链路（`replace_semantic_groups` 中暂 bind `None`，待前端语义选项编辑器支持该字段后再接入）
+- 不实现 Schema 键的数据迁移脚本（现有预设需手动配置语义组关联）
+- 不实现 Schema 版本管理或迁移

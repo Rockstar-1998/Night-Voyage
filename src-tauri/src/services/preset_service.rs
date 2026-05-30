@@ -35,6 +35,7 @@ pub struct PortablePresetMeta {
     pub beta_features: Option<Vec<String>>,
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
+    pub context_included_keys: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -91,6 +92,7 @@ impl<'a> PresetService<'a> {
                 beta_features: detail.preset.beta_features,
                 structured_output_schema: detail.preset.structured_output_schema,
                 structured_output_display: detail.preset.structured_output_display,
+                context_included_keys: detail.preset.context_included_keys,
             },
             semantic_groups: detail
                 .semantic_groups
@@ -144,6 +146,7 @@ impl<'a> PresetService<'a> {
             portable.preset.beta_features,
             portable.preset.structured_output_schema,
             portable.preset.structured_output_display,
+            portable.preset.context_included_keys,
             Some(portable.blocks),
             Some(portable.stop_sequences),
             Some(portable.provider_overrides),
@@ -169,6 +172,7 @@ impl<'a> PresetService<'a> {
         beta_features: Option<Vec<String>>,
         structured_output_schema: Option<String>,
         structured_output_display: Option<String>,
+        context_included_keys: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
@@ -189,6 +193,7 @@ impl<'a> PresetService<'a> {
         let beta_features = normalize_beta_features_impl(beta_features)?;
         let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
         let structured_output_display = normalize_optional_text_impl(structured_output_display);
+        let context_included_keys = normalize_optional_text_impl(context_included_keys);
         let direct_blocks = PresetValidator::validate_blocks(blocks)?;
         let semantic_groups = PresetValidator::validate_semantic_groups(semantic_groups)?;
         let stop_sequences = PresetValidator::validate_stop_sequences(stop_sequences)?;
@@ -217,6 +222,7 @@ impl<'a> PresetService<'a> {
             beta_features_json.as_deref(),
             structured_output_schema.as_deref(),
             structured_output_display.as_deref(),
+            context_included_keys.as_deref(),
             now,
         )
         .await?;
@@ -258,6 +264,7 @@ impl<'a> PresetService<'a> {
         beta_features: Option<Vec<String>>,
         structured_output_schema: Option<String>,
         structured_output_display: Option<String>,
+        context_included_keys: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
@@ -278,6 +285,7 @@ impl<'a> PresetService<'a> {
         let beta_features = normalize_beta_features_impl(beta_features)?;
         let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
         let structured_output_display = normalize_optional_text_impl(structured_output_display);
+        let context_included_keys = normalize_optional_text_impl(context_included_keys);
         let direct_blocks_input = match blocks {
             Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks))?),
             None => None,
@@ -349,6 +357,7 @@ impl<'a> PresetService<'a> {
             beta_features_json.as_deref(),
             structured_output_schema.as_deref(),
             structured_output_display.as_deref(),
+            context_included_keys.as_deref(),
             now,
         )
         .await?;

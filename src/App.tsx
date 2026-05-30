@@ -263,8 +263,10 @@ const DesktopView = (props: {
   worldBookKeywords?: string[];
   onSetFormatConfig: (config: MessageFormatConfig) => void;
   isRoomClient?: boolean;
+  onPresetsChanged?: () => void;
 }) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
+  const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
 
   return (
     <div class="relative h-screen w-full bg-transparent font-sans overflow-hidden text-mist-solid">
@@ -356,7 +358,7 @@ const DesktopView = (props: {
                 </Show>
                 <Show when={props.activeWorkspace === 'workspace'}>
                   <div class="flex h-full w-full bg-transparent">
-                    <CompletionPresetArea />
+                    <CompletionPresetArea onPresetsChanged={props.onPresetsChanged} />
                   </div>
                 </Show>
               </div>
@@ -372,7 +374,7 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
+                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
@@ -430,6 +432,7 @@ const DesktopView = (props: {
 
 const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
+  const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
 
   return (
     <div class="relative h-screen w-full bg-transparent font-sans overflow-hidden text-mist-solid">
@@ -480,7 +483,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           </Show>
                         </div>
                         <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                          <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} />
+                          <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
                         </div>
                         <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                           <div class="max-w-4xl mx-auto">
@@ -591,7 +594,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                 case 'workspace':
                   return (
                     <div class="flex h-full w-full bg-transparent">
-                      <CompletionPresetArea />
+                      <CompletionPresetArea onPresetsChanged={props.onPresetsChanged} />
                     </div>
                   );
                 default:
@@ -1764,6 +1767,7 @@ function App() {
             worldBookKeywords={worldBookKeywords()}
             onSetFormatConfig={handleSetFormatConfig}
             isRoomClient={activeRoomClientSession() !== null}
+            onPresetsChanged={refreshPresets}
           />
         }
       >

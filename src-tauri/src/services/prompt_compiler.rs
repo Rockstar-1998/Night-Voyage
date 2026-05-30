@@ -174,6 +174,7 @@ pub struct CompiledSamplingParams {
     pub beta_features: Vec<String>,
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
+    pub context_included_keys: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -638,6 +639,25 @@ pub async fn compile_prompt(
         );
         err
     })?;
+
+    let history_blocks = if preset_compiler_data.params.response_mode.as_deref() == Some("structured_json") {
+        if let Some(ref context_keys_json) = preset_compiler_data.params.context_included_keys {
+            if let Ok(context_map) = serde_json::from_str::<std::collections::HashMap<String, bool>>(context_keys_json) {
+                history_blocks.into_iter().map(|mut block| {
+                    if block.role == PromptRole::Assistant {
+                        block.content = filter_structured_content(&block.content, &context_map);
+                    }
+                    block
+                }).collect()
+            } else {
+                history_blocks
+            }
+        } else {
+            history_blocks
+        }
+    } else {
+        history_blocks
+    };
 
     if let Some(world_book_id) = context.world_book_id {
         eprintln!(
@@ -1121,7 +1141,8 @@ async fn load_preset_compiler_data(
 
     let row = sqlx::query(
         "SELECT temperature, max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-         thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display \
+         thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, \
+         context_included_keys \
          FROM presets WHERE id = ? LIMIT 1",
     )
     .bind(preset_id)
@@ -1166,6 +1187,7 @@ async fn load_preset_compiler_data(
         .unwrap_or_default();
     let structured_output_schema: Option<String> = row.try_get("structured_output_schema").ok().flatten();
     let structured_output_display: Option<String> = row.try_get("structured_output_display").ok().flatten();
+    let context_included_keys: Option<String> = row.try_get("context_included_keys").ok().flatten();
     let base_stop_sequences = load_preset_stop_sequences(db, preset_id).await?;
     let provider_override =
         load_preset_provider_override_data(db, preset_id, provider_kind, debug).await?;
@@ -1308,6 +1330,7 @@ async fn load_preset_compiler_data(
                 .unwrap_or(beta_features),
             structured_output_schema: provider_override.structured_output_schema_override.or(structured_output_schema),
             structured_output_display: provider_override.structured_output_display_override.or(structured_output_display),
+            context_included_keys,
         },
     })
 }
@@ -1836,6 +1859,21 @@ async fn load_recent_history_blocks(
     }
     Ok(blocks)
 }
+fn filter_structured_content(
+    content: &str,
+    context_included_keys: &std::collections::HashMap<String, bool>,
+) -> String {
+    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.retain(|key, _| {
+                context_included_keys.get(key).copied().unwrap_or(true)
+            });
+            return serde_json::to_string(obj).unwrap_or_else(|_| content.to_string());
+        }
+    }
+    content.to_string()
+}
+
 fn build_block(
     kind: PromptBlockKind,
     role: PromptRole,

@@ -16,6 +16,7 @@ interface ChatAreaProps {
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
   onChoiceSelect?: (key: string, value: string) => void;
+  structuredOutputDisplay?: string;
 }
 
 export const ChatArea: Component<ChatAreaProps> = (props) => {
@@ -120,6 +121,7 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 formatConfig={props.formatConfig}
                 worldBookKeywords={props.worldBookKeywords}
                 onChoiceSelect={props.onChoiceSelect}
+                structuredOutputDisplay={props.structuredOutputDisplay}
               />
             )}
           </For>

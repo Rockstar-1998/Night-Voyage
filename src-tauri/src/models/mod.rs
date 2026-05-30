@@ -172,6 +172,7 @@ pub struct PresetSummary {
     pub beta_features: Option<Vec<String>>,
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
+    pub context_included_keys: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -293,6 +294,7 @@ pub struct PresetSemanticOptionRecord {
     pub is_selected: bool,
     pub is_enabled: bool,
     pub expansion_kind: String,
+    pub linked_schema_keys: Option<String>,
     pub blocks: Vec<PresetSemanticOptionBlockRecord>,
     pub examples: Vec<PresetSemanticOptionExampleRecord>,
     pub children: Vec<PresetSemanticOptionRecord>,
@@ -349,6 +351,7 @@ pub struct PresetCompilePreviewParams {
     pub beta_features: Option<Vec<String>>,
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
+    pub context_included_keys: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

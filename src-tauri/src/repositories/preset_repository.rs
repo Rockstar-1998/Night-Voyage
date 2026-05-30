@@ -27,6 +27,7 @@ pub struct FlatPresetSemanticOptionRecord {
     pub is_selected: bool,
     pub is_enabled: bool,
     pub expansion_kind: String,
+    pub linked_schema_keys: Option<String>,
     pub blocks: Vec<PresetSemanticOptionBlockRecord>,
     pub examples: Vec<PresetSemanticOptionExampleRecord>,
     pub created_at: i64,
@@ -40,7 +41,7 @@ impl PresetRepository {
         let rows = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, created_at, updated_at \
              FROM presets ORDER BY updated_at DESC, id DESC",
         )
         .fetch_all(db)
@@ -54,7 +55,7 @@ impl PresetRepository {
         let row = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, created_at, updated_at \
              FROM presets WHERE id = ? LIMIT 1",
         )
         .bind(id)
@@ -173,7 +174,7 @@ impl PresetRepository {
 
         let option_rows = sqlx::query(
             "SELECT o.id, o.group_id, o.parent_option_id, o.option_key, o.label, o.description, \
-             o.depth, o.sort_order, o.is_selected, o.is_enabled, o.expansion_kind, o.created_at, o.updated_at \
+             o.depth, o.sort_order, o.is_selected, o.is_enabled, o.expansion_kind, o.linked_schema_keys, o.created_at, o.updated_at \
              FROM preset_semantic_options o \
              INNER JOIN preset_semantic_groups g ON g.id = o.group_id \
              WHERE g.preset_id = ? \
@@ -258,6 +259,7 @@ impl PresetRepository {
                     expansion_kind: row
                         .try_get("expansion_kind")
                         .unwrap_or_else(|_| "mixed".to_string()),
+                    linked_schema_keys: row.try_get("linked_schema_keys").ok().flatten(),
                     blocks: blocks_by_option.remove(&option_id).unwrap_or_default(),
                     examples: examples_by_option.remove(&option_id).unwrap_or_default(),
                     created_at: row.try_get("created_at").unwrap_or_default(),
@@ -332,6 +334,7 @@ impl PresetRepository {
                 is_selected: option.is_selected,
                 is_enabled: option.is_enabled,
                 expansion_kind: option.expansion_kind,
+                linked_schema_keys: option.linked_schema_keys,
                 blocks: option.blocks,
                 examples: option.examples,
                 children: Self::build_semantic_option_tree(Some(option.id), flat_options),
@@ -358,6 +361,7 @@ impl PresetRepository {
         beta_features: Option<&str>,
         structured_output_schema: Option<&str>,
         structured_output_display: Option<&str>,
+        context_included_keys: Option<&str>,
         now: i64,
     ) -> Result<i64, String> {
         let result = sqlx::query(
@@ -365,9 +369,9 @@ impl PresetRepository {
                 name, description, category, is_builtin, version, temperature,
                 max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode,
                 thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema,
-                structured_output_display,
+                structured_output_display, context_included_keys,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
         .bind(&description)
@@ -384,6 +388,7 @@ impl PresetRepository {
         .bind(beta_features)
         .bind(structured_output_schema)
         .bind(structured_output_display)
+        .bind(context_included_keys)
         .bind(now)
         .bind(now)
         .execute(&mut **tx)
@@ -411,6 +416,7 @@ impl PresetRepository {
         beta_features: Option<&str>,
         structured_output_schema: Option<&str>,
         structured_output_display: Option<&str>,
+        context_included_keys: Option<&str>,
         now: i64,
     ) -> Result<(), String> {
         sqlx::query(
@@ -431,6 +437,7 @@ impl PresetRepository {
                 beta_features = ?,
                 structured_output_schema = ?,
                 structured_output_display = ?,
+                context_included_keys = ?,
                 updated_at = ?
              WHERE id = ?",
         )
@@ -449,6 +456,7 @@ impl PresetRepository {
         .bind(beta_features)
         .bind(structured_output_schema)
         .bind(structured_output_display)
+        .bind(context_included_keys)
         .bind(now)
         .bind(id)
         .execute(&mut **tx)
@@ -666,8 +674,8 @@ impl PresetRepository {
                 let option_result = sqlx::query(
                     "INSERT INTO preset_semantic_options (
                         group_id, option_key, parent_option_id, label, description,
-                        depth, sort_order, is_selected, is_enabled, expansion_kind, created_at, updated_at
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        depth, sort_order, is_selected, is_enabled, expansion_kind, linked_schema_keys, created_at, updated_at
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(group_id)
                 .bind(&option.option_key)
@@ -679,6 +687,7 @@ impl PresetRepository {
                 .bind(if option.is_selected { 1 } else { 0 })
                 .bind(if option.is_enabled { 1 } else { 0 })
                 .bind(&option.expansion_kind)
+                .bind(None::<&str>)
                 .bind(now)
                 .bind(now)
                 .execute(&mut **tx)
@@ -922,6 +931,7 @@ impl PresetRepository {
                 .and_then(|s: String| serde_json::from_str::<Vec<String>>(&s).ok()),
             structured_output_schema: row.try_get("structured_output_schema").ok().flatten(),
             structured_output_display: row.try_get("structured_output_display").ok().flatten(),
+            context_included_keys: row.try_get("context_included_keys").ok().flatten(),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         })

@@ -107,6 +107,66 @@ function parsePositiveIntegerField(label: string, value: string): number | undef
   return Number(trimmed);
 }
 
+function countCapturingGroups(pattern: string): number {
+  let count = 0;
+  let escaped = false;
+  let inCharacterClass = false;
+
+  for (let index = 0; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '[') {
+      inCharacterClass = true;
+      continue;
+    }
+    if (char === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      continue;
+    }
+    if (inCharacterClass || char !== '(') {
+      continue;
+    }
+
+    if (pattern[index + 1] !== '?') {
+      count++;
+      continue;
+    }
+
+    if (pattern[index + 2] === '<' && pattern[index + 3] !== '=' && pattern[index + 3] !== '!') {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+function validateCustomRulePattern(pattern: string, groupIndex: number): string | null {
+  if (!pattern.trim()) return null;
+  if (!Number.isInteger(groupIndex) || groupIndex < 0) {
+    return '匹配组索引必须是大于等于 0 的整数';
+  }
+
+  try {
+    new RegExp(pattern, 'd');
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  const captureCount = countCapturingGroups(pattern);
+  if (groupIndex > captureCount) {
+    return `匹配组 ${groupIndex} 不存在；当前正则只有 0-${captureCount} 组`;
+  }
+
+  return null;
+}
+
 export const SettingsArea: Component<SettingsAreaProps> = (props) => {
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | null>(null);
   const [form, setForm] = createSignal<ProviderFormState>(EMPTY_FORM);
@@ -131,6 +191,11 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
     bold: false,
   });
   const [patternError, setPatternError] = createSignal<string | null>(null);
+  const updateCustomRuleDraft = (patch: Partial<ReturnType<typeof customRuleDraft>>) => {
+    const next = { ...customRuleDraft(), ...patch };
+    setCustomRuleDraft(next);
+    setPatternError(validateCustomRulePattern(next.pattern, next.groupIndex));
+  };
 
   createEffect(() => {
     const providers = props.providers;
@@ -958,9 +1023,9 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                         <button
                           onClick={() => {
                             setCustomRuleDraft({ name: rule.name, pattern: rule.pattern, groupIndex: rule.groupIndex, color: rule.color, italic: rule.italic, bold: rule.bold });
+                            setPatternError(validateCustomRulePattern(rule.pattern, rule.groupIndex));
                             setEditingCustomRule(rule);
                             setIsAddingCustomRule(false);
-                            setPatternError(null);
                           }}
                           class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/40 hover:text-mist-solid transition-colors"
                         >
@@ -990,7 +1055,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                     <input
                       type="text"
                       value={customRuleDraft().name}
-                      onInput={(e) => setCustomRuleDraft({ ...customRuleDraft(), name: e.currentTarget.value })}
+                      onInput={(e) => updateCustomRuleDraft({ name: e.currentTarget.value })}
                       class="w-full mt-1 bg-xuanqing border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
                     />
                   </div>
@@ -1002,13 +1067,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                       value={customRuleDraft().pattern}
                       onInput={(e) => {
                         const pattern = e.currentTarget.value;
-                        setCustomRuleDraft({ ...customRuleDraft(), pattern });
-                        try {
-                          if (pattern) new RegExp(pattern, 'd');
-                          setPatternError(null);
-                        } catch (err) {
-                          setPatternError(String(err));
-                        }
+                        updateCustomRuleDraft({ pattern });
                       }}
                       class="w-full mt-1 bg-xuanqing border border-white/5 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-accent/40 text-mist-solid"
                     />
@@ -1024,7 +1083,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                         type="number"
                         min="0"
                         value={customRuleDraft().groupIndex}
-                        onInput={(e) => setCustomRuleDraft({ ...customRuleDraft(), groupIndex: Number(e.currentTarget.value) || 0 })}
+                        onInput={(e) => updateCustomRuleDraft({ groupIndex: Number(e.currentTarget.value) || 0 })}
                         class="w-full mt-1 bg-xuanqing border border-white/5 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent/40 text-mist-solid"
                       />
                     </div>
@@ -1034,13 +1093,13 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                         <input
                           type="color"
                           value={customRuleDraft().color}
-                          onInput={(e) => setCustomRuleDraft({ ...customRuleDraft(), color: e.currentTarget.value })}
+                          onInput={(e) => updateCustomRuleDraft({ color: e.currentTarget.value })}
                           class="w-8 h-8 rounded-lg border border-white/10 cursor-pointer bg-transparent"
                         />
                         <input
                           type="text"
                           value={customRuleDraft().color}
-                          onInput={(e) => setCustomRuleDraft({ ...customRuleDraft(), color: e.currentTarget.value })}
+                          onInput={(e) => updateCustomRuleDraft({ color: e.currentTarget.value })}
                           class="flex-1 bg-xuanqing border border-white/5 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-accent/40 text-mist-solid"
                         />
                       </div>
@@ -1052,7 +1111,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                       <input
                         type="checkbox"
                         checked={customRuleDraft().italic}
-                        onChange={(e) => setCustomRuleDraft({ ...customRuleDraft(), italic: e.currentTarget.checked })}
+                        onChange={(e) => updateCustomRuleDraft({ italic: e.currentTarget.checked })}
                         class="accent-accent"
                       />
                       斜体
@@ -1061,7 +1120,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                       <input
                         type="checkbox"
                         checked={customRuleDraft().bold}
-                        onChange={(e) => setCustomRuleDraft({ ...customRuleDraft(), bold: e.currentTarget.checked })}
+                        onChange={(e) => updateCustomRuleDraft({ bold: e.currentTarget.checked })}
                         class="accent-accent"
                       />
                       加粗
@@ -1073,7 +1132,11 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                       onClick={() => {
                         const draft = customRuleDraft();
                         if (!draft.name.trim() || !draft.pattern.trim()) return;
-                        try { new RegExp(draft.pattern, 'd'); } catch { return; }
+                        const validationError = validateCustomRulePattern(draft.pattern, draft.groupIndex);
+                        if (validationError) {
+                          setPatternError(validationError);
+                          return;
+                        }
 
                         if (editingCustomRule()) {
                           const updated = props.formatConfig.customRules.map(r =>

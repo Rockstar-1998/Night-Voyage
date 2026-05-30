@@ -1,8 +1,8 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import {
   AlertTriangle,
+  Braces,
   ChevronRight,
-  CircleDot,
   Download,
   Eye,
   FilePlus2,
@@ -44,6 +44,7 @@ import {
   CompletionParametersPanel,
   type PresetSettingsDraft,
 } from './CompletionParametersPanel';
+import { SchemaConfigPanel } from './SchemaConfigPanel';
 import { CompletionPreviewModal } from './CompletionPreviewModal';
 import { IconButton } from './ui/IconButton';
 
@@ -294,6 +295,9 @@ const buildPresetUpdatePayload = (
   presencePenalty: detail.preset.presencePenalty,
   frequencyPenalty: detail.preset.frequencyPenalty,
   responseMode: detail.preset.responseMode,
+  structuredOutputSchema: detail.preset.structuredOutputSchema,
+  structuredOutputDisplay: detail.preset.structuredOutputDisplay,
+  contextIncludedKeys: detail.preset.contextIncludedKeys,
   ...patch,
 });
 
@@ -318,7 +322,7 @@ const toggleMultiSemanticOption = (
   }));
 
 
-export const CompletionPresetArea: Component = () => {
+export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> = (props) => {
   const [presetSummaries, setPresetSummaries] = createSignal<PresetSummary[]>([]);
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | null>(null);
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
@@ -331,6 +335,7 @@ export const CompletionPresetArea: Component = () => {
   const [editingBlock, setEditingBlock] = createSignal<PresetBlockEditorData | null>(null);
   const [editingSemanticOptionTarget, setEditingSemanticOptionTarget] = createSignal<SemanticOptionEditorTarget | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
+  const [isSchemaConfigOpen, setIsSchemaConfigOpen] = createSignal(false);
   const [settingsMode, setSettingsMode] = createSignal<'create' | 'edit'>('edit');
   const [previewOpen, setPreviewOpen] = createSignal(false);
   const [previewLoading, setPreviewLoading] = createSignal(false);
@@ -339,56 +344,6 @@ export const CompletionPresetArea: Component = () => {
   const [previewProviderKind, setPreviewProviderKind] = createSignal(DEFAULT_PREVIEW_PROVIDER_KIND);
 
   const searchNeedle = createMemo(() => searchQuery().trim().toLowerCase());
-
-  const lockedBlocks = createMemo(() => {
-    const detail = presetDetail();
-    const query = searchNeedle();
-    if (!detail) return [];
-
-    return detail.blocks.filter(
-      (block) =>
-        !block.semanticOptionId &&
-        block.isLocked &&
-        matchesSearchQuery(
-          query,
-          block.title,
-          block.blockType,
-          block.content,
-          block.lockReason,
-          block.exclusiveGroupLabel,
-          block.exclusiveGroupKey,
-        ),
-    );
-  });
-
-  const choiceSemanticGroups = createMemo(() => {
-    const detail = presetDetail();
-    const query = searchNeedle();
-    if (!detail) return [];
-
-    return detail.semanticGroups
-      .filter((group) => group.selectionMode === 'single')
-      .map((group) => ({
-        ...group,
-        flatOptions: flattenSemanticOptions(group.options),
-      }))
-      .filter((group) =>
-        matchesSearchQuery(
-          query,
-          group.label,
-          group.groupKey,
-          group.description,
-          ...group.flatOptions.flatMap((option) => [
-            option.label,
-            option.optionKey,
-            option.description,
-            ...option.blocks.map((block) => block.title ?? block.blockType),
-            ...option.blocks.map((block) => block.content),
-          ]),
-        ),
-      )
-      .sort((left, right) => left.sortOrder - right.sortOrder);
-  });
 
   const exclusiveBlockGroups = createMemo(() => {
     const detail = presetDetail();
@@ -431,57 +386,215 @@ export const CompletionPresetArea: Component = () => {
       );
   });
 
-  const ordinarySemanticGroups = createMemo(() => {
+  type OrderedPresetItem =
+    | { kind: 'block'; block: PresetPromptBlock; isLocked: boolean; exclusiveGroup?: ExclusiveBlockGroup }
+    | { kind: 'semanticGroup'; group: PresetSemanticGroupRecord & { flatOptions: PresetSemanticOptionRecord[] }; isChoice: boolean };
+
+  // Build ordered items matching the backend compilation order.
+  // Backend compiler loads blocks with: ORDER BY sort_order ASC, priority DESC, id ASC
+  // Semantic groups are expanded into blocks during compilation, so we interleave
+  // blocks and groups by sortOrder to match the compiled output order.
+  const orderedItems = createMemo(() => {
     const detail = presetDetail();
     const query = searchNeedle();
     if (!detail) return [];
 
-    return detail.semanticGroups
-      .filter((group) => group.selectionMode !== 'single')
-      .map((group) => ({
-        ...group,
-        flatOptions: flattenSemanticOptions(group.options),
-      }))
-      .filter((group) =>
-        matchesSearchQuery(
-          query,
-          group.label,
-          group.groupKey,
-          group.description,
-          ...group.flatOptions.flatMap((option) => [
-            option.label,
-            option.optionKey,
-            option.description,
-            ...option.blocks.map((block) => block.title ?? block.blockType),
-            ...option.blocks.map((block) => block.content),
-          ]),
-        ),
-      )
-      .sort((left, right) => left.sortOrder - right.sortOrder);
+    const blockItems: (OrderedPresetItem & { sortOrder: number; priority: number; id: number })[] = [];
+    const groupItems: (OrderedPresetItem & { sortOrder: number; priority: number; id: number })[] = [];
+
+    // Collect direct blocks (excluding semantic option blocks which are shown inside groups)
+    for (const block of detail.blocks) {
+      if (block.semanticOptionId != null) continue;
+      if (!matchesSearchQuery(query, block.title, block.blockType, block.content, block.lockReason, block.exclusiveGroupLabel, block.exclusiveGroupKey)) continue;
+      const exclusiveGroup = exclusiveBlockGroups().find(g => g.blocks.some(b => b.id === block.id));
+      blockItems.push({
+        kind: 'block',
+        block,
+        isLocked: block.isLocked,
+        exclusiveGroup,
+        sortOrder: block.sortOrder,
+        priority: block.priority,
+        id: block.id,
+      });
+    }
+
+    // Collect semantic groups
+    for (const group of detail.semanticGroups) {
+      const flatOptions = flattenSemanticOptions(group.options);
+      if (!matchesSearchQuery(query, group.label, group.groupKey, group.description, ...flatOptions.flatMap(o => [o.label, o.optionKey, o.description, ...o.blocks.map(b => b.title ?? b.blockType), ...o.blocks.map(b => b.content)]))) continue;
+      groupItems.push({
+        kind: 'semanticGroup',
+        group: { ...group, flatOptions },
+        isChoice: group.selectionMode === 'single',
+        sortOrder: group.sortOrder,
+        priority: 0,
+        id: group.id,
+      });
+    }
+
+    // Merge and sort by the same criteria as the backend compiler:
+    // ORDER BY sort_order ASC, priority DESC, id ASC
+    const allItems = [...blockItems, ...groupItems];
+    return allItems.sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      if (a.priority !== b.priority) {
+        return b.priority - a.priority;
+      }
+      return a.id - b.id;
+    });
   });
 
-  const ordinaryBlocks = createMemo(() => {
-    const detail = presetDetail();
-    const query = searchNeedle();
-    if (!detail) return [];
+  const renderPresetItem = (item: OrderedPresetItem) => {
+    if (item.kind === 'block') {
+      const block = item.block;
+      return (
+        <Show when={block.isLocked} fallback={
+          <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 transition-all hover:border-accent/30 hover:bg-xuanqing/60">
+            <div class="flex items-start gap-4">
+              <IconButton
+                onClick={() => void handleToggleBlock(block)}
+                disabled={saving() || block.isLocked}
+                label={block.isEnabled ? '关闭条目' : '启用条目'}
+                size="sm"
+                active={block.isEnabled}
+                class={`mt-0.5 ${block.isEnabled ? 'text-accent' : 'text-mist-solid/20'}`}
+              >
+                <Show when={block.isEnabled} fallback={<span class="text-2xl leading-none">◯</span>}>
+                  <span class="text-2xl leading-none">⬤</span>
+                </Show>
+              </IconButton>
+              <button
+                onClick={() => openBlockEditor(block)}
+                class="flex-1 min-w-0 text-left"
+              >
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h3 class={`text-sm font-bold truncate ${block.isEnabled ? 'text-mist-solid' : 'text-mist-solid/35'}`}>{block.title ?? block.blockType}</h3>
+                  <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.blockType}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.scope}</span>
+                </div>
+                <p class="text-xs text-mist-solid/40 line-clamp-2 mt-2 leading-5">{block.content}</p>
+              </button>
+              <div class="flex items-center gap-2 shrink-0">
+                <IconButton
+                  onClick={() => void handleDeleteBlock(block.id)}
+                  disabled={saving() || block.isLocked}
+                  label="删除条目"
+                  tone="danger"
+                  size="sm"
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </div>
+            </div>
+          </div>
+        }>
+          <div class="relative rounded-2xl border border-amber-500/20 bg-amber-500/5 transition-all hover:border-amber-400/30 hover:bg-amber-500/10">
+            <button
+              onClick={() => openBlockEditor(block)}
+              class="w-full text-left p-4 pr-12"
+            >
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-bold text-mist-solid">{block.title ?? block.blockType}</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.blockType}</span>
+                <span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-200">
+                  <Lock size={12} /> 锁定
+                </span>
+              </div>
+              <p class="text-xs text-mist-solid/45 mt-2 leading-5 line-clamp-2">{block.content}</p>
+              <Show when={block.lockReason}>
+                <p class="text-[11px] text-amber-200/75 mt-2 leading-5">锁定原因：{block.lockReason}</p>
+              </Show>
+            </button>
+            <IconButton
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const confirmed = window.confirm(`该条目已锁定${block.lockReason ? `（锁定原因：${block.lockReason}）` : ''}，确定要删除吗？`);
+                if (!confirmed) return;
+                void deleteBlockFromPreset(block.id);
+              }}
+              disabled={saving()}
+              label="删除锁定条目"
+              tone="danger"
+              size="sm"
+              class="absolute top-3 right-3 bg-black/20"
+            >
+              <Trash2 size={14} />
+            </IconButton>
+          </div>
+        </Show>
+      );
+    }
 
-    return detail.blocks.filter(
-      (block) =>
-        !block.semanticOptionId &&
-        !block.isLocked &&
-        !normalizeOptional(block.exclusiveGroupKey) &&
-        matchesSearchQuery(
-          query,
-          block.title,
-          block.blockType,
-          block.content,
-          block.lockReason,
-          block.exclusiveGroupLabel,
-          block.exclusiveGroupKey,
-        ),
+    const group = item.group;
+    return (
+      <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 space-y-3">
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-sm font-bold text-mist-solid">{group.label}</span>
+              <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{group.groupKey}</span>
+              <span class={`text-[10px] px-2 py-0.5 rounded-md border ${item.isChoice ? 'border-blue-500/20 bg-blue-500/10 text-blue-200' : 'border-white/10 bg-white/5 text-mist-solid/45'}`}>
+                {item.isChoice ? '多选一' : '普通组'}
+              </span>
+            </div>
+            <Show when={group.description}>
+              <p class="text-xs text-mist-solid/45 mt-2 leading-5">{group.description}</p>
+            </Show>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <For each={group.flatOptions}>
+            {(option) => (
+              <div class={`relative rounded-2xl border ${option.isSelected ? 'border-accent/40 bg-accent/10' : 'border-white/10 bg-black/10 hover:border-accent/20 hover:bg-xuanqing/50'}`}>
+                <button
+                  type="button"
+                  onClick={() => void handleToggleSemanticOption(group.id, option.id, group.selectionMode)}
+                  disabled={saving() || !option.isEnabled}
+                  class="w-full text-left px-4 py-3 pr-20 transition-all disabled:opacity-40"
+                >
+                  <div class="flex items-start gap-3">
+                    <span class={`mt-0.5 text-lg leading-none ${option.isSelected ? 'text-accent' : 'text-mist-solid/25'}`}>
+                      {item.isChoice ? (option.isSelected ? '◉' : '○') : (option.isSelected ? '☑' : '☐')}
+                    </span>
+                    <div class="min-w-0 flex-1 space-y-2">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-bold text-mist-solid">{option.label}</span>
+                        <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{option.optionKey}</span>
+                        <span class={`text-[10px] px-2 py-0.5 rounded-md border ${option.isSelected ? 'border-accent/30 bg-accent/10 text-accent' : 'border-white/10 bg-white/5 text-mist-solid/45'}`}>
+                          {option.isSelected ? (item.isChoice ? '当前选中' : '当前启用') : '点击切换'}
+                        </span>
+                      </div>
+                      <Show when={option.description}>
+                        <p class="text-xs text-mist-solid/55 leading-5">{option.description}</p>
+                      </Show>
+                    </div>
+                  </div>
+                </button>
+                <IconButton
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openSemanticOptionEditor(group.id, option.id);
+                  }}
+                  disabled={saving()}
+                  label="编辑语义选项"
+                  size="sm"
+                  class="absolute top-3 right-3 bg-black/20"
+                >
+                  <Pencil size={14} />
+                </IconButton>
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
     );
-  });
-  
+  };
 
   const refreshPresetSummaries = async (nextSelectedPresetId?: number | null) => {
     setListLoading(true);
@@ -572,6 +685,10 @@ export const CompletionPresetArea: Component = () => {
     if (!detail) {
       return;
     }
+    const targetGroup = detail.semanticGroups.find(g => g.id === groupId);
+    const toggledOption = targetGroup ? findSemanticOptionById(targetGroup.options, optionId) : null;
+    const wasSelected = toggledOption?.isSelected ?? false;
+
     const nextGroups = detail.semanticGroups.map((group) =>
       group.id === groupId
         ? {
@@ -584,6 +701,65 @@ export const CompletionPresetArea: Component = () => {
         : group,
     );
     await persistSemanticGroups(nextGroups.map(toSemanticGroupInput));
+
+    if (detail.preset.responseMode === 'structured_json' && toggledOption?.linkedSchemaKeys?.length) {
+      try {
+        const currentSchema = JSON.parse(detail.preset.structuredOutputSchema || '{}');
+        if (!wasSelected) {
+          for (const key of toggledOption.linkedSchemaKeys) {
+            if (!currentSchema.properties?.[key]) {
+              if (!currentSchema.properties) currentSchema.properties = {};
+              currentSchema.properties[key] = { type: 'object', description: '', additionalProperties: { type: 'string' } };
+              if (!currentSchema.required) currentSchema.required = [];
+              if (!currentSchema.required.includes(key)) {
+                currentSchema.required.push(key);
+              }
+            }
+          }
+        } else {
+          for (const key of toggledOption.linkedSchemaKeys) {
+            delete currentSchema.properties?.[key];
+            if (Array.isArray(currentSchema.required)) {
+              currentSchema.required = currentSchema.required.filter((k: string) => k !== key);
+            }
+          }
+        }
+        const refreshed = presetDetail();
+        if (refreshed) {
+          await presetsUpdate(buildPresetUpdatePayload(refreshed, {
+            structuredOutputSchema: JSON.stringify(currentSchema, null, 2),
+          }));
+        }
+      } catch {
+        // schema sync failure is non-critical
+      }
+    }
+  };
+
+  const handleSchemaConfigSave = async (data: { structuredOutputSchema: string; structuredOutputDisplay: string; contextIncludedKeys: string }) => {
+    const detail = presetDetail();
+    if (!detail) return;
+    setSaving(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const updated = await presetsUpdate(buildPresetUpdatePayload(detail, {
+        structuredOutputSchema: data.structuredOutputSchema,
+        structuredOutputDisplay: data.structuredOutputDisplay,
+        contextIncludedKeys: data.contextIncludedKeys,
+      }));
+      setPresetDetail(updated);
+      setPresetSummaries((current) =>
+        current.map((preset) => (preset.id === updated.preset.id ? updated.preset : preset)),
+      );
+      setSuccessMessage('Schema 配置已保存');
+      setIsSchemaConfigOpen(false);
+      props.onPresetsChanged?.();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const savePresetSettings = async (draft: PresetSettingsDraft) => {
@@ -598,6 +774,7 @@ export const CompletionPresetArea: Component = () => {
         await refreshPresetSummaries(created.preset.id);
         setSelectedPresetId(created.preset.id);
         setSuccessMessage('预设已创建');
+        props.onPresetsChanged?.();
       } else {
         const detail = presetDetail();
         if (!detail) {
@@ -609,6 +786,7 @@ export const CompletionPresetArea: Component = () => {
           current.map((preset) => (preset.id === updated.preset.id ? updated.preset : preset)),
         );
         setSuccessMessage('预设设置已保存');
+        props.onPresetsChanged?.();
       }
       setIsSettingsOpen(false);
     } catch (error) {
@@ -1090,6 +1268,20 @@ export const CompletionPresetArea: Component = () => {
             >
               <Plus size={18} />
             </IconButton>
+            <Show when={presetDetail()?.preset.responseMode === 'structured_json'}>
+              <IconButton
+                onClick={() => {
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                  setIsSchemaConfigOpen(true);
+                }}
+                disabled={!presetDetail()}
+                label="Schema 配置"
+                size="md"
+              >
+                <Braces size={18} />
+              </IconButton>
+            </Show>
             <IconButton
               onClick={() => {
                 setSettingsMode('edit');
@@ -1165,376 +1357,12 @@ export const CompletionPresetArea: Component = () => {
                       </div>
                     </div>
 
-                    <Show when={lockedBlocks().length > 0}>
-                      <div class="rounded-3xl border border-white/5 bg-white/5 p-5 text-sm text-mist-solid/70 space-y-4">
-                        <div class="flex items-start gap-3">
-                          <Lock size={18} class="text-amber-300 shrink-0 mt-0.5" />
-                          <div class="space-y-2 min-w-0">
-                            <div class="font-bold text-mist-solid">锁定条目</div>
-                            <p class="text-xs leading-5 text-mist-solid/55">
-                              这些条目属于安全区，默认只允许查看与进入编辑，不参与快捷切换。
-                            </p>
-                          </div>
-                        </div>
-                        <div class="flex flex-col gap-3">
-                          <For each={lockedBlocks()}>
-                            {(block) => (
-                              <div class="relative rounded-2xl border border-amber-500/20 bg-amber-500/5 transition-all hover:border-amber-400/30 hover:bg-amber-500/10">
-                                <button
-                                  onClick={() => openBlockEditor(block)}
-                                  class="w-full text-left p-4 pr-12"
-                                >
-                                  <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm font-bold text-mist-solid">{block.title ?? block.blockType}</span>
-                                    <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.blockType}</span>
-                                    <span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-200">
-                                      <Lock size={12} /> 锁定
-                                    </span>
-                                  </div>
-                                  <p class="text-xs text-mist-solid/45 mt-2 leading-5 line-clamp-2">{block.content}</p>
-                                  <Show when={block.lockReason}>
-                                    <p class="text-[11px] text-amber-200/75 mt-2 leading-5">锁定原因：{block.lockReason}</p>
-                                  </Show>
-                                </button>
-                                <IconButton
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    const confirmed = window.confirm(`该条目已锁定${block.lockReason ? `（锁定原因：${block.lockReason}）` : ''}，确定要删除吗？`);
-                                    if (!confirmed) return;
-                                    void deleteBlockFromPreset(block.id);
-                                  }}
-                                  disabled={saving()}
-                                  label="删除锁定条目"
-                                  tone="danger"
-                                  size="sm"
-                                  class="absolute top-3 right-3 bg-black/20"
-                                >
-                                  <Trash2 size={14} />
-                                </IconButton>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
+                    {/* 预设条目列表（按 sortOrder 排序，与后端编译顺序一致） */}
+                    <For each={orderedItems()}>
+                      {(item) => renderPresetItem(item)}
+                    </For>
 
-                    <Show when={choiceSemanticGroups().length > 0 || exclusiveBlockGroups().length > 0}>
-                      <div class="rounded-3xl border border-white/5 bg-white/5 p-5 text-sm text-mist-solid/70 space-y-4">
-                        <div class="flex items-start gap-3">
-                          <CircleDot size={18} class="text-accent shrink-0 mt-0.5" />
-                          <div class="space-y-2 min-w-0">
-                            <div class="font-bold text-mist-solid">选择组（互斥组）</div>
-                            <p class="text-xs leading-5 text-mist-solid/55">
-                              这里统一展示“多选一”条目。整卡点击负责切换，右上角编辑按钮负责进入编辑。
-                            </p>
-                          </div>
-                        </div>
-                        <div class="space-y-4">
-                          <For each={choiceSemanticGroups()}>
-                            {(group) => (
-                              <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 space-y-3">
-                                <div class="flex items-start justify-between gap-4">
-                                  <div class="min-w-0">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                      <span class="text-sm font-bold text-mist-solid">{group.label}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">{group.groupKey}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-blue-500/20 bg-blue-500/10 text-blue-200">多选一</span>
-                                    </div>
-                                    <Show when={group.description}>
-                                      <p class="text-xs text-mist-solid/45 mt-2 leading-5">{group.description}</p>
-                                    </Show>
-                                  </div>
-                                </div>
-                                <div class="space-y-2">
-                                  <For each={group.flatOptions}>
-                                    {(option) => (
-                                      <div class={`relative rounded-2xl border ${option.isSelected ? 'border-accent/40 bg-accent/10' : 'border-white/10 bg-black/10 hover:border-accent/20 hover:bg-xuanqing/50'}`}>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleToggleSemanticOption(group.id, option.id, group.selectionMode)}
-                                          disabled={saving() || !option.isEnabled}
-                                          class="w-full text-left px-4 py-3 pr-20 transition-all disabled:opacity-40"
-                                        >
-                                          <div class="flex items-start gap-3">
-                                            <span class={`mt-0.5 text-lg leading-none ${option.isSelected ? 'text-accent' : 'text-mist-solid/25'}`}>
-                                              {option.isSelected ? '◉' : '○'}
-                                            </span>
-                                            <div class="min-w-0 flex-1 space-y-2">
-                                              <div class="flex items-center gap-2 flex-wrap">
-                                                <span class="text-sm font-bold text-mist-solid">{option.label}</span>
-                                                <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">{option.optionKey}</span>
-                                                <span class={`text-[10px] px-2 py-0.5 rounded-md border ${option.isSelected ? 'border-accent/30 bg-accent/10 text-accent' : 'border-white/10 bg-white/5 text-mist-solid/45'}`}>
-                                                  {option.isSelected ? '当前选中' : '点击切换'}
-                                                </span>
-                                              </div>
-                                              <Show when={option.description}>
-                                                <p class="text-xs text-mist-solid/55 leading-5">{option.description}</p>
-                                              </Show>
-                                            </div>
-                                          </div>
-                                        </button>
-                                        <IconButton
-                                          type="button"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            openSemanticOptionEditor(group.id, option.id);
-                                          }}
-                                          disabled={saving()}
-                                          label="编辑语义选项"
-                                          size="sm"
-                                          class="absolute top-3 right-3 bg-black/20"
-                                        >
-                                          <Pencil size={14} />
-                                        </IconButton>
-                                      </div>
-                                    )}
-                                  </For>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-
-                          <For each={exclusiveBlockGroups()}>
-                            {(group) => (
-                              <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 space-y-3">
-                                <div class="flex items-start justify-between gap-4">
-                                  <div class="min-w-0">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                      <span class="text-sm font-bold text-mist-solid">{group.label}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">{group.key}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-blue-500/20 bg-blue-500/10 text-blue-200">互斥组</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div class="space-y-2">
-                                  <For each={group.blocks}>
-                                    {(block) => (
-                                      <div class={`relative rounded-2xl border ${block.isEnabled ? 'border-accent/40 bg-accent/10' : 'border-white/10 bg-black/10 hover:border-accent/20 hover:bg-xuanqing/50'}`}>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleToggleBlock(block)}
-                                          disabled={saving() || block.isLocked}
-                                          class="w-full text-left px-4 py-3 pr-28 transition-all disabled:opacity-40"
-                                        >
-                                          <div class="flex items-start gap-3">
-                                            <span class={`mt-0.5 text-lg leading-none ${block.isEnabled ? 'text-accent' : 'text-mist-solid/25'}`}>
-                                              {block.isEnabled ? '◉' : '○'}
-                                            </span>
-                                            <div class="min-w-0 flex-1 space-y-2">
-                                              <div class="flex items-center gap-2 flex-wrap">
-                                                <span class="text-sm font-bold text-mist-solid">{block.title ?? block.blockType}</span>
-                                                <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.blockType}</span>
-                                                <span class={`text-[10px] px-2 py-0.5 rounded-md border ${block.isEnabled ? 'border-accent/30 bg-accent/10 text-accent' : 'border-white/10 bg-white/5 text-mist-solid/45'}`}>
-                                                  {block.isEnabled ? '当前启用' : '点击切换'}
-                                                </span>
-                                              </div>
-                                              <p class="text-xs text-mist-solid/45 leading-5 line-clamp-2">{block.content}</p>
-                                            </div>
-                                          </div>
-                                        </button>
-                                        <div class="absolute top-3 right-3 flex items-center gap-1">
-                                          <IconButton
-                                            type="button"
-                                            onClick={(event) => {
-                                              event.preventDefault();
-                                              event.stopPropagation();
-                                              openBlockEditor(block);
-                                            }}
-                                            disabled={saving()}
-                                            label="编辑互斥组条目"
-                                            size="sm"
-                                            class="bg-black/20"
-                                          >
-                                            <Pencil size={14} />
-                                          </IconButton>
-                                          <IconButton
-                                            type="button"
-                                            onClick={(event) => {
-                                              event.preventDefault();
-                                              event.stopPropagation();
-                                              const confirmMsg = group.blocks.length <= 2
-                                                ? '该互斥组仅剩一个条目，删除后互斥组将自动解散。确定要删除吗？'
-                                                : `确定要删除条目"${block.title ?? block.blockType}"吗？`;
-                                              const confirmed = window.confirm(confirmMsg);
-                                              if (!confirmed) return;
-                                              void deleteBlockFromPreset(block.id);
-                                            }}
-                                            disabled={saving()}
-                                            label="删除互斥组条目"
-                                            tone="danger"
-                                            size="sm"
-                                            class="bg-black/20"
-                                          >
-                                            <Trash2 size={14} />
-                                          </IconButton>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </For>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingSemanticOptionTarget(null);
-                                      setErrorMessage(null);
-                                      setSuccessMessage(null);
-                                      setEditingBlock({
-                                        ...DEFAULT_NEW_BLOCK,
-                                        exclusiveGroupKey: group.key,
-                                        exclusiveGroupLabel: group.label,
-                                      });
-                                    }}
-                                    class="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/5 px-4 py-2.5 text-xs text-mist-solid/45 hover:text-mist-solid hover:border-accent/30 hover:bg-accent/5 transition-all"
-                                  >
-                                    <Plus size={14} />
-                                    添加互斥条目
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
-
-                    <Show when={ordinarySemanticGroups().length > 0 || ordinaryBlocks().length > 0}>
-                      <div class="rounded-3xl border border-white/5 bg-white/5 p-5 text-sm text-mist-solid/70 space-y-4">
-                        <div class="flex items-start gap-3">
-                          <Plus size={18} class="text-mist-solid/60 shrink-0 mt-0.5" />
-                          <div class="space-y-2 min-w-0">
-                            <div class="font-bold text-mist-solid">普通条目</div>
-                            <p class="text-xs leading-5 text-mist-solid/55">
-                              这里展示自由开关条目与非互斥选项，排在锁定区和选择组之后。
-                            </p>
-                          </div>
-                        </div>
-                        <div class="space-y-4">
-                          <For each={ordinarySemanticGroups()}>
-                            {(group) => (
-                              <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 space-y-3">
-                                <div class="flex items-start justify-between gap-4">
-                                  <div class="min-w-0">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                      <span class="text-sm font-bold text-mist-solid">{group.label}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">{group.groupKey}</span>
-                                      <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">普通组</span>
-                                    </div>
-                                    <Show when={group.description}>
-                                      <p class="text-xs text-mist-solid/45 mt-2 leading-5">{group.description}</p>
-                                    </Show>
-                                  </div>
-                                </div>
-                                <div class="space-y-2">
-                                  <For each={group.flatOptions}>
-                                    {(option) => (
-                                      <div class={`relative rounded-2xl border ${option.isSelected ? 'border-accent/40 bg-accent/10' : 'border-white/10 bg-black/10 hover:border-accent/20 hover:bg-xuanqing/50'}`}>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleToggleSemanticOption(group.id, option.id, group.selectionMode)}
-                                          disabled={saving() || !option.isEnabled}
-                                          class="w-full text-left px-4 py-3 pr-20 transition-all disabled:opacity-40"
-                                        >
-                                          <div class="flex items-start gap-3">
-                                            <span class={`mt-0.5 text-lg leading-none ${option.isSelected ? 'text-accent' : 'text-mist-solid/25'}`}>
-                                              {option.isSelected ? '☑' : '☐'}
-                                            </span>
-                                            <div class="min-w-0 flex-1 space-y-2">
-                                              <div class="flex items-center gap-2 flex-wrap">
-                                                <span class="text-sm font-bold text-mist-solid">{option.label}</span>
-                                                <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/50">{option.optionKey}</span>
-                                                <span class={`text-[10px] px-2 py-0.5 rounded-md border ${option.isSelected ? 'border-accent/30 bg-accent/10 text-accent' : 'border-white/10 bg-white/5 text-mist-solid/45'}`}>
-                                                  {option.isSelected ? '当前启用' : '点击切换'}
-                                                </span>
-                                              </div>
-                                              <Show when={option.description}>
-                                                <p class="text-xs text-mist-solid/55 leading-5">{option.description}</p>
-                                              </Show>
-                                            </div>
-                                          </div>
-                                        </button>
-                                        <IconButton
-                                          type="button"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            openSemanticOptionEditor(group.id, option.id);
-                                          }}
-                                          disabled={saving()}
-                                          label="编辑普通组选项"
-                                          size="sm"
-                                          class="absolute top-3 right-3 bg-black/20"
-                                        >
-                                          <Pencil size={14} />
-                                        </IconButton>
-                                      </div>
-                                    )}
-                                  </For>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-
-                          <div class="flex flex-col gap-3">
-                            <For each={ordinaryBlocks()}>
-                              {(block) => (
-                                <div class="rounded-2xl border border-white/5 bg-xuanqing/40 p-4 transition-all hover:border-accent/30 hover:bg-xuanqing/60">
-                                  <div class="flex items-start gap-4">
-                                    <IconButton
-                                      onClick={() => void handleToggleBlock(block)}
-                                      disabled={saving() || block.isLocked}
-                                      label={block.isEnabled ? '关闭条目' : '启用条目'}
-                                      size="sm"
-                                      active={block.isEnabled}
-                                      class={`mt-0.5 ${block.isEnabled ? 'text-accent' : 'text-mist-solid/20'}`}
-                                    >
-                                      <Show when={block.isEnabled} fallback={<span class="text-2xl leading-none">◯</span>}>
-                                        <span class="text-2xl leading-none">⬤</span>
-                                      </Show>
-                                    </IconButton>
-
-                                    <button
-                                      onClick={() => openBlockEditor(block)}
-                                      class="flex-1 min-w-0 text-left"
-                                    >
-                                      <div class="flex items-center gap-2 flex-wrap">
-                                        <h3 class={`text-sm font-bold truncate ${block.isEnabled ? 'text-mist-solid' : 'text-mist-solid/35'}`}>{block.title ?? block.blockType}</h3>
-                                        <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.blockType}</span>
-                                        <span class="text-[10px] px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-mist-solid/55">{block.scope}</span>
-                                      </div>
-                                      <p class="text-xs text-mist-solid/40 line-clamp-2 mt-2 leading-5">{block.content}</p>
-                                    </button>
-
-                                    <div class="flex items-center gap-2 shrink-0">
-                                      <IconButton
-                                        onClick={() => void handleDeleteBlock(block.id)}
-                                        disabled={saving() || block.isLocked}
-                                        label="删除条目"
-                                        tone="danger"
-                                        size="sm"
-                                      >
-                                        <Trash2 size={16} />
-                                      </IconButton>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                      </div>
-                    </Show>
-
-                    <Show
-                      when={
-                        lockedBlocks().length === 0 &&
-                        choiceSemanticGroups().length === 0 &&
-                        exclusiveBlockGroups().length === 0 &&
-                        ordinarySemanticGroups().length === 0 &&
-                        ordinaryBlocks().length === 0
-                      }
-                    >
+                    <Show when={orderedItems().length === 0}>
                       <div class="rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-mist-solid/35">
                         当前预设下没有匹配到条目。可以先点击上方“添加新条目”。
                       </div>
@@ -1581,6 +1409,10 @@ export const CompletionPresetArea: Component = () => {
         saving={saving()}
         error={errorMessage()}
         onClose={() => setIsSettingsOpen(false)}
+        onOpenSchemaConfig={() => {
+          setIsSettingsOpen(false);
+          setIsSchemaConfigOpen(true);
+        }}
         onSave={(draft) => void savePresetSettings(draft)}
       />
 
@@ -1593,6 +1425,15 @@ export const CompletionPresetArea: Component = () => {
         onProviderKindChange={setPreviewProviderKind}
         onRefresh={() => void loadCompilePreview()}
         onClose={() => setPreviewOpen(false)}
+      />
+
+      <SchemaConfigPanel
+        isOpen={isSchemaConfigOpen()}
+        detail={presetDetail()}
+        saving={saving()}
+        error={errorMessage()}
+        onClose={() => setIsSchemaConfigOpen(false)}
+        onSave={(data) => void handleSchemaConfigSave(data)}
       />
     </div>
   );
