@@ -1,51 +1,78 @@
-# Night Voyage - Frontend Rewrite Handoff
+# MobileView 底部导航栏布局修复 - Handoff
 
-## 1. 核心定位 (Core Thesis)
-**视觉基调 (Visual Thesis):** 
-“夜航船” —— 沉静的玄青色（深邃黑青），融合古中国武侠的克制与未知探索的神秘感。去除所有多余的现代 SaaS 界面装饰（大色块卡片、强烈的渐变），转而使用纯净的深色背景，搭配极简的高对比度文字、细腻的线条以及玻璃态（背板模糊）的局部点缀。
+## 背景
 
-**交互基调 (Interaction Thesis):**
-“如同夜雾中浮现的船影” —— 以“位移 (Transform) + 模糊度 (Blur) + 不透明度 (Opacity)”为核心动作。
-- 进入页面或切换标签时，内容以微小位移（如 translateY: 10px 到 0）配合由虚到实（blur: 4px 到 0, opacity 0 到 1）的动效呈现。
-- 采用 `Motion One` 处理所有过渡效果，确保全部在合成器线程执行，保障流畅度。
+用户要求将手机版左侧抽屉导航改为：
+- 右上角设置按钮（齿轮图标）
+- 底部常驻任务栏（4个按钮：对话、角色、工作台、世界书）
 
-## 2. 现有界面的改造方向 (Refactoring Directions)
+## 已完成工作
 
-基于 `frontend-skill` 的硬性约束（**No cards by default**, **Linear-style restraint**），当前的界面（参考截图）存在过多卡片包装，我们需要将其展平：
+1. **移除了左侧抽屉** (`WorkspaceSidebar` 抽屉)
+2. **添加了右上角设置按钮** - 点击切换到 `settings` 视图
+3. **添加了底部 `<nav>` 任务栏** - 包含4个导航按钮
+4. **实现了工作区切换逻辑** - `handleWorkspaceChange` 函数
 
-### A. 全局结构 (Global Layout)
-- **侧边栏 (Sidebar):** 保持其现有的层级结构，但消除强烈的背景反差。当前侧边栏有明显的底色，建议将其完全融于背景，或仅通过极微弱的 `rgba(255,255,255, 0.03)` 辅以 `backdrop-filter: blur(10px)` 进行区域划分。
+## 当前问题
 
-### B. 核心页面改造 (Page Specifics)
+**底部任务栏位置不正确** - 任务栏出现在内容区域中间，而不是固定在底部。
 
-**1. 设置页 / API 档案 (Settings / API Profile)**
-- **当前:** API 档案使用了多个圆角卡片（如 nvidia, modelscope）和厚重的输入框边界。
-- **改造:** 
-  - 去除所有的外层卡片背景。
-  - 使用大号的、具备武侠气质或极简现代的字体作为区块标题。
-  - 列表项使用带底部边框（细线 `border-b`）或纯排版对齐的方式列出，仅在 hover 时通过不透明度或极微弱的背景色提供反馈。
-  - 输入框去掉厚重的背景，改为只有底边线的下划线风格（Underline input），或者非常克制的微透背景。
+### 截图证据
+- 任务栏显示在会话列表下方，底部有大量空白区域
+- 切换到角色/工作台/世界书视图时，任务栏也出现在内容中间
 
-**2. 对话界面 (Sessions)**
-- **当前:** 左侧会话列表使用了大面积的圆角图片卡片。右侧聊天区类似于传统的 IM 气泡。
-- **改造:**
-  - 左侧历史列表缩小图片占比，或使用极简文字配合微小的头像/状态点。若必须展示背景图，去除圆角框，改用遮罩渐变淡入。
-  - 右侧主聊天区：去除明显的气泡底色，让文字仿佛直接悬浮于“玄青色”水面之上。系统提示/动作描写可以用特定的字重和稍微幽暗的颜色区分，对话内容高亮。
-  - 输入框浮于底部，使用 `backdrop-blur` 处理其底板，不采用实色遮挡。
+### 当前代码结构 (MobileView.tsx)
 
-**3. 角色展示柜 (Character Display Cabinet)**
-- **当前:** 大图卡片加文字。
-- **改造:** 采用“画廊”或“名片”风格。如果图片很重要（如截图所示），让图片充满整个列或区域，不留突兀的内边距 (padding)。文字信息直接覆于图片底部，并辅以渐变遮罩。
+```
+<div class="h-full w-full bg-xuanqing flex flex-col relative overflow-hidden">
+  <header class="h-14 shrink-0">...</header>  <!-- 顶部标题栏 -->
+  
+  <main class="flex-1 flex flex-col overflow-hidden">
+    <div class="flex-1 overflow-y-auto">       <!-- 滚动容器 -->
+      <!-- 各视图内容 (sessions/chat/characters/kb/workspaces/settings) -->
+      <!-- 所有视图都包裹在 min-h-full 的 div 中 -->
+    </div>
+  </main>
+  
+  <nav class="shrink-0 h-16">...</nav>         <!-- 底部任务栏 -->
+</div>
+```
 
-**4. 预设列表 (Preset List)**
-- **当前:** 大量嵌套卡片和开关面板。
-- **改造:** 回归“Linear-style”数据列表。使用清晰的间距和对齐，以数据表格或文本行的方式展示预设项，移除卡片包裹。只保留开关或操作图标作为交互触点。
+### 已尝试的修复
 
-## 3. 技术实施规范 (Technical Constraints)
-1. **框架:** 继续保持 `SolidJS` 作为前端宿主引擎。
-2. **样式:** Tailwind CSS，复用现有的 CSS 变量（`--color-xuanqing`, `--color-night-water` 等）。
-3. **动画:** 仅使用 `Motion One` 进行动效绑定。禁止引入会导致重排 (reflow) 的动效库。
-4. **状态隔离:** 任何 AI 动态生成的 UI （如果有），必须放入 `iframe` 或 Shadow DOM，防止污染主界面的样式。
+1. 将 `main` 改为 `flex flex-col overflow-hidden`
+2. 内部添加 `flex-1 overflow-y-auto` 滚动容器
+3. 内容区域使用 `min-h-full` 确保撑满高度
+4. 底部 `nav` 使用 `shrink-0` 防止被压缩
 
----
-*此文档作为后续 Gemini 执行前端代码重写的依据和基线。*
+**以上修复均未解决问题。**
+
+## 可能的原因
+
+1. **父容器高度问题**：`App.tsx` 中 `MobileView` 的父容器可能没有正确设置高度
+2. **flex 布局嵌套问题**：多层 flex 嵌套导致高度计算异常
+3. **SessionSidebar 高度问题**：`SessionSidebar` 组件设置了固定宽度 `w-80`，可能影响 flex 高度计算
+4. **浏览器开发者工具模拟问题**：iPhone 模拟器可能有特殊的视口高度计算
+
+## 需要检查的文件
+
+- `src/components/MobileView.tsx` - 当前修改的文件
+- `src/App.tsx` - 检查 MobileView 的父容器布局
+- `src/components/SessionSidebar.tsx` - 检查高度设置
+
+## 建议的修复方向
+
+1. 检查 `App.tsx` 中 `isMobile()` 条件渲染的父容器是否有 `h-full` 或 `h-screen`
+2. 尝试将 `main` 的 `overflow-hidden` 移除，改为 `overflow-visible`
+3. 尝试使用 `h-[calc(100vh-3.5rem-4rem)]` 显式设置内容区域高度（减去 header 和 nav 高度）
+4. 检查是否有 CSS 全局样式影响了 flex 布局
+
+## 相关提交
+
+- 修改了 `src/components/MobileView.tsx`
+- 修改了 `src/components/WorkspaceSidebar.tsx`（修复了 id 不匹配问题）
+
+## Codex 修复记录
+
+- 底部任务栏位置：`MobileView` 根容器改为 `h-[100dvh] max-h-[100dvh] min-h-0`，中间内容区添加 `min-h-0`，避免移动端父级高度不明确导致 nav 跟随内容流。
+- 会话界面宽度：`SessionSidebar` 增加 `layout?: 'sidebar' | 'mobile'`，默认桌面侧栏保持 `w-80 border-r`；`MobileView` 传入 `layout="mobile"` 后改为 `w-full border-r-0`，避免移动端仍按桌面侧栏宽度渲染。

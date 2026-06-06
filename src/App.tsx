@@ -1839,6 +1839,17 @@ function App() {
           formatConfig={formatConfig()}
           worldBookKeywords={worldBookKeywords()}
           isRoomClient={activeRoomClientSession() !== null}
+          providers={providers}
+          providerModels={providerModels}
+          providersLoading={providersLoading()}
+          fetchingModelsFor={fetchingModelsFor()}
+          onFetchModels={handleFetchModels}
+          onSaveProvider={handleSaveProvider}
+          onDeleteProvider={handleDeleteProvider}
+          onTestClaudeNative={handleTestClaudeNative}
+          enableDynamicEffects={enableDynamicEffects()}
+          onSetEnableDynamicEffects={handleSetEnableDynamicEffects}
+          onSetFormatConfig={handleSetFormatConfig}
         />
       </Show>
 

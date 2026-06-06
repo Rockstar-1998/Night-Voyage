@@ -8,6 +8,7 @@ interface SessionSidebarProps {
   npcCharacters: CharacterCard[];
   selectedConversationId?: number | null;
   selectedConversationMembers?: ConversationMember[];
+  layout?: 'sidebar' | 'mobile';
   loading?: boolean;
   onSelect?: (conversationId: number) => void;
   onNewChat?: () => void;
@@ -37,6 +38,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
     single: filteredSessions().filter((session) => session.conversationType === 'single'),
     online: filteredSessions().filter((session) => session.conversationType === 'online'),
   }));
+  const isMobileLayout = createMemo(() => props.layout === 'mobile');
 
   const getSessionImage = (session: ConversationListItem) => {
     const boundCharacter = props.npcCharacters.find((character) => character.id === session.hostCharacterId);
@@ -47,7 +49,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
   };
 
   return (
-    <div class="w-80 flex flex-col bg-night-water/30 backdrop-blur-sm border-r border-white/5 h-full relative pt-10">
+    <div class={`${isMobileLayout() ? 'w-full border-r-0' : 'w-80 border-r'} flex flex-col bg-night-water/30 backdrop-blur-sm border-white/5 h-full relative pt-10`}>
       <div class="p-6 flex flex-col gap-6">
         <h1 data-workspace-title class="text-3xl font-black text-white tracking-tighter uppercase italic">Sessions</h1>
 

@@ -259,7 +259,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
               <label class="text-xs uppercase tracking-widest text-mist-solid/35">预设绑定</label>
               <Select
   value={bindingPresetId()}
-  onChange={(val) => setBindingPresetId(event.currentTarget.value)}
+  onChange={(val) => setBindingPresetId(val)}
   options={[
   { label: "保持当前预设", value: "" },
   ...(props.presetSummaries).map(preset => ({ label: preset.name, value: (preset.id)?.toString() }))
@@ -270,7 +270,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
               <label class="text-xs uppercase tracking-widest text-mist-solid/35">世界书绑定</label>
               <Select
   value={bindingWorldBookId()}
-  onChange={(val) => setBindingWorldBookId(event.currentTarget.value)}
+  onChange={(val) => setBindingWorldBookId(val)}
   options={[
   { label: "保持当前世界书", value: "" },
   ...(props.worldBooks).map(worldBook => ({ label: worldBook.title, value: (worldBook.id)?.toString() }))
@@ -317,7 +317,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                 <label class="text-xs uppercase tracking-widest text-mist-solid/35">切换角色卡</label>
                 <Select
   value={props.currentPlayerCharacter?.id?.toString() ?? ''}
-  onChange={(val) => { if (val) switchPlayerCharacter(Number(val)); }} disabled={switchingPlayerCharacter()}
+  onChange={(val) => { if (val) handleSwitchPlayerCharacter(Number(val)); }} disabled={switchingPlayerCharacter()}
   options={[
   ...(props.playerCharacters).map(pc => ({ label: pc.name, value: (pc.id)?.toString() }))
   ]}

@@ -416,7 +416,8 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   value={selectedProviderId()?.toString() ?? ''}
   onChange={(val) => setSelectedProviderId(val ? Number(val) : undefined)}
   options={[
-  { label: "请选择 API 档案", value: "" }
+  { label: "请选择 API 档案", value: "" },
+  ...(props.providers).map(provider => ({ label: provider.name, value: (provider.id)?.toString() }))
   ]}
 />
                     <Show when={conversationType() === 'online' && !selectedProviderId()}>
