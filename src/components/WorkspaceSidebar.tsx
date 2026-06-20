@@ -44,8 +44,8 @@ export const WorkspaceSidebar: Component<{
             {/* Main Nav */}
             <div class="flex flex-col gap-4 flex-1">
                 <NavIcon id="chat" icon={MessageSquare} active={props.activeWorkspace === 'chat'} label="对话" />
-                <NavIcon id="characters" icon={Users} active={props.activeWorkspace === 'characters'} label="角色展示柜" />
-                <NavIcon id="workspaces" icon={LayoutGrid} active={props.activeWorkspace === 'workspaces'} label="对话补全预设" />
+                <NavIcon id="character" icon={Users} active={props.activeWorkspace === 'character'} label="角色展示柜" />
+                <NavIcon id="workspace" icon={LayoutGrid} active={props.activeWorkspace === 'workspace'} label="对话补全预设" />
                 <NavIcon id="kb" icon={Book} active={props.activeWorkspace === 'kb'} label="世界书" />
             </div>
 

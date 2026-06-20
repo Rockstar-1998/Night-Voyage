@@ -17,7 +17,7 @@ interface DraftState {
   title: string;
   content: string;
   keywords: string;
-  triggerMode: 'any' | 'all';
+  triggerMode: 'any' | 'all' | 'always';
   isEnabled: boolean;
   sortOrder: number;
 }
@@ -44,7 +44,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
       title: entry.title,
       content: entry.content,
       keywords: entry.keywords.join(', '),
-      triggerMode: entry.triggerMode === 'all' ? 'all' : 'any',
+      triggerMode: entry.triggerMode === 'all' ? 'all' : entry.triggerMode === 'always' ? 'always' : 'any',
       isEnabled: entry.isEnabled,
       sortOrder: entry.sortOrder,
     };
@@ -198,7 +198,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
 
                     <div class="flex flex-wrap items-center gap-1.5">
                       <span class={`text-[10px] px-2 py-0.5 rounded-md border ${item.isEnabled ? 'bg-white/5 border-white/10 text-mist-solid/70' : 'bg-white/5 border-white/10 text-mist-solid/35'}`}>
-                        {item.triggerMode === 'all' ? '全部命中' : '任一命中'}
+                        {item.triggerMode === 'all' ? '全部命中' : item.triggerMode === 'always' ? '永远触发' : '任一命中'}
                       </span>
                       <span class={`text-[10px] px-2 py-0.5 rounded-md border ${item.isEnabled ? 'bg-white/5 border-white/10 text-mist-solid/70' : 'bg-white/5 border-white/10 text-mist-solid/35'}`}>
                         排序 {item.sortOrder}
@@ -221,7 +221,7 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                             title: `${item.title} (副本)`,
                             content: item.content,
                             keywords: [...item.keywords],
-                            triggerMode: item.triggerMode === 'all' ? 'all' : 'any',
+                            triggerMode: item.triggerMode === 'all' ? 'all' : item.triggerMode === 'always' ? 'always' : 'any',
                             isEnabled: false,
                             sortOrder: item.sortOrder + 1,
                           });
@@ -273,13 +273,14 @@ export const WorldBookEntryArea: Component<Props> = (props) => {
                             <label class="text-[10px] text-mist-solid/40 uppercase font-bold px-1">触发方式</label>
                             <Select
   value={readDraft(item).triggerMode}
-  onChange={(val) => updateDraft(item.id, { triggerMode: val === 'all' ? 'all' : 'any' })}
+  onChange={(val) => updateDraft(item.id, { triggerMode: val === 'all' ? 'all' : val === 'always' ? 'always' : 'any' })}
   options={[
   { label: "任一命中", value: "any" },
-  { label: "全部命中", value: "all" }
+  { label: "全部命中", value: "all" },
+  { label: "永远触发", value: "always" }
   ]}
 />
-                            <p class="px-1 text-[11px] text-mist-solid/40 leading-5">任一命中 = 任意关键词出现即可；全部命中 = 所有关键词都要出现。</p>
+                            <p class="px-1 text-[11px] text-mist-solid/40 leading-5">任一命中 = 任意关键词出现即可；全部命中 = 所有关键词都要出现；永远触发 = 无需关键词，始终注入。</p>
                           </div>
                           <div class="space-y-1">
                             <label class="text-[10px] text-mist-solid/40 uppercase font-bold px-1">排序优先级</label>

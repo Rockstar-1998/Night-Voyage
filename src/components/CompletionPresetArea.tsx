@@ -858,6 +858,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
       await refreshPresetSummaries(imported.preset.id);
       setSelectedPresetId(imported.preset.id);
       setSuccessMessage('预设已导入');
+      props.onPresetsChanged?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -882,6 +883,7 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
       setPresetDetail(null);
       await refreshPresetSummaries(null);
       setSuccessMessage('预设已删除');
+      props.onPresetsChanged?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {

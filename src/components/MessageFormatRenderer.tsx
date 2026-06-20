@@ -196,8 +196,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
 
 const StructuredResponseRenderer: Component<{
   fields: Record<string, StructuredField>;
-  mainContentKey: string | null;
-  displayConfig: Record<string, { defaultCollapsed: boolean }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }>;
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
   isStreaming?: boolean;
@@ -215,12 +214,13 @@ const StructuredResponseRenderer: Component<{
       <For each={fieldEntries()}>
         {([key, field], index) => {
           const isCollapsed = () => props.displayConfig[key]?.defaultCollapsed ?? false;
+          const isHidden = () => props.displayConfig[key]?.hideLabel ?? false;
           const fieldPath = () => `structured:${index()}:${key}`;
           return (
             <Show
-              when={field.kind === 'string' && key !== props.mainContentKey}
+              when={field.kind === 'string' && !isHidden()}
               fallback={
-                <Show when={field.kind === 'string' && key === props.mainContentKey}>
+                <Show when={field.kind === 'string' && isHidden()}>
                   <div class="whitespace-pre-wrap">
                     <MessageFormatRenderer
                       nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
@@ -381,7 +381,6 @@ const renderNode = (node: FormatNode, path: string, context: RenderContext) => {
       return (
         <StructuredResponseRenderer
           fields={sr.fields}
-          mainContentKey={sr.mainContentKey}
           displayConfig={sr.displayConfig}
           defaultExpanded={context.defaultExpanded}
           onChoiceSelect={context.onChoiceSelect}

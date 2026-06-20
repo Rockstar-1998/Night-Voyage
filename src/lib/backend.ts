@@ -14,7 +14,7 @@ export type ChatMode = 'classic' | 'director_agents';
 export type AgentProviderPolicy = 'shared_host_provider' | 'mixed_cost_optimized';
 export type CharacterCardType = 'npc' | 'player';
 export type CharacterBaseSectionKey = 'identity' | 'persona' | 'background' | 'rules' | 'custom';
-export type WorldBookTriggerMode = 'any' | 'all';
+export type WorldBookTriggerMode = 'any' | 'all' | 'always';
 export type ProviderKind = 'openai_compatible' | 'anthropic' | string;
 
 export interface ConversationListItem {
@@ -99,6 +99,20 @@ export interface ConversationCreateResult {
   conversation: ConversationListItem;
   hostMember: ConversationMember;
   round: RoundState;
+}
+
+export interface TokenLayerUsage {
+  kind: string;
+  title: string | null;
+  estimatedTokens: number;
+  color: string;
+}
+
+export interface TokenUsageReport {
+  contextWindowSize: number | null;
+  layers: TokenLayerUsage[];
+  totalEstimatedTokens: number;
+  totalActualTokens: number | null;
 }
 
 export interface PresetSummary {
@@ -662,6 +676,14 @@ export async function conversationMembersUpdate(payload: {
 
 export async function conversationMembersDelete(memberId: number) {
   return invokeCommand<void>('conversation_members_delete', { memberId });
+}
+
+export async function getConversationTokenUsage(conversationId: number): Promise<TokenUsageReport> {
+  return invokeCommand<TokenUsageReport>('get_conversation_token_usage', { conversationId });
+}
+
+export async function updateConversationContextWindow(conversationId: number, contextWindowSize: number): Promise<void> {
+  return invokeCommand<void>('update_conversation_context_window', { conversationId, contextWindowSize });
 }
 
 export async function presetsList() {

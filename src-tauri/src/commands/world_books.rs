@@ -348,6 +348,7 @@ fn normalize_trigger_mode(value: &str) -> Result<String, String> {
     match value.trim() {
         "any" => Ok("any".to_string()),
         "all" => Ok("all".to_string()),
-        _ => Err("triggerMode 只支持 any 或 all".to_string()),
+        "always" => Ok("always".to_string()),
+        _ => Err("triggerMode 只支持 any、all 或 always".to_string()),
     }
 }

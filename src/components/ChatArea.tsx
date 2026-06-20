@@ -1,10 +1,12 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { MessageItem, ChatMessage } from './MessageItem';
+import { TokenIsland } from './TokenIsland';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
+  conversationId?: number;
   onRegenerate: (id: string, roundId?: number) => void;
   onEdit: (id: string, content: string) => void;
   onFork: (id: string) => void;
@@ -54,7 +56,7 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
   const scrollToBottom = () => {
     if (!scrollContainerRef) return;
     programmaticScroll = true;
-    scrollContainerRef.scrollTop = scrollContainerRef.scrollHeight;
+    scrollContainerRef.scrollTo({ top: scrollContainerRef.scrollHeight, behavior: 'smooth' });
   };
 
   const scheduleAutoScroll = () => {
@@ -179,12 +181,31 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
     updateScrollbar();
   };
 
+  const [tokenIslandRefreshKey, setTokenIslandRefreshKey] = createSignal(0);
+
+  const wasStreaming = createMemo((prev: boolean) => {
+    const now = isStreaming();
+    if (prev && !now) {
+      setTokenIslandRefreshKey((k) => k + 1);
+    }
+    return now;
+  }, false);
+
+  createEffect(() => {
+    wasStreaming();
+  });
+
   return (
-    <div class="flex-1 overflow-hidden relative group/area">
+    <div class="flex-1 overflow-hidden relative group/area flex flex-col">
+      <Show when={props.conversationId}>
+        <div class="flex-shrink-0">
+          <TokenIsland conversationId={props.conversationId!} refreshKey={tokenIslandRefreshKey()} />
+        </div>
+      </Show>
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        class="absolute inset-0 overflow-y-auto px-4 py-8 no-scrollbar"
+        class="flex-1 overflow-y-auto px-4 py-8 no-scrollbar"
       >
         <div class="flex flex-col gap-2 max-w-4xl mx-auto">
           <For each={props.messages}>

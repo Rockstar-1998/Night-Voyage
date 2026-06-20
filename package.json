@@ -6,8 +6,10 @@
     "scripts": {
         "dev:preclean": "powershell -ExecutionPolicy Bypass -File ./scripts/windows-dev-preclean.ps1",
         "dev:frontend": "vite",
+        "dev:mobile": "vite --config vite.config.mobile.ts",
         "dev": "npm run dev:frontend",
-        "build": "node ./node_modules/vite/bin/vite.js build",
+        "build": "node scripts/build-frontend.js",
+        "build:mobile": "vite build --config vite.config.mobile.ts",
         "serve": "vite preview",
         "tauri": "tauri"
     },

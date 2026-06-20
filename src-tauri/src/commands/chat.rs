@@ -2,10 +2,11 @@ use tauri::AppHandle;
 
 use crate::models::{
     ChatAttachment, ChatSubmitInputResult, RegenerateRoundResult, RetryFailedRoundResult,
-    RoundState, UiMessage,
+    RoundState, TokenUsageReport, UiMessage,
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::services::chat_service::ChatService;
+use crate::services::prompt_compiler::compile_token_usage_report;
 use crate::AppState;
 
 #[tauri::command]
@@ -177,4 +178,41 @@ pub async fn retry_failed_round(
     round_id: i64,
 ) -> Result<RetryFailedRoundResult, String> {
     ChatService::retry_failed_round(app, state.db.clone(), conversation_id, member_id, round_id).await
+}
+
+#[tauri::command]
+pub async fn get_conversation_token_usage(
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+) -> Result<TokenUsageReport, String> {
+    compile_token_usage_report(&state.db, conversation_id).await
+}
+
+#[tauri::command]
+pub async fn update_conversation_context_window(
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    context_window_size: i64,
+) -> Result<(), String> {
+    let provider_id: Option<i64> = sqlx::query_scalar(
+        "SELECT provider_id FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten();
+
+    let provider_id = provider_id
+        .filter(|id| *id > 0)
+        .ok_or_else(|| "会话未关联 API Provider".to_string())?;
+
+    sqlx::query("UPDATE api_providers SET max_context_tokens = ? WHERE id = ?")
+        .bind(context_window_size)
+        .bind(provider_id)
+        .execute(&state.db)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    Ok(())
 }

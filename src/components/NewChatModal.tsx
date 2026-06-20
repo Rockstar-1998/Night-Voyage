@@ -1,7 +1,7 @@
 import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
-import { ArrowLeft, ArrowRight, Book, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
-import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
+import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
+import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 
 interface NewChatModalProps {
@@ -11,6 +11,7 @@ interface NewChatModalProps {
   playerCharacters: CharacterCard[];
   worldBooks: WorldBookSummary[];
   providers: ApiProviderSummary[];
+  presetSummaries: PresetSummary[];
   onCreateConversation: (payload: CreateConversationPayload) => Promise<void | number> | void;
   creating?: boolean;
 }
@@ -24,6 +25,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedWorldBookId, setSelectedWorldBookId] = createSignal<number | undefined>();
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | undefined>();
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
+  const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
 
   const [roomPort, setRoomPort] = createSignal('');
   const [roomPassphrase, setRoomPassphrase] = createSignal('');
@@ -56,6 +58,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setRoomError('');
     setCopied(false);
     setSelectedOpeningIndex(0);
+    setSelectedPresetId(undefined);
   };
 
   const canGoNext = createMemo(() => Boolean(selectedCharacterId()));
@@ -85,6 +88,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       hostCharacterId: selectedCharacterId(),
       worldBookId: selectedWorldBookId(),
       providerId: selectedProviderId(),
+      presetId: selectedPresetId(),
       hostPlayerCharacterId: selectedPlayerCharacterId()!,
       chatMode: 'classic',
       agentProviderPolicy: 'shared_host_provider',
@@ -124,6 +128,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
         hostCharacterId: selectedCharacterId(),
         worldBookId: selectedWorldBookId(),
         providerId: selectedProviderId(),
+        presetId: selectedPresetId(),
         hostPlayerCharacterId: selectedPlayerCharacterId()!,
         chatMode: 'classic',
         agentProviderPolicy: 'shared_host_provider',
@@ -233,11 +238,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       }}
                       class={`relative aspect-video text-left transition-all group ${selectedCharacterId() === character.id ? 'scale-[1.02] shadow-2xl z-10' : 'opacity-60 hover:opacity-100'}`}
                     >
-                      <img
-                        src={resolveImageSrc(character.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`)}
-                        alt={character.name}
-                        class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
-                      />
+                      <Show when={resolveImageSrc(character.imagePath, '')}>
+                        <img
+                          src={resolveImageSrc(character.imagePath, '')}
+                          alt={character.name}
+                          class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
+                        />
+                      </Show>
                       
                       <div class="absolute bottom-0 left-0 right-0 p-4">
                         <h3 class={`text-xl font-bold mb-2 transition-colors ${selectedPlayerCharacterId() === character.id ? 'text-purple-400' : 'text-white'}`}>{character.name}</h3>
@@ -268,11 +275,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       onClick={() => setSelectedPlayerCharacterId(character.id)}
                       class={`relative aspect-video text-left transition-all group ${selectedPlayerCharacterId() === character.id ? 'scale-[1.02] shadow-2xl z-10' : 'opacity-60 hover:opacity-100'}`}
                     >
-                      <img
-                        src={resolveImageSrc(character.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`)}
-                        alt={character.name}
-                        class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
-                      />
+                      <Show when={resolveImageSrc(character.imagePath, '')}>
+                        <img
+                          src={resolveImageSrc(character.imagePath, '')}
+                          alt={character.name}
+                          class={`absolute inset-0 w-full h-full object-cover transition-all duration-700 group-hover:scale-105 ${selectedPlayerCharacterId() === character.id ? 'grayscale-0' : 'grayscale group-hover:grayscale-0'}`} style={{ "-webkit-mask-image": "linear-gradient(to top, black 10%, transparent 100%)", "mask-image": "linear-gradient(to top, black 10%, transparent 100%)" }}
+                        />
+                      </Show>
                       
                       <div class="absolute bottom-0 left-0 right-0 p-4">
                         <h3 class={`text-xl font-bold mb-2 transition-colors ${selectedPlayerCharacterId() === character.id ? 'text-purple-400' : 'text-white'}`}>{character.name}</h3>
@@ -299,11 +308,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                   <div class="border-b border-white/10 pb-4"><h3 class="text-xl font-bold text-white">角色实例</h3></div>
                   <Show when={selectedCharacter()}>
                     <div class="relative min-h-[200px] border-l border-white/10 pl-6">
-                      <img
-                        src={resolveImageSrc(selectedCharacter()?.imagePath, `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(selectedCharacter()?.name || 'character')}`)}
-                        alt={selectedCharacter()?.name}
-                        class="absolute inset-0 w-[400px] h-full object-cover grayscale opacity-30" style={{ "-webkit-mask-image": "linear-gradient(to right, black 0%, transparent 100%)", "mask-image": "linear-gradient(to right, black 0%, transparent 100%)" }}
-                      />
+                      <Show when={resolveImageSrc(selectedCharacter()?.imagePath, '')}>
+                        <img
+                          src={resolveImageSrc(selectedCharacter()?.imagePath, '')}
+                          alt={selectedCharacter()?.name}
+                          class="absolute inset-0 w-[400px] h-full object-cover grayscale opacity-30" style={{ "-webkit-mask-image": "linear-gradient(to right, black 0%, transparent 100%)", "mask-image": "linear-gradient(to right, black 0%, transparent 100%)" }}
+                        />
+                      </Show>
                       
                       <div class="relative z-10 flex flex-col justify-center min-h-[200px]">
                         <h4 class="text-3xl font-black text-white mb-3">{selectedCharacter()?.name}</h4>
@@ -427,9 +438,16 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                     </Show>
                   </div>
 
-                  <div class="rounded-2xl border border-dashed border-white/10 px-4 py-3 text-xs text-mist-solid/35 flex items-start gap-3">
-                    <Book size={16} class="shrink-0 mt-0.5" />
-                    <div>预设系统本轮尚未接后端，本入口当前仅保留结构位，不参与真实创建流程。</div>
+                  <div class="space-y-2">
+                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">对话预设</label>
+                    <Select
+                      value={selectedPresetId()?.toString() ?? ''}
+                      onChange={(val) => setSelectedPresetId(val ? Number(val) : undefined)}
+                      options={[
+                        { label: "不绑定预设", value: "" },
+                        ...(props.presetSummaries).map(preset => ({ label: preset.name, value: (preset.id)?.toString() }))
+                      ]}
+                    />
                   </div>
                   <Show when={conversationType() === 'online'}>
                     <div class="border-l-2 border-purple-500/30 pl-5 py-2 space-y-4">
@@ -512,10 +530,6 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                     </div>
                   </Show>
 
-                  <div class="rounded-2xl border border-dashed border-white/10 px-4 py-3 text-xs text-mist-solid/35 flex items-start gap-3">
-                    <Book size={16} class="shrink-0 mt-0.5" />
-                    <div>预设系统本轮尚未接后端，本入口当前仅保留结构位，不参与真实创建流程。</div>
-                  </div>
                   <div class="rounded-2xl border border-dashed border-white/10 px-4 py-3 text-xs text-mist-solid/35 flex items-start gap-3">
                     <LinkIcon size={16} class="shrink-0 mt-0.5" />
                     <div>联机会话发送时，房间成员全部发言或放弃后，后端会自动聚合成一轮请求。</div>

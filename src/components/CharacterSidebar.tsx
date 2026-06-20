@@ -158,7 +158,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
   const previewSrc = createMemo(() =>
     resolveImageSrc(
       formData().imagePath,
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(formData().name || 'character')}`,
+      '',
     ),
   );
 
@@ -253,14 +253,13 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
               {(character) => (
                 <div class="group relative aspect-video overflow-hidden border-b-2 border-l-2 border-white/10 cursor-pointer hover:border-accent/40 transition-all">
                   
-                  <img
-                    src={resolveImageSrc(
-                      character.imagePath,
-                      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`,
-                    )}
-                    alt={character.name}
-                    class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
-                  />
+                  <Show when={resolveImageSrc(character.imagePath, '')}>
+                    <img
+                      src={resolveImageSrc(character.imagePath, '')}
+                      alt={character.name}
+                      class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
+                    />
+                  </Show>
                   
                   <div class="absolute bottom-0 left-0 right-0 p-4">
                     <h3 class="text-lg font-bold text-white mb-2 drop-shadow-lg">{character.name}</h3>
@@ -328,14 +327,13 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
               {(character) => (
                 <div class="group relative aspect-video overflow-hidden border-b-2 border-l-2 border-white/10 cursor-pointer hover:border-accent/40 transition-all">
                   
-                  <img
-                    src={resolveImageSrc(
-                      character.imagePath,
-                      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(character.name)}`,
-                    )}
-                    alt={character.name}
-                    class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
-                  />
+                  <Show when={resolveImageSrc(character.imagePath, '')}>
+                    <img
+                      src={resolveImageSrc(character.imagePath, '')}
+                      alt={character.name}
+                      class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-all duration-700" style={{ "-webkit-mask-image": "linear-gradient(to top, black 20%, transparent 100%)", "mask-image": "linear-gradient(to top, black 20%, transparent 100%)" }}
+                    />
+                  </Show>
                   
                   <div class="absolute bottom-0 left-0 right-0 p-4">
                     <h3 class="text-lg font-bold text-white mb-2 drop-shadow-lg">{character.name}</h3>
@@ -418,7 +416,14 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                   }}
                   class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >
-                  <img src={previewSrc()} alt="preview" class="w-full h-40 object-cover bg-black/20 border border-white/5" />
+                  <Show when={previewSrc()}>
+                    <img src={previewSrc()} alt="preview" class="w-full h-40 object-cover bg-black/20 border border-white/5" />
+                  </Show>
+                  <Show when={!previewSrc()}>
+                    <div class="w-full h-40 bg-black/20 border border-white/5 flex items-center justify-center">
+                      <span class="text-xs text-mist-solid/25">拖入图片到这里，或点击右侧按钮上传</span>
+                    </div>
+                  </Show>
                   <div class="flex items-center justify-between gap-3">
                     <div class="text-xs text-mist-solid/40 break-all">{formData().imagePath || '拖入图片到这里，或点击右侧按钮上传并保存到应用目录'}</div>
                     <IconButton

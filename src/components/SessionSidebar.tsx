@@ -8,7 +8,6 @@ interface SessionSidebarProps {
   npcCharacters: CharacterCard[];
   selectedConversationId?: number | null;
   selectedConversationMembers?: ConversationMember[];
-  layout?: 'sidebar' | 'mobile';
   loading?: boolean;
   onSelect?: (conversationId: number) => void;
   onNewChat?: () => void;
@@ -38,18 +37,17 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
     single: filteredSessions().filter((session) => session.conversationType === 'single'),
     online: filteredSessions().filter((session) => session.conversationType === 'online'),
   }));
-  const isMobileLayout = createMemo(() => props.layout === 'mobile');
 
   const getSessionImage = (session: ConversationListItem) => {
     const boundCharacter = props.npcCharacters.find((character) => character.id === session.hostCharacterId);
     return resolveImageSrc(
       boundCharacter?.imagePath,
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(boundCharacter?.name || session.title || 'session')}`,
+      '',
     );
   };
 
   return (
-    <div class={`${isMobileLayout() ? 'w-full border-r-0' : 'w-80 border-r'} flex flex-col bg-night-water/30 backdrop-blur-sm border-white/5 h-full relative pt-10`}>
+    <div class="w-80 border-r flex flex-col bg-night-water/30 backdrop-blur-sm border-white/5 h-full relative pt-10">
       <div class="p-6 flex flex-col gap-6">
         <h1 data-workspace-title class="text-3xl font-black text-white tracking-tighter uppercase italic">Sessions</h1>
 
@@ -99,12 +97,14 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                           : 'border-white/5 hover:border-white/10 hover:bg-white/[0.01]'}`}
                       >
                         <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-                          <img
-                            src={getSessionImage(session)}
-                            alt={session.title ?? 'session'}
-                            class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
-                            style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
-                          />
+                          <Show when={getSessionImage(session)}>
+                            <img
+                              src={getSessionImage(session)}
+                              alt={session.title ?? 'session'}
+                              class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
+                              style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
+                            />
+                          </Show>
                         </div>
                         <div class="relative z-10 flex items-start justify-between gap-3 mb-2">
                           <div>
@@ -148,38 +148,40 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                         </div>
                       </div>
 
-                      <Show when={expandedRoomId() === session.id && props.selectedConversationId === session.id}>
-                        <div class="px-5 py-4 rounded-[1.5rem] bg-xuanqing border border-white/10 animate-in slide-in-from-top-4 duration-300 overflow-hidden shadow-2xl">
-                          <div class="flex flex-col gap-3">
-                            <div class="flex items-center justify-between">
-                              <span class="text-[10px] font-black uppercase tracking-tighter text-mist-solid/40">房间成员</span>
-                              <span class="text-[9px] font-bold text-accent px-2 py-0.5 bg-accent/10 rounded-full border border-accent/20">
-                                {props.selectedConversationMembers?.length ?? 0} 人
-                              </span>
-                            </div>
-                            <Show
-                              when={(props.selectedConversationMembers?.length ?? 0) > 0}
-                              fallback={<div class="text-xs text-mist-solid/30">暂无成员数据</div>}
-                            >
-                              <div class="flex flex-col gap-2">
-                                <For each={props.selectedConversationMembers ?? []}>
-                                  {(member) => (
-                                    <div class="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/5 border border-white/5">
-                                      <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
-                                        <User size={14} />
-                                      </div>
-                                      <div class="min-w-0">
-                                        <div class="text-sm text-white truncate">{member.displayName}</div>
-                                        <div class="text-[10px] text-mist-solid/35 uppercase tracking-widest">{member.memberRole}</div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </For>
+                      <div class={`grid transition-all duration-300 ease-in-out ${expandedRoomId() === session.id && props.selectedConversationId === session.id ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                        <div class="overflow-hidden">
+                          <div class="px-5 py-4 rounded-[1.5rem] bg-xuanqing border border-white/10 shadow-2xl">
+                            <div class="flex flex-col gap-3">
+                              <div class="flex items-center justify-between">
+                                <span class="text-[10px] font-black uppercase tracking-tighter text-mist-solid/40">房间成员</span>
+                                <span class="text-[9px] font-bold text-accent px-2 py-0.5 bg-accent/10 rounded-full border border-accent/20">
+                                  {props.selectedConversationMembers?.length ?? 0} 人
+                                </span>
                               </div>
-                            </Show>
+                              <Show
+                                when={(props.selectedConversationMembers?.length ?? 0) > 0}
+                                fallback={<div class="text-xs text-mist-solid/30">暂无成员数据</div>}
+                              >
+                                <div class="flex flex-col gap-2">
+                                  <For each={props.selectedConversationMembers ?? []}>
+                                    {(member) => (
+                                      <div class="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/5 border border-white/5">
+                                        <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
+                                          <User size={14} />
+                                        </div>
+                                        <div class="min-w-0">
+                                          <div class="text-sm text-white truncate">{member.displayName}</div>
+                                          <div class="text-[10px] text-mist-solid/35 uppercase tracking-widest">{member.memberRole}</div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </For>
+                                </div>
+                              </Show>
+                            </div>
                           </div>
                         </div>
-                      </Show>
+                      </div>
                     </div>
                   )}
                 </For>
@@ -201,12 +203,14 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                         : 'border-white/5 hover:border-white/10 hover:bg-white/[0.01]'}`}
                     >
                       <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-                        <img
-                          src={getSessionImage(session)}
-                          alt={session.title ?? 'session'}
-                          class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
-                          style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
-                        />
+                        <Show when={getSessionImage(session)}>
+                          <img
+                            src={getSessionImage(session)}
+                            alt={session.title ?? 'session'}
+                            class={`absolute top-0 right-0 h-full w-2/3 object-cover transition-all duration-500 ease-out ${props.selectedConversationId === session.id ? 'opacity-40 [filter:grayscale(0%)_blur(0px)] translate-x-2' : 'opacity-20 [filter:grayscale(100%)_blur(4px)] translate-x-0 group-hover:opacity-40 group-hover:[filter:grayscale(0%)_blur(0px)] group-hover:translate-x-2'}`}
+                            style={{ "-webkit-mask-image": "linear-gradient(to left, black 20%, transparent 100%)", "mask-image": "linear-gradient(to left, black 20%, transparent 100%)" }}
+                          />
+                        </Show>
                       </div>
                       <div class="relative z-10 flex items-start justify-between gap-3 mb-2">
                         <div>

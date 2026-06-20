@@ -1,137 +1,7 @@
-import { Component, Show, For, Index, createMemo, createSignal, createEffect } from 'solid-js';
+import { Component, Show, createMemo, createSignal, createEffect } from 'solid-js';
 import { RefreshCw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X, Trash2 } from '../lib/icons';
-import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from '../lib/messageFormatter';
+import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig, type StructuredField } from '../lib/messageFormatter';
 import { clearStreamingRenderCache, MessageFormatRenderer } from './MessageFormatRenderer';
-import { animate } from '../lib/animate';
-
-// Per-message toggle state to avoid cross-message pollution
-const userToggleState = new Map<string, Map<string, boolean>>();
-
-function getToggleState(messageId: string, fieldKey: string): boolean | undefined {
-  return userToggleState.get(messageId)?.get(fieldKey);
-}
-
-function setToggleState(messageId: string, fieldKey: string, value: boolean) {
-  if (!userToggleState.has(messageId)) {
-    userToggleState.set(messageId, new Map());
-  }
-  userToggleState.get(messageId)!.set(fieldKey, value);
-}
-
-/** Streaming field tag that reads value reactively to avoid re-mounting on every delta. */
-const StreamingFieldTag: Component<{
-  fieldKey: string;
-  message: ChatMessage;
-  structuredOutputDisplay?: string;
-  defaultExpandedGlobal: boolean;
-  formatConfig?: MessageFormatConfig;
-  worldBookKeywords?: string[];
-  onChoiceSelect?: (key: string, value: string) => void;
-}> = (props) => {
-  const text = createMemo(() => props.message.structuredFields?.[props.fieldKey] ?? '');
-  const fieldScope = createMemo(() => `${props.message.id}:field:${props.fieldKey}`);
-
-  // Compute defaultExpanded reactively so config changes are picked up even though
-  // <Index> preserves this component instance.
-  const defaultExpanded = createMemo(() => {
-    if (props.structuredOutputDisplay) {
-      try {
-        const config = JSON.parse(props.structuredOutputDisplay);
-        if (config[props.fieldKey] && typeof config[props.fieldKey].defaultCollapsed === 'boolean') {
-          return !config[props.fieldKey].defaultCollapsed;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return props.defaultExpandedGlobal;
-  });
-
-  const [isExpanded, setIsExpanded] = createSignal(() => {
-    const persisted = getToggleState(props.message.id, props.fieldKey);
-    return persisted !== undefined ? persisted : defaultExpanded();
-  });
-
-  let contentRef: HTMLDivElement | undefined;
-
-  // Sync from computed defaultExpanded only when user has never toggled this tag.
-  createEffect(() => {
-    const persisted = getToggleState(props.message.id, props.fieldKey);
-    if (persisted === undefined) {
-      setIsExpanded(defaultExpanded());
-    }
-  });
-
-  let isFirstRun = true;
-
-  createEffect(() => {
-    const expanded = isExpanded();
-    if (!contentRef) return;
-    if (expanded) {
-      if (isFirstRun) {
-        contentRef.style.height = 'auto';
-        contentRef.style.opacity = '1';
-      } else {
-        contentRef.style.height = '0px';
-        contentRef.style.opacity = '0';
-        animate(contentRef, { height: 'auto', opacity: 1 }, { duration: 0.25, ease: 'easeOut' });
-      }
-    } else {
-      if (isFirstRun) {
-        contentRef.style.height = '0px';
-        contentRef.style.opacity = '0';
-      } else {
-        animate(contentRef, { height: 0, opacity: 0 }, { duration: 0.25, ease: 'easeIn' });
-      }
-    }
-    isFirstRun = false;
-  });
-
-  const handleToggle = () => {
-    const next = !isExpanded();
-    setToggleState(props.message.id, props.fieldKey, next);
-    setIsExpanded(next);
-  };
-
-  const parsedNodes = createMemo(() =>
-    parseMessageContent(text(), props.formatConfig ?? DEFAULT_FORMAT_CONFIG, props.worldBookKeywords ?? [])
-  );
-
-  return (
-    <div class="my-1">
-      <div
-        class="flex items-center gap-2 px-3 py-1.5 bg-white/[0.04] border-l-2 border-accent/40 cursor-pointer hover:bg-white/[0.07] transition-colors rounded-r-md"
-        onClick={handleToggle}
-      >
-        <span
-          class="text-xs transition-transform duration-200"
-          style={{ transform: isExpanded() ? 'rotate(90deg)' : 'rotate(0deg)', 'display': 'inline-block' }}
-        >
-          ▶
-        </span>
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-accent/70">
-          {props.fieldKey}
-        </span>
-      </div>
-      <Show when={isExpanded()}>
-        <div ref={contentRef} style={{ overflow: 'hidden', height: '0px', opacity: 0 }}>
-          <div class="pl-4 pt-1">
-            <MessageFormatRenderer
-              nodes={parsedNodes()}
-              defaultExpanded={defaultExpanded()}
-              onChoiceSelect={props.onChoiceSelect}
-              isStreaming={props.message.isStreaming}
-              toggleScope={fieldScope()}
-              streamKey={fieldScope()}
-              formatConfig={props.formatConfig}
-              worldBookKeywords={props.worldBookKeywords}
-            />
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-};
 
 export interface ChatMessage {
   id: string;
@@ -175,63 +45,48 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
 
   const isUser = createMemo(() => props.message.sender === 'user');
 
-  // --- Streaming structured fields: use stable keyed rendering to avoid re-mounting ---
-  // StreamingFieldTag reads values reactively so only text updates, not component structure.
-
-  /** Whether the message is using streaming structured fields (string_field_delta events). */
   const streamingStructuredMode = createMemo(() => {
     const sf = props.message.structuredFields;
     return !!(sf && Object.keys(sf).length > 0);
   });
 
-  const streamingObjectFields = createMemo(() => {
-    const sf = props.message.structuredFields;
-    if (!sf) return [];
-    return Object.entries(sf)
-      .filter(([key, value]) => key !== 'content' && value.trimStart().startsWith('{'))
-      .map(([key, value]) => {
-        try {
-          const parsed = JSON.parse(value);
-          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-            const stringEntries: Record<string, string> = {};
-            for (const [k, v] of Object.entries(parsed)) {
-              if (typeof v === 'string') stringEntries[k] = v;
-            }
-            return [key, stringEntries] as [string, Record<string, string>];
-          }
-        } catch { /* not valid JSON yet */ }
-        return null;
-      })
-      .filter((entry): entry is [string, Record<string, string>] => entry !== null);
-  });
-
-  const streamingStringAuxFieldKeys = createMemo(() => {
-    const sf = props.message.structuredFields;
-    if (!sf) return [];
-    return Object.keys(sf).filter((key) => key !== 'content' && !sf[key].trimStart().startsWith('{'));
-  });
-
-  /** The streaming content text (from text_delta, stored in message.content). */
-  const streamingContentText = createMemo(() => {
-    if (!streamingStructuredMode()) return '';
-    const sf = props.message.structuredFields;
-    // If structuredFields itself has a 'content' key, use that; otherwise use message.content
-    return sf?.['content'] ?? props.message.content ?? '';
-  });
-
-  /** Structured response from full JSON (used for DB-loaded messages, not streaming). */
   const structuredResponse = createMemo(() => {
-    if (streamingStructuredMode()) return null;
-    const content = props.message.content;
-    if (!content || !content.trimStart().startsWith('{')) return null;
     let displayConfig: Record<string, { defaultCollapsed: boolean }> | undefined;
     if (props.structuredOutputDisplay) {
       try {
         displayConfig = JSON.parse(props.structuredOutputDisplay);
       } catch {
-        // ignore
       }
     }
+
+    if (streamingStructuredMode()) {
+      const sf = props.message.structuredFields;
+      if (!sf) return null;
+      const fields: Record<string, StructuredField> = {};
+      for (const [key, value] of Object.entries(sf)) {
+        if (value.trimStart().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(value);
+            if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+              const stringEntries: Record<string, string> = {};
+              for (const [k, v] of Object.entries(parsed)) {
+                if (typeof v === 'string') stringEntries[k] = v;
+              }
+              if (Object.keys(stringEntries).length > 0) {
+                fields[key] = { kind: 'object', value: stringEntries };
+              }
+            }
+          } catch { /* not valid JSON yet */ }
+        } else {
+          fields[key] = { kind: 'string', value };
+        }
+      }
+      if (Object.keys(fields).length === 0) return null;
+      return { kind: 'structured_response' as const, fields, displayConfig: displayConfig ?? {} };
+    }
+
+    const content = props.message.content;
+    if (!content || !content.trimStart().startsWith('{')) return null;
     return parseStructuredResponse(content, displayConfig);
   });
 
@@ -244,20 +99,6 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
       clearStreamingRenderCache(props.message.id);
     }
   });
-
-  const getIsKeyExpandedByDefault = (key: string) => {
-    if (props.structuredOutputDisplay) {
-      try {
-        const config = JSON.parse(props.structuredOutputDisplay);
-        if (config[key] && typeof config[key].defaultCollapsed === 'boolean') {
-          return !config[key].defaultCollapsed;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return defaultExpanded();
-  };
 
   const badgeText = createMemo(() => {
     if (props.message.sender !== 'ai') return null;
@@ -310,94 +151,35 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             fallback={
               <div class="text-mist-solid/80 leading-relaxed text-[15px] whitespace-pre-wrap font-sans break-words">
                 <Show
-                  when={streamingStructuredMode()}
+                  when={structuredResponse()}
                   fallback={
-                    <Show
-                      when={structuredResponse()}
-                      fallback={
-                        <MessageFormatRenderer
-                          nodes={parseMessageContent(
-                            props.message.content,
-                            props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
-                            props.worldBookKeywords ?? []
-                          )}
-                          defaultExpanded={defaultExpanded()}
-                          onChoiceSelect={props.onChoiceSelect}
-                          toggleScope={`${props.message.id}:content`}
-                          streamKey={`${props.message.id}:content`}
-                          formatConfig={props.formatConfig}
-                          worldBookKeywords={props.worldBookKeywords}
-                        />
-                      }
-                    >
-                      {(sr) => (
-                        <MessageFormatRenderer
-                          nodes={[sr()]}
-                          defaultExpanded={defaultExpanded()}
-                          onChoiceSelect={props.onChoiceSelect}
-                          toggleScope={`${props.message.id}:structured`}
-                          streamKey={`${props.message.id}:structured`}
-                          formatConfig={props.formatConfig}
-                          worldBookKeywords={props.worldBookKeywords}
-                        />
+                    <MessageFormatRenderer
+                      nodes={parseMessageContent(
+                        props.message.content,
+                        props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
+                        props.worldBookKeywords ?? []
                       )}
-                    </Show>
+                      defaultExpanded={defaultExpanded()}
+                      onChoiceSelect={props.onChoiceSelect}
+                      toggleScope={`${props.message.id}:content`}
+                      streamKey={`${props.message.id}:content`}
+                      formatConfig={props.formatConfig}
+                      worldBookKeywords={props.worldBookKeywords}
+                    />
                   }
                 >
-                  {/* Streaming structured mode: render each field with stable identity
-                      so that content delta updates don't re-mount field tags */}
-                  <div class="structured-response">
-                    <Index each={streamingStringAuxFieldKeys()}>
-                      {(keySignal) => (
-                        <StreamingFieldTag
-                          fieldKey={keySignal()}
-                          message={props.message}
-                          structuredOutputDisplay={props.structuredOutputDisplay}
-                          defaultExpandedGlobal={defaultExpanded()}
-                          formatConfig={props.formatConfig}
-                          worldBookKeywords={props.worldBookKeywords}
-                          onChoiceSelect={props.onChoiceSelect}
-                        />
-                      )}
-                    </Index>
-                    <Show when={streamingContentText()}>
-                      <div class="whitespace-pre-wrap">
-                        <MessageFormatRenderer
-                          nodes={parseMessageContent(
-                            streamingContentText(),
-                            props.formatConfig ?? DEFAULT_FORMAT_CONFIG,
-                            props.worldBookKeywords ?? []
-                          )}
-                          defaultExpanded={defaultExpanded()}
-                          onChoiceSelect={props.onChoiceSelect}
-                          isStreaming={props.message.isStreaming}
-                          toggleScope={`${props.message.id}:content`}
-                          streamKey={`${props.message.id}:content`}
-                          formatConfig={props.formatConfig}
-                          worldBookKeywords={props.worldBookKeywords}
-                        />
-                      </div>
-                    </Show>
-                    <For each={streamingObjectFields()}>
-                      {([_key, entries]) => (
-                        <div class="flex flex-wrap gap-2 mt-3">
-                          <For each={Object.entries(entries)}>
-                            {([optKey, optValue]) => (
-                              <button
-                                class="px-4 py-2 bg-accent/20 border border-accent/30 rounded-lg text-sm text-mist-solid hover:bg-accent/30 transition-colors"
-                                onClick={() => {
-                                  props.onChoiceSelect?.(optKey, optValue);
-                                }}
-                              >
-                                <span class="text-accent/80 font-semibold mr-1">{optKey}</span>
-                                <span class="text-mist-solid/70">{optValue}</span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      )}
-                    </For>
-                  </div>
+                  {(sr) => (
+                    <MessageFormatRenderer
+                      nodes={[sr()]}
+                      defaultExpanded={defaultExpanded()}
+                      onChoiceSelect={props.onChoiceSelect}
+                      isStreaming={props.message.isStreaming}
+                      toggleScope={`${props.message.id}:structured`}
+                      streamKey={`${props.message.id}:structured`}
+                      formatConfig={props.formatConfig}
+                      worldBookKeywords={props.worldBookKeywords}
+                    />
+                  )}
                 </Show>
                 <Show when={props.message.isStreaming}>
                   <span class="inline-block w-[2px] h-[1em] bg-accent/70 ml-0.5 align-middle animate-pulse" />

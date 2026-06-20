@@ -747,7 +747,15 @@ impl ChatService {
         emit_round_state(&app, round.clone())?;
         emit_message_reset_event(&app, conversation_id, round_id, assistant_message_id)?;
 
-        crate::services::stream_processor::spawn_retry_worker(app, db, snapshot);
+        crate::services::stream_processor::spawn_stream_task(
+            app,
+            db,
+            conversation_id,
+            round_id,
+            snapshot.provider_id,
+            assistant_message_id,
+            Vec::new(),
+        );
 
         Ok(RetryFailedRoundResult {
             round,
@@ -851,6 +859,8 @@ pub fn emit_message_reset_event(
         None,
         None,
         None,
+        None,
+        None,
     )
 }
 
@@ -867,6 +877,8 @@ pub fn emit_llm_stream_event(
     json_delta: Option<String>,
     tool_use: Option<LlmStreamToolUseEvent>,
     stop_reason: Option<&str>,
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
 ) -> Result<(), String> {
     let payload = LlmStreamEventPayload {
         conversation_id,
@@ -880,6 +892,8 @@ pub fn emit_llm_stream_event(
         json_delta,
         tool_use,
         stop_reason: stop_reason.map(|value| value.to_string()),
+        prompt_tokens,
+        completion_tokens,
     };
     app.emit("llm-stream-event", payload)
         .map_err(|err| err.to_string())?;
@@ -943,6 +957,8 @@ pub fn flush_text_delta_event(
         None,
         None,
         None,
+        None,
+        None,
     )
 }
 
@@ -953,6 +969,8 @@ pub fn emit_stream_message_stop(
     message_id: i64,
     provider_kind: &str,
     stop_reason: Option<&str>,
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
 ) -> Result<(), String> {
     let chunk_event = StreamChunkEvent {
         conversation_id,
@@ -995,6 +1013,8 @@ pub fn emit_stream_message_stop(
         None,
         None,
         stop_reason,
+        prompt_tokens,
+        completion_tokens,
     )
 }
 
@@ -1005,6 +1025,7 @@ pub async fn finalize_streamed_response(
     full_content: &str,
     content_parts: &[PendingMessageContentPart],
     validation_rules: &[RetryOutputValidatorSnapshot],
+    prompt_tokens: Option<i64>,
 ) -> Result<(), String> {
     if full_content.is_empty() {
         return Err("LLM 响应为空".to_string());
@@ -1018,6 +1039,15 @@ pub async fn finalize_streamed_response(
         .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
+
+    if let Some(tokens) = prompt_tokens {
+        sqlx::query("UPDATE messages SET actual_prompt_tokens = ? WHERE id = ? AND message_kind = 'assistant_visible'")
+            .bind(tokens)
+            .bind(assistant_message_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
 
     if let Err(err) = MessageRepository::replace_content_parts_tx(&mut tx, assistant_message_id, content_parts).await {
         eprintln!("[finalize_streamed_response] replace_content_parts failed: {}, round_id={}", err, round_id);

@@ -442,6 +442,8 @@ pub struct LlmStreamEventPayload {
     pub json_delta: Option<String>,
     pub tool_use: Option<LlmStreamToolUseEvent>,
     pub stop_reason: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -639,6 +641,24 @@ pub struct WorldBookEntryRecord {
     pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenLayerUsage {
+    pub kind: String,
+    pub title: Option<String>,
+    pub estimated_tokens: usize,
+    pub color: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageReport {
+    pub context_window_size: Option<usize>,
+    pub layers: Vec<TokenLayerUsage>,
+    pub total_estimated_tokens: usize,
+    pub total_actual_tokens: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

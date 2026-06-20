@@ -2,7 +2,7 @@ import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-j
 import { Select } from './ui/Select';
 import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Pencil, Save, Sparkles, UserRound } from '../lib/icons';
 import { animate } from '../lib/animate';
-import type { CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
+import type { ApiProviderSummary, CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
 import { toAssetUrl } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 
@@ -13,7 +13,7 @@ interface RightDrawerProps {
   selectedWorldBookId?: number | null;
   presetSummaries: PresetSummary[];
   worldBooks: WorldBookSummary[];
-  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number }) => Promise<void> | void;
+  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   overlaySummary?: string | null;
   overlayStatus?: 'queued' | 'completed' | 'failed' | null;
   overlayError?: string | null;
@@ -24,6 +24,8 @@ interface RightDrawerProps {
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
+  providers: ApiProviderSummary[];
+  selectedProviderId?: number | null;
 }
 
 const getSectionLabel = (sectionKey: string) => {
@@ -81,6 +83,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [bindingWorldBookId, setBindingWorldBookId] = createSignal<string>('');
   const [bindingSaving, setBindingSaving] = createSignal(false);
   const [switchingPlayerCharacter, setSwitchingPlayerCharacter] = createSignal(false);
+  const [bindingProviderId, setBindingProviderId] = createSignal('');
   let drawerRef: HTMLDivElement | undefined;
 
   const toggleDrawer = () => {
@@ -111,6 +114,12 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     if (worldBookId == null) return '当前会话未绑定世界书。';
     const worldBook = props.worldBooks.find((item) => item.id === worldBookId);
     return worldBook ? `当前会话已绑定世界书：${worldBook.title}` : `当前会话已绑定世界书 #${worldBookId}`;
+  });
+  const selectedProviderLabel = createMemo(() => {
+    const providerId = props.selectedProviderId;
+    if (providerId == null) return '当前会话未绑定 API 档案。';
+    const provider = props.providers.find((item) => item.id === providerId);
+    return provider ? `当前会话已绑定 API 档案：${provider.name}` : `当前会话已绑定 API 档案 #${providerId}`;
   });
 
   const draftText = (summary: PlotSummaryRecord) => drafts()[summary.batchIndex] ?? summary.summaryText ?? '';
@@ -159,8 +168,9 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
 
     const nextPresetId = bindingPresetId().trim() ? Number(bindingPresetId()) : undefined;
     const nextWorldBookId = bindingWorldBookId().trim() ? Number(bindingWorldBookId()) : undefined;
+    const nextProviderId = bindingProviderId().trim() ? Number(bindingProviderId()) : undefined;
 
-    if (nextPresetId == null && nextWorldBookId == null) {
+    if (nextPresetId == null && nextWorldBookId == null && nextProviderId == null) {
       setLocalError('请至少选择一个预设或世界书后再保存。');
       return;
     }
@@ -171,6 +181,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
       await props.onSaveConversationBindings({
         presetId: nextPresetId,
         worldBookId: nextWorldBookId,
+        providerId: nextProviderId,
       });
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
@@ -200,6 +211,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   createMemo(() => {
     setBindingPresetId(props.selectedPresetId != null ? String(props.selectedPresetId) : '');
     setBindingWorldBookId(props.selectedWorldBookId != null ? String(props.selectedWorldBookId) : '');
+    setBindingProviderId(props.selectedProviderId != null ? String(props.selectedProviderId) : '');
     return null;
   });
 
@@ -254,6 +266,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
             <div class="px-1 py-2 text-sm text-mist-solid/75 leading-6 space-y-1 border-l-2 border-white/20">
               <p>{selectedPresetLabel()}</p>
               <p>{selectedWorldBookLabel()}</p>
+              <p>{selectedProviderLabel()}</p>
             </div>
             <div class="space-y-2">
               <label class="text-xs uppercase tracking-widest text-mist-solid/35">预设绑定</label>
@@ -277,6 +290,17 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   ]}
 />
             </div>
+            <div class="space-y-2">
+  <label class="text-xs uppercase tracking-widest text-mist-solid/35">API 档案绑定</label>
+  <Select
+    value={bindingProviderId()}
+    onChange={(val) => setBindingProviderId(val)}
+    options={[
+      { label: "保持当前 API 档案", value: "" },
+      ...(props.providers).map(provider => ({ label: provider.name, value: (provider.id)?.toString() }))
+    ]}
+  />
+</div>
             <div class="flex items-center justify-between gap-3">
               <p class="text-xs text-mist-solid/40 leading-5">本轮支持绑定与切换；若要清空绑定，可后续补专用入口。</p>
               <IconButton

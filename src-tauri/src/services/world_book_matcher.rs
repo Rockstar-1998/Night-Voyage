@@ -137,6 +137,10 @@ async fn load_keywords(db: &SqlitePool, entry_id: i64) -> Result<Vec<String>, St
 }
 
 fn world_book_entry_matches(context_text: &str, keywords: &[String], trigger_mode: &str) -> bool {
+    if trigger_mode == "always" {
+        return true;
+    }
+
     let normalized_keywords = keywords
         .iter()
         .map(|keyword| keyword.trim().to_lowercase())

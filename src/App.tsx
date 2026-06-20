@@ -12,11 +12,9 @@ import { RightDrawer } from './components/RightDrawer';
 import { ChatMessage } from './components/MessageItem';
 import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
-import { useMobile } from './hooks/useMobile';
 import { BackdoorTestPanel } from './components/BackdoorTestPanel';
 import { AuroraBackground } from './components/AuroraBackground';
 import { CompletionPresetArea } from './components/CompletionPresetArea';
-import { MobileView } from './components/MobileView';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
@@ -228,6 +226,7 @@ const DesktopView = (props: {
   selectedCharacter?: CharacterCard | null;
   selectedPresetId?: number | null;
   selectedWorldBookId?: number | null;
+  selectedProviderId?: number | null;
   presetSummaries: PresetSummary[];
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: CharacterStateOverlayUiStatus;
@@ -236,7 +235,7 @@ const DesktopView = (props: {
   plotSummaries: PlotSummaryRecord[];
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
-  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number }) => Promise<void> | void;
+  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
   worldBooks: WorldBookSummary[];
@@ -252,7 +251,7 @@ const DesktopView = (props: {
     title: string;
     content: string;
     keywords: string[];
-    triggerMode: 'any' | 'all';
+    triggerMode: 'any' | 'all' | 'always';
     isEnabled: boolean;
     sortOrder?: number;
   }) => Promise<void> | void;
@@ -374,7 +373,7 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
@@ -422,6 +421,8 @@ const DesktopView = (props: {
               playerCharacters={props.playerCharacters}
               currentPlayerCharacter={props.currentPlayerCharacter}
               onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
+              providers={props.providers}
+              selectedProviderId={props.selectedProviderId ?? null}
             />
           </div>
         </Show>
@@ -503,7 +504,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                                   </Show>
                                 </div>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">
@@ -552,6 +553,8 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           playerCharacters={props.playerCharacters}
                           currentPlayerCharacter={props.currentPlayerCharacter}
                           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
+                          providers={props.providers}
+                          selectedProviderId={props.selectedProviderId ?? null}
                         />
                       </div>
                     </>
@@ -633,7 +636,6 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
 };
 
 function App() {
-  const isMobile = useMobile();
   const [activeWorkspace, setActiveWorkspace] = createSignal('chat');
   const [activeModal, setActiveModal] = createSignal<'new_chat' | 'join_room' | null>(null);
   const [isFocusMode, setIsFocusMode] = createSignal(false);
@@ -1277,6 +1279,7 @@ function App() {
   const handleSaveConversationBindings = async (payload: {
     presetId?: number;
     worldBookId?: number;
+    providerId?: number;
   }) => {
     const conversationId = selectedConversationId();
     if (conversationId == null) {
@@ -1286,6 +1289,7 @@ function App() {
       conversationId,
       presetId: payload.presetId,
       worldBookId: payload.worldBookId,
+      providerId: payload.providerId,
     });
     await refreshSessions();
     await refreshConversationContext(conversationId);
@@ -1325,7 +1329,7 @@ function App() {
     title: string;
     content: string;
     keywords: string[];
-    triggerMode: 'any' | 'all';
+    triggerMode: 'any' | 'all' | 'always';
     isEnabled: boolean;
     sortOrder?: number;
   }) => {
@@ -1717,141 +1721,80 @@ function App() {
         characterImageUrl={toAssetUrl(selectedCharacter()?.imagePath)}
         enableAurora={enableDynamicEffects()}
       />
-      <Show
-        when={isMobile()}
-        fallback={
-          <AnimatedDesktopView
-            messages={visibleMessages()}
-            activeWorkspace={activeWorkspace()}
-            onWorkspaceChange={setActiveWorkspace}
-            onRegenerate={handleRegenerate}
-            onEdit={handleEditMessage}
-            onFork={handleForkMessage}
-            onDeleteMessage={handleDeleteMessage}
-            onRetryFailed={handleRetryFailed}
-            swipeInfo={getSwipeInfo}
-            onSwitchSwipe={handleSwitchSwipe}
-            onSend={handleSend}
-            onAbort={handleAbortReply}
-            replyStatus={replyStatus()}
-            activeModal={activeModal()}
-            setActiveModal={setActiveModal}
-            isFocusMode={isFocusMode()}
-            toggleFocusMode={() => setIsFocusMode(!isFocusMode())}
-            sessions={visibleSessions()}
-            selectedConversationId={selectedConversationId()}
-            selectedConversationMembers={selectedConversationMembers}
-            sessionsLoading={sessionsLoading()}
-            selectedConversationTitle={selectedConversation()?.title ?? undefined}
-            currentRoundState={currentRoundState()}
-            sending={sending()}
-            allowEmptySend={allowEmptySend()}
-            onSelectConversation={setSelectedConversationId}
-            onDeleteConversation={handleDeleteConversation}
-            providers={providers}
-            providerModels={providerModels}
-            providersLoading={providersLoading()}
-            fetchingModelsFor={fetchingModelsFor()}
-            onFetchModels={handleFetchModels}
-            onSaveProvider={handleSaveProvider}
-            onDeleteProvider={handleDeleteProvider}
-            onTestClaudeNative={handleTestClaudeNative}
-            npcCharacters={npcCharacters}
-            playerCharacters={playerCharacters}
-            characterLoading={characterLoading()}
-            onCreateCharacter={handleCreateCharacter}
-            onUpdateCharacter={handleUpdateCharacter}
-            onDeleteCharacter={handleDeleteCharacter}
-            selectedCharacter={selectedCharacter()}
-            selectedPresetId={selectedConversation()?.presetId ?? null}
-            selectedWorldBookId={selectedConversation()?.worldBookId ?? null}
-            presetSummaries={presetSummaries}
-            characterStateOverlaySummary={characterStateOverlaySummary()}
-            characterStateOverlayStatus={characterStateOverlayStatus()}
-            characterStateOverlayError={characterStateOverlayError()}
-            plotSummaryMode={selectedConversation()?.plotSummaryMode ?? 'ai'}
-            plotSummaries={plotSummaries}
-            onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
-            onSavePlotSummary={handleSavePlotSummary}
-            onSaveConversationBindings={handleSaveConversationBindings}
-            currentPlayerCharacter={currentPlayerCharacter()}
-            onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
-            worldBooks={worldBooks}
-            activeWorldBookEntries={activeWorldBookEntries}
-            worldBookEntriesLoading={worldBookEntriesLoading()}
-            onLoadWorldBookEntries={loadWorldBookEntries}
-            onCreateWorldBook={handleCreateWorldBook}
-            onUpdateWorldBook={handleUpdateWorldBook}
-            onDeleteWorldBook={handleDeleteWorldBook}
-            onUpsertWorldBookEntry={handleUpsertWorldBookEntry}
-            onDeleteWorldBookEntry={handleDeleteWorldBookEntry}
-            enableDynamicEffects={enableDynamicEffects()}
-            onSetEnableDynamicEffects={handleSetEnableDynamicEffects}
-            formatConfig={formatConfig()}
-            worldBookKeywords={worldBookKeywords()}
-            onSetFormatConfig={handleSetFormatConfig}
-            isRoomClient={activeRoomClientSession() !== null}
-            onPresetsChanged={refreshPresets}
-          />
-        }
-      >
-        <MobileView
-          messages={visibleMessages()}
-          sessions={visibleSessions()}
-          npcCharacters={npcCharacters}
-          selectedConversationId={selectedConversationId()}
-          selectedConversationTitle={selectedConversation()?.title ?? undefined}
-          selectedConversationMembers={selectedConversationMembers}
-          currentRoundState={currentRoundState()}
-          sessionsLoading={sessionsLoading()}
-          sending={sending()}
-          allowEmptySend={allowEmptySend()}
-          selectedCharacter={selectedCharacter()}
-          selectedPresetId={selectedConversation()?.presetId ?? null}
-          selectedWorldBookId={selectedConversation()?.worldBookId ?? null}
-          presetSummaries={presetSummaries}
-          characterStateOverlaySummary={characterStateOverlaySummary()}
-          characterStateOverlayStatus={characterStateOverlayStatus()}
-          characterStateOverlayError={characterStateOverlayError()}
-          plotSummaryMode={selectedConversation()?.plotSummaryMode ?? 'ai'}
-          plotSummaries={plotSummaries}
-          onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
-          onSavePlotSummary={handleSavePlotSummary}
-          onSaveConversationBindings={handleSaveConversationBindings}
-          playerCharacters={playerCharacters}
-          currentPlayerCharacter={currentPlayerCharacter()}
-          onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
-          worldBooks={worldBooks}
-          onSend={handleSend}
-          onAbort={handleAbortReply}
-          replyStatus={replyStatus()}
-          onRegenerate={handleRegenerate}
-          onEdit={handleEditMessage}
-          onFork={handleForkMessage}
-          onDeleteMessage={handleDeleteMessage}
-          onRetryFailed={handleRetryFailed}
-          swipeInfo={getSwipeInfo}
-          onSwitchSwipe={handleSwitchSwipe}
-          onSelectConversation={setSelectedConversationId}
-          onDeleteConversation={handleDeleteConversation}
-          onOpenNewChat={() => setActiveModal('new_chat')}
-          onOpenJoinRoom={() => setActiveModal('join_room')}
-          formatConfig={formatConfig()}
-          worldBookKeywords={worldBookKeywords()}
-          isRoomClient={activeRoomClientSession() !== null}
-          providers={providers}
-          providerModels={providerModels}
-          providersLoading={providersLoading()}
-          fetchingModelsFor={fetchingModelsFor()}
-          onFetchModels={handleFetchModels}
-          onSaveProvider={handleSaveProvider}
-          onDeleteProvider={handleDeleteProvider}
-          onTestClaudeNative={handleTestClaudeNative}
-          enableDynamicEffects={enableDynamicEffects()}
-          onSetEnableDynamicEffects={handleSetEnableDynamicEffects}
-          onSetFormatConfig={handleSetFormatConfig}
-        />
-      </Show>
+      <AnimatedDesktopView
+        messages={visibleMessages()}
+        activeWorkspace={activeWorkspace()}
+        onWorkspaceChange={setActiveWorkspace}
+        onRegenerate={handleRegenerate}
+        onEdit={handleEditMessage}
+        onFork={handleForkMessage}
+        onDeleteMessage={handleDeleteMessage}
+        onRetryFailed={handleRetryFailed}
+        swipeInfo={getSwipeInfo}
+        onSwitchSwipe={handleSwitchSwipe}
+        onSend={handleSend}
+        onAbort={handleAbortReply}
+        replyStatus={replyStatus()}
+        activeModal={activeModal()}
+        setActiveModal={setActiveModal}
+        isFocusMode={isFocusMode()}
+        toggleFocusMode={() => setIsFocusMode(!isFocusMode())}
+        sessions={visibleSessions()}
+        selectedConversationId={selectedConversationId()}
+        selectedConversationMembers={selectedConversationMembers}
+        sessionsLoading={sessionsLoading()}
+        selectedConversationTitle={selectedConversation()?.title ?? undefined}
+        currentRoundState={currentRoundState()}
+        sending={sending()}
+        allowEmptySend={allowEmptySend()}
+        onSelectConversation={setSelectedConversationId}
+        onDeleteConversation={handleDeleteConversation}
+        providers={providers}
+        providerModels={providerModels}
+        providersLoading={providersLoading()}
+        fetchingModelsFor={fetchingModelsFor()}
+        onFetchModels={handleFetchModels}
+        onSaveProvider={handleSaveProvider}
+        onDeleteProvider={handleDeleteProvider}
+        onTestClaudeNative={handleTestClaudeNative}
+        npcCharacters={npcCharacters}
+        playerCharacters={playerCharacters}
+        characterLoading={characterLoading()}
+        onCreateCharacter={handleCreateCharacter}
+        onUpdateCharacter={handleUpdateCharacter}
+        onDeleteCharacter={handleDeleteCharacter}
+        selectedCharacter={selectedCharacter()}
+        selectedPresetId={selectedConversation()?.presetId ?? null}
+        selectedWorldBookId={selectedConversation()?.worldBookId ?? null}
+        selectedProviderId={selectedConversation()?.providerId ?? null}
+        presetSummaries={presetSummaries}
+        characterStateOverlaySummary={characterStateOverlaySummary()}
+        characterStateOverlayStatus={characterStateOverlayStatus()}
+        characterStateOverlayError={characterStateOverlayError()}
+        plotSummaryMode={selectedConversation()?.plotSummaryMode ?? 'ai'}
+        plotSummaries={plotSummaries}
+        onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
+        onSavePlotSummary={handleSavePlotSummary}
+        onSaveConversationBindings={handleSaveConversationBindings}
+        currentPlayerCharacter={currentPlayerCharacter()}
+        onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
+        worldBooks={worldBooks}
+        activeWorldBookEntries={activeWorldBookEntries}
+        worldBookEntriesLoading={worldBookEntriesLoading()}
+        onLoadWorldBookEntries={loadWorldBookEntries}
+        onCreateWorldBook={handleCreateWorldBook}
+        onUpdateWorldBook={handleUpdateWorldBook}
+        onDeleteWorldBook={handleDeleteWorldBook}
+        onUpsertWorldBookEntry={handleUpsertWorldBookEntry}
+        onDeleteWorldBookEntry={handleDeleteWorldBookEntry}
+        enableDynamicEffects={enableDynamicEffects()}
+        onSetEnableDynamicEffects={handleSetEnableDynamicEffects}
+        formatConfig={formatConfig()}
+        worldBookKeywords={worldBookKeywords()}
+        onSetFormatConfig={handleSetFormatConfig}
+        isRoomClient={activeRoomClientSession() !== null}
+        onPresetsChanged={refreshPresets}
+      />
 
       <NewChatModal
         isOpen={activeModal() === 'new_chat'}
@@ -1860,6 +1803,7 @@ function App() {
         playerCharacters={playerCharacters}
         worldBooks={worldBooks}
         providers={providers}
+        presetSummaries={presetSummaries}
         creating={sending()}
         onCreateConversation={handleCreateConversation}
       />

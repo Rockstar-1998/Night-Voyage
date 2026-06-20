@@ -25,7 +25,7 @@ const defaultBooks: WorldBook[] = [
         id: 'wb1',
         title: '夜航船秘典',
         description: '记录着这艘穿梭于虚无之海船只的所有航行日志。',
-        image: 'https://api.dicebear.com/7.x/identicon/svg?seed=Voyage',
+        image: '',
         tags: ['核心设定'],
         entries: [
             { id: 'e1', title: '核心动力源', keywords: ['动力', '核心', '能源'], content: '这艘船由一种古老的虚无能量驱动，不需要常规燃料。', enabled: true },
@@ -36,7 +36,7 @@ const defaultBooks: WorldBook[] = [
         id: 'wb2',
         title: '虚空生物志',
         description: '对深海中游荡的各类发光生物、捕食者的详细记录。',
-        image: 'https://api.dicebear.com/7.x/identicon/svg?seed=Void',
+        image: '',
         tags: ['生物'],
         entries: [
             { id: 'e3', title: '幽蓝水母', keywords: ['水母', '发光'], content: '无害的生物，靠近会提供微弱的护盾，触手带有非常轻微的麻痹毒素。', enabled: true }
@@ -46,7 +46,7 @@ const defaultBooks: WorldBook[] = [
         id: 'wb3',
         title: '以太契约',
         description: '关于能量流转、魔法阵构造以及灵魂契约的法则汇编。',
-        image: 'https://api.dicebear.com/7.x/identicon/svg?seed=Ether',
+        image: '',
         tags: ['法理'],
         entries: []
     },
@@ -54,7 +54,7 @@ const defaultBooks: WorldBook[] = [
         id: 'wb4',
         title: '断层文明',
         description: '那些早已沉没在量子之海底部的古代文明残骸研究。',
-        image: 'https://api.dicebear.com/7.x/identicon/svg?seed=Civilization',
+        image: '',
         tags: ['考古'],
         entries: []
     }

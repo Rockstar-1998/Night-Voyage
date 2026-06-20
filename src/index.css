@@ -73,3 +73,30 @@ body {
     animation: none;
   }
 }
+
+@keyframes overflowStripes {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 0;
+  }
+}
+
+.overflow-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(255, 255, 255, 0.15) 4px,
+    rgba(255, 255, 255, 0.15) 8px
+  );
+  background-size: 20px 20px;
+  animation: overflowStripes 0.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overflow-stripes {
+    animation: none;
+  }
+}

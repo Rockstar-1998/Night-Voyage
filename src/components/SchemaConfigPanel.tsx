@@ -17,6 +17,7 @@ interface SchemaKeyConfig {
   description: string;
   contextIncluded: boolean;
   defaultExpanded: boolean;
+  hideLabel: boolean;
   linkedBySemanticOption: string | null;
   additionalPropertiesType?: string;
   itemsType?: string;
@@ -92,6 +93,7 @@ const parseJsonSchema = (
         description: prop.description || '',
         contextIncluded,
         defaultExpanded: !(display[name]?.defaultCollapsed ?? false),
+        hideLabel: display[name]?.hideLabel ?? false,
         linkedBySemanticOption: linkedKeyMap.get(name) ?? null,
         additionalPropertiesType: prop.additionalProperties?.type,
         itemsType: prop.items?.type,
@@ -153,9 +155,13 @@ const serializeToJsonSchema = (keys: SchemaKeyConfig[]): string => {
 };
 
 const serializeDisplayConfig = (keys: SchemaKeyConfig[]): string => {
-  const config: Record<string, { defaultCollapsed: boolean }> = {};
+  const config: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }> = {};
   for (const key of keys) {
-    config[key.name] = { defaultCollapsed: !key.defaultExpanded };
+    const entry: { defaultCollapsed: boolean; hideLabel?: boolean } = { defaultCollapsed: !key.defaultExpanded };
+    if (key.hideLabel) {
+      entry.hideLabel = true;
+    }
+    config[key.name] = entry;
   }
   return JSON.stringify(config);
 };
@@ -174,6 +180,7 @@ const EMPTY_KEY: SchemaKeyConfig = {
   description: '',
   contextIncluded: true,
   defaultExpanded: true,
+  hideLabel: false,
   linkedBySemanticOption: null,
   required: false,
   objectKind: 'additional_properties',
@@ -456,14 +463,27 @@ export const SchemaConfigPanel: Component<{
                       />
                       上下文包含
                     </label>
-                    <label class="flex items-center gap-2 text-xs text-mist-solid/60 cursor-pointer">
+                    <label class={`flex items-center gap-2 text-xs cursor-pointer ${key.hideLabel ? 'text-mist-solid/30' : 'text-mist-solid/60'}`}>
                       <input
                         type="checkbox"
                         checked={key.defaultExpanded}
+                        disabled={key.hideLabel}
                         onChange={(e) => updateKey(index(), { defaultExpanded: e.currentTarget.checked })}
                         class="accent-accent"
                       />
                       默认展开
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-mist-solid/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={key.hideLabel}
+                        onChange={(e) => {
+                          const hideLabel = e.currentTarget.checked;
+                          updateKey(index(), { hideLabel, ...(hideLabel ? { defaultExpanded: true } : {}) });
+                        }}
+                        class="accent-accent"
+                      />
+                      隐藏标签
                     </label>
                     <label class="flex items-center gap-2 text-xs text-mist-solid/60 cursor-pointer">
                       <input

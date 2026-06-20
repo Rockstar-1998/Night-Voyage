@@ -7,6 +7,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::{
     llm::ChatMessage,
+    models::{TokenLayerUsage, TokenUsageReport},
     services::{
         character_state_overlays::load_latest_character_state_overlay_block,
         plot_summaries::{
@@ -732,6 +733,123 @@ pub async fn compile_chat_messages(
 
     let mut result = compile_prompt(db, &input, exclude_message_id).await?;
     adapt_prompt_compile_result_to_openai_messages(&mut result, &provider_kind)
+}
+
+pub async fn compile_token_usage_report(
+    db: &SqlitePool,
+    conversation_id: i64,
+) -> Result<TokenUsageReport, String> {
+    let provider_kind = load_compiler_wrapper_provider_kind(db, conversation_id).await?;
+
+    let max_context_tokens: Option<i64> = sqlx::query_scalar(
+        "SELECT ap.max_context_tokens \
+         FROM conversations c \
+         LEFT JOIN api_providers ap ON ap.id = c.provider_id \
+         WHERE c.id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten();
+
+    let input = PromptCompileInput {
+        conversation_id,
+        mode: PromptCompileMode::ClassicChat,
+        target_round_id: None,
+        provider_kind: provider_kind.clone(),
+        model_name: String::new(),
+        include_streaming_seed: false,
+        budget: PromptBudget::default(),
+    };
+
+    let result = compile_prompt(db, &input, 0).await?;
+
+    fn kind_color(kind: &PromptBlockKind) -> &'static str {
+        match kind {
+            PromptBlockKind::PresetRule => "#6366f1",
+            PromptBlockKind::MultiplayerProtocol => "#a855f7",
+            PromptBlockKind::CharacterBase => "#10b981",
+            PromptBlockKind::PlayerBase => "#06b6d4",
+            PromptBlockKind::WorldBookMatch => "#f59e0b",
+            PromptBlockKind::PlotSummary => "#ec4899",
+            PromptBlockKind::RecentHistory => "#64748b",
+            PromptBlockKind::CurrentUser => "#f97316",
+            PromptBlockKind::WorldVariable => "#8b5cf6",
+            PromptBlockKind::RetrievedDetail => "#14b8a6",
+        }
+    }
+
+    let mut layer_map: std::collections::HashMap<String, TokenLayerUsage> =
+        std::collections::HashMap::new();
+
+    let all_blocks = result
+        .system_blocks
+        .iter()
+        .chain(result.history_blocks.iter())
+        .chain(std::iter::once(&result.current_user_block));
+
+    for block in all_blocks {
+        let kind_str = block.kind.as_str().to_string();
+        let tokens = block
+            .token_cost_estimate
+            .unwrap_or_else(|| estimate_token_cost(&block.content));
+
+        layer_map
+            .entry(kind_str.clone())
+            .and_modify(|entry| {
+                entry.estimated_tokens += tokens;
+            })
+            .or_insert_with(|| TokenLayerUsage {
+                kind: kind_str,
+                title: block.title.clone(),
+                estimated_tokens: tokens,
+                color: kind_color(&block.kind).to_string(),
+            });
+    }
+
+    let kind_order = [
+        PromptBlockKind::PresetRule,
+        PromptBlockKind::MultiplayerProtocol,
+        PromptBlockKind::CharacterBase,
+        PromptBlockKind::PlayerBase,
+        PromptBlockKind::WorldBookMatch,
+        PromptBlockKind::WorldVariable,
+        PromptBlockKind::PlotSummary,
+        PromptBlockKind::RetrievedDetail,
+        PromptBlockKind::RecentHistory,
+        PromptBlockKind::CurrentUser,
+    ];
+
+    let mut layers: Vec<TokenLayerUsage> = Vec::new();
+    for kind in &kind_order {
+        if let Some(layer) = layer_map.remove(kind.as_str()) {
+            layers.push(layer);
+        }
+    }
+    layers.extend(layer_map.into_values());
+
+    let total_estimated_tokens: usize = layers.iter().map(|l| l.estimated_tokens).sum();
+
+    let total_actual_tokens: Option<usize> = sqlx::query_scalar(
+        "SELECT m.actual_prompt_tokens \
+         FROM messages m \
+         WHERE m.conversation_id = ? AND m.message_kind = 'assistant_visible' \
+         ORDER BY m.created_at DESC, m.id DESC LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|v: Option<i64>| v.map(|v| v as usize));
+
+    Ok(TokenUsageReport {
+        context_window_size: max_context_tokens.map(|v| v as usize),
+        layers,
+        total_estimated_tokens,
+        total_actual_tokens,
+    })
 }
 
 pub async fn compile_preset_preview_data(

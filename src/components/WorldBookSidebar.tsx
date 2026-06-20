@@ -155,14 +155,13 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                       class="absolute inset-0 w-full h-full text-left"
                     >
                       <div class="absolute inset-0 bg-accent/5" />
-                      <img
-                        src={resolveImageSrc(
-                          book.imagePath,
-                          `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(book.title)}`,
-                        )}
-                        alt={book.title}
-                        class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:scale-105 transition-all duration-700"
-                      />
+                      <Show when={resolveImageSrc(book.imagePath, '')}>
+                        <img
+                          src={resolveImageSrc(book.imagePath, '')}
+                          alt={book.title}
+                          class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:scale-105 transition-all duration-700"
+                        />
+                      </Show>
                       <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
                       <div class="absolute bottom-0 left-0 right-0 p-4">
                         <h3 class="text-lg font-bold text-white mb-1 drop-shadow-lg">{book.title}</h3>
@@ -244,14 +243,18 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                   }}
                   class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >
-                  <img
-                    src={resolveImageSrc(
-                      formData().imagePath,
-                      `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(formData().title || 'worldbook')}`,
-                    )}
-                    alt="worldbook preview"
-                    class="w-full h-40 object-cover bg-black/20"
-                  />
+                  <Show when={resolveImageSrc(formData().imagePath, '')}>
+                    <img
+                      src={resolveImageSrc(formData().imagePath, '')}
+                      alt="worldbook preview"
+                      class="w-full h-40 object-cover bg-black/20"
+                    />
+                  </Show>
+                  <Show when={!resolveImageSrc(formData().imagePath, '')}>
+                    <div class="w-full h-40 bg-black/20 flex items-center justify-center">
+                      <span class="text-xs text-mist-solid/25">拖入图片到这里，或点击右侧按钮上传</span>
+                    </div>
+                  </Show>
                   <div class="flex items-center justify-between gap-3">
                     <div class="text-xs text-mist-solid/40 break-all">{formData().imagePath || '拖入图片到这里，或点击右侧按钮上传并保存到应用目录'}</div>
                     <IconButton

@@ -24,6 +24,7 @@ interface MobileViewProps {
   selectedCharacter?: CharacterCard | null;
   selectedPresetId?: number | null;
   selectedWorldBookId?: number | null;
+  selectedProviderId?: number | null;
   presetSummaries: PresetSummary[];
   worldBooks: WorldBookSummary[];
   characterStateOverlaySummary?: string | null;
@@ -33,7 +34,7 @@ interface MobileViewProps {
   plotSummaries: PlotSummaryRecord[];
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
-  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number }) => Promise<void> | void;
+  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
@@ -236,7 +237,7 @@ export const MobileView: Component<MobileViewProps> = (props) => {
               </div>
 
               <div class="flex-1 overflow-hidden pt-3">
-                <ChatArea messages={props.messages} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
               </div>
               <div class="px-4 pb-6 pt-2">
                 <ChatInputBar
@@ -326,6 +327,8 @@ export const MobileView: Component<MobileViewProps> = (props) => {
           playerCharacters={props.playerCharacters}
           currentPlayerCharacter={props.currentPlayerCharacter}
           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
+          providers={props.providers}
+          selectedProviderId={props.selectedProviderId ?? null}
         />
       </Show>
     </div>

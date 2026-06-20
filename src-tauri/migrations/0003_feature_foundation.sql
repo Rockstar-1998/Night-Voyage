@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS world_book_entries (
     world_book_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    trigger_mode TEXT NOT NULL CHECK (trigger_mode IN ('any', 'all')),
+    trigger_mode TEXT NOT NULL CHECK (trigger_mode IN ('any', 'all', 'always')),
     is_enabled INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
