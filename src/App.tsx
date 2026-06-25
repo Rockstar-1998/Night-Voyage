@@ -93,6 +93,17 @@ import {
   type RoomJoinResult,
   roomLeave,
 } from './lib/backend';
+import {
+  createLettaClient,
+  lettaAgentInit,
+  lettaStreamMessage,
+  lettaGetProviderDetail,
+  lettaGetAgentId,
+  lettaSaveAgentId,
+  lettaServerStart,
+  lettaServerStatus,
+} from './lib/letta';
+import type Letta from '@letta-ai/letta-client';
 
 const toChatMessage = (message: UiMessage, aiCharacter?: CharacterCard, playerCharacter?: CharacterCard): ChatMessage => ({
   id: String(message.id),
@@ -666,6 +677,7 @@ function App() {
   const [roomClientSession, setRoomClientSession] = createSignal<RoomClientSession | null>(null);
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'processing' | 'responding'>('idle');
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
+  const [lettaClient, setLettaClient] = createSignal<Letta | null>(null);
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -859,9 +871,15 @@ function App() {
 
   const handleSend = async (content: string) => {
     const conversationId = selectedConversationId();
-    const providerId = selectedConversation()?.providerId;
     if (!conversationId) return;
 
+    // 检查是否是 Letta 引擎
+    const conversation = selectedConversation();
+    if (conversation?.engineKind === 'letta') {
+      return handleLettaSend(content, conversationId);
+    }
+
+    const providerId = conversation?.providerId;
     setSending(true);
     setReplyStatus('connecting');
     try {
@@ -915,6 +933,84 @@ function App() {
       console.error('[handleSend] Error sending message:', err);
       setReplyStatus('idle');
       window.alert(`发送消息失败：${toErrorMessage(err)}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleLettaSend = async (content: string, conversationId: number) => {
+    const client = lettaClient();
+    const conversation = selectedConversation();
+    const providerId = conversation?.providerId;
+
+    if (!client) {
+      window.alert('Letta 服务端未启动');
+      return;
+    }
+    if (!providerId) {
+      window.alert('请先绑定 API 档案');
+      return;
+    }
+
+    const hm = hostMember();
+    if (!hm) {
+      window.alert('未找到宿主成员，无法发送消息');
+      return;
+    }
+
+    setSending(true);
+    setReplyStatus('connecting');
+
+    try {
+      // 1. 获取或创建 agent
+      let agentId = await lettaGetAgentId(conversationId);
+      if (!agentId) {
+        const provider = await lettaGetProviderDetail(providerId);
+        agentId = await lettaAgentInit(client, provider, null);
+        await lettaSaveAgentId(conversationId, agentId);
+      }
+
+      // 2. 创建用户消息（存入数据库）
+      const result = await chatSubmitInput(conversationId, hm.id, content);
+      if (result.visibleUserMessage) {
+        upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter()));
+      }
+      if (result.assistantMessage) {
+        upsertAssistantMessage({
+          ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
+          isStreaming: true,
+        });
+      }
+      setCurrentRoundState(result.round);
+
+      // 3. 流式获取 Letta 响应
+      setReplyStatus('responding');
+      const assistantMessageId = result.assistantMessage?.id;
+      if (!assistantMessageId) {
+        console.warn('[letta] chatSubmitInput returned no assistantMessage');
+        setReplyStatus('idle');
+        return;
+      }
+
+      const fullText = await lettaStreamMessage(client, agentId, content, (delta) => {
+        updateMessageContent(assistantMessageId, (message) => ({
+          content: `${message.content}${delta}`,
+          isStreaming: true,
+        }));
+      });
+
+      // 4. 完成后更新消息
+      updateMessageContent(assistantMessageId, () => ({
+        content: fullText,
+        isStreaming: false,
+      }));
+      setReplyStatus('idle');
+
+      await refreshSessions();
+    } catch (err) {
+      console.error('[letta] send error:', err);
+      setReplyStatus('idle');
+      window.alert(`Letta 消息发送失败：${toErrorMessage(err)}`);
     } finally {
       setSending(false);
     }
@@ -1413,6 +1509,21 @@ function App() {
         window.setTimeout(() => splash.remove(), 500);
       }
     }, 800);
+
+    // 自动启动 Letta sidecar（非阻塞，失败不影响主流程）
+    void (async () => {
+      try {
+        const status = await lettaServerStatus();
+        if (!status.running) {
+          const info = await lettaServerStart();
+          setLettaClient(createLettaClient(info.url));
+        } else {
+          setLettaClient(createLettaClient(status.url));
+        }
+      } catch (err) {
+        console.error('[letta] sidecar auto-start failed:', err);
+      }
+    })();
 
     await Promise.all([refreshSessions(), refreshProviders(), refreshPresets(), refreshCharacters(), refreshWorldBooks()]);
 

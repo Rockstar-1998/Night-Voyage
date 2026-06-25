@@ -32,6 +32,7 @@ export interface ConversationListItem {
   pendingMemberCount: number;
   createdAt: number;
   updatedAt: number;
+  engineKind?: 'native' | 'letta' | string;
 }
 
 export interface ConversationMember {
@@ -1173,3 +1174,5 @@ export async function listenRoomRoundStateUpdate(
 ): Promise<UnlistenFn> {
   return listen<RoomRoundStateUpdateEvent>('room:round_state_update', (event) => handler(event.payload));
 }
+
+export * from './letta';

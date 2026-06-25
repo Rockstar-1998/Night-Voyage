@@ -18,6 +18,7 @@ pub struct AppState {
     pub db: SqlitePool,
     pub host_server: Mutex<Option<Arc<Mutex<network::RoomServer>>>>,
     pub room_client: Mutex<Option<Arc<Mutex<network::RoomClient>>>>,
+    pub letta_sidecar: std::sync::Mutex<services::letta_sidecar::LettaSidecarState>,
 }
 
 #[tauri::command]
@@ -37,6 +38,9 @@ pub fn run() {
                 db: pool.clone(),
                 host_server: Mutex::new(None),
                 room_client: Mutex::new(None),
+                letta_sidecar: std::sync::Mutex::new(
+                    services::letta_sidecar::LettaSidecarState::default(),
+                ),
             });
 
             backdoor::start_backdoor_server(pool, app.handle().clone());
@@ -118,7 +122,15 @@ pub fn run() {
             commands::rooms::room_broadcast_round_state,
             commands::settings::app_info,
             commands::settings::settings_get_all,
-            commands::settings::settings_set
+            commands::settings::settings_set,
+            commands::letta::letta_server_status,
+            commands::letta::letta_server_start,
+            commands::letta::letta_server_stop,
+            commands::letta::letta_setup,
+            commands::letta::letta_get_provider_detail,
+            commands::letta::letta_save_agent_id,
+            commands::letta::letta_get_agent_id,
+            commands::letta::letta_set_engine_kind
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
