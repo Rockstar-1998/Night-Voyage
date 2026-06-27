@@ -436,18 +436,22 @@ async fn run_plot_summary_processing_task(
 }
 
 pub async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Result<String, String> {
+    // After the memory_mode unification, plot_summary_mode column is dropped.
+    // Derive the legacy mode from memory_mode for backward compatibility:
+    // - "mem0" -> "ai" (dynamic memory active)
+    // - "stateless" / anything else -> "disabled"
     let value: Option<String> =
-        sqlx::query_scalar("SELECT plot_summary_mode FROM conversations WHERE id = ? LIMIT 1")
+        sqlx::query_scalar("SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1")
             .bind(conversation_id)
             .fetch_optional(db)
             .await
             .map_err(|err| err.to_string())?;
 
-    normalize_plot_summary_mode(
-        value
-            .unwrap_or_else(|| PLOT_SUMMARY_MODE_DISABLED.to_string())
-            .as_str(),
-    )
+    let mode = match value.as_deref() {
+        Some("mem0") => PLOT_SUMMARY_MODE_AI,
+        _ => PLOT_SUMMARY_MODE_DISABLED,
+    };
+    normalize_plot_summary_mode(mode)
 }
 
 async fn ensure_manual_pending_plot_summaries(

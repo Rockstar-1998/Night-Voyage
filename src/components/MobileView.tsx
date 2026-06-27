@@ -6,7 +6,7 @@ import { ChatInputBar } from './ChatInputBar';
 import { RightDrawer } from './RightDrawer';
 import { MobileSettingsArea } from './MobileSettingsArea';
 import { AlertTriangle, ChevronLeft, MessageSquare, Users, Book, Settings, LayoutGrid } from '../lib/icons';
-import type { ApiProviderSummary, CharacterCard, ConversationListItem, ConversationMember, PlotSummaryRecord, PresetSummary, RemoteModel, RoundState, WorldBookSummary } from '../lib/backend';
+import type { ApiProviderSummary, CharacterCard, ConversationListItem, ConversationMember, PresetSummary, RemoteModel, RoundState, WorldBookSummary } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
 
@@ -30,10 +30,9 @@ interface MobileViewProps {
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: 'queued' | 'completed' | 'failed' | null;
   characterStateOverlayError?: string | null;
-  plotSummaryMode?: 'ai' | 'manual' | string;
-  plotSummaries: PlotSummaryRecord[];
-  onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
-  onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
+  memoryMode: 'stateless' | 'mem0' | string;
+  mem0Available?: boolean;
+  onUpdateMemoryMode: (mode: 'stateless' | 'mem0') => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
@@ -320,10 +319,9 @@ export const MobileView: Component<MobileViewProps> = (props) => {
           overlaySummary={props.characterStateOverlaySummary}
           overlayStatus={props.characterStateOverlayStatus}
           overlayError={props.characterStateOverlayError}
-          plotSummaryMode={props.plotSummaryMode ?? 'ai'}
-          plotSummaries={props.plotSummaries}
-          onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
-          onSavePlotSummary={props.onSavePlotSummary}
+          memoryMode={props.memoryMode ?? 'stateless'}
+          mem0Available={props.mem0Available}
+          onUpdateMemoryMode={props.onUpdateMemoryMode}
           playerCharacters={props.playerCharacters}
           currentPlayerCharacter={props.currentPlayerCharacter}
           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}

@@ -15,7 +15,7 @@ use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
 use crate::services::memory_service::{MemoryMessage, MemoryService};
 use crate::services::prompt_compiler::{
-    validate_output_text_with_retry_snapshot, PromptCompileResult, RetryOutputValidatorSnapshot,
+    validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot,
 };
 use crate::utils::now_ts;
 
@@ -48,7 +48,7 @@ pub fn chat_debug_log(app: &AppHandle, message: &str) {
 /// chat round. This must never block the streaming response path or affect the
 /// conversation flow — all failures degrade to `eprintln!` logs.
 ///
-/// Extraction only runs when the conversation has `mem0_enabled = 1` and a
+/// Extraction only runs when the conversation has `memory_mode = 'mem0'` and a
 /// memory backend is registered in `AppState`. The submitted content is the
 /// current round's aggregated user input + assistant reply (mirroring
 /// `character_state_overlays::load_overlay_generation_context`), scoped to
@@ -95,17 +95,16 @@ async fn run_memory_extraction_task(
         return Ok(());
     };
 
-    // Honor the per-conversation toggle; default to disabled on read failure.
-    let enabled = sqlx::query_scalar::<_, i64>(
-        "SELECT mem0_enabled FROM conversations WHERE id = ? LIMIT 1",
+    // Honor the per-conversation memory mode; skip unless in mem0 mode.
+    let mode = sqlx::query_scalar::<_, String>(
+        "SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_optional(db)
     .await
     .map_err(|err| err.to_string())?
-    .map(|value| value != 0)
-    .unwrap_or(false);
-    if !enabled {
+    .unwrap_or_else(|| "stateless".to_string());
+    if mode != "mem0" {
         return Ok(());
     }
 

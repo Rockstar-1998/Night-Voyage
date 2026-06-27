@@ -174,7 +174,7 @@ pub async fn chat_test_handler(
                 .try_get::<String, _>("name")
                 .unwrap_or_default()
                 .to_lowercase();
-            let kind = row
+            let _kind = row
                 .try_get::<String, _>("provider_kind")
                 .unwrap_or_default();
             if name.contains("kimi") || name.contains("moonshot") {
@@ -240,7 +240,7 @@ pub async fn chat_test_handler(
     })?;
 
     let conv_result = sqlx::query(
-        "INSERT INTO conversations (conversation_type, title, host_character_id, provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at) VALUES ('single', 'BackdoorTest', ?, ?, 'classic', 'shared_host_provider', 'disabled', ?, ?)",
+        "INSERT INTO conversations (conversation_type, title, host_character_id, provider_id, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at) VALUES ('single', 'BackdoorTest', ?, ?, 'classic', 'shared_host_provider', 'stateless', ?, ?)"
     )
     .bind(test_char_id)
     .bind(provider_id)

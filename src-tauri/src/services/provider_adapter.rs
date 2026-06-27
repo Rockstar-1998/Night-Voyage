@@ -149,7 +149,7 @@ pub fn build_llm_chat_request(
         .capability_checks
         .push(format!("thinking_enabled={}", thinking.is_some()));
 
-    let mut system = merge_system_blocks(&result.system_blocks);
+    let system = merge_system_blocks(&result.system_blocks);
     let mut messages = Vec::new();
     messages.extend(result.history_blocks.iter().map(block_to_llm_message));
     messages.push(block_to_llm_message(&result.current_user_block));

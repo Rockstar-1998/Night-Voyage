@@ -138,6 +138,7 @@ pub fn run() {
             commands::settings::settings_get_all,
             commands::settings::settings_set,
             commands::mem0::mem0_status,
+            commands::mem0::memory_mode_set,
             commands::mem0::mem0_set_enabled,
             commands::mem0::mem0_search_test,
             commands::mem0::mem0_list_memories,

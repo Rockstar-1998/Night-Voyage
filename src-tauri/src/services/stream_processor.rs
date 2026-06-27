@@ -178,40 +178,15 @@ pub fn spawn_stream_task(
             Ok(data) => {
                 let _ = RetrySnapshotRepository::mark_succeeded(&db, round_id).await;
                 if !data.full_content.is_empty() {
-                    let plot_summary_enabled =
-                        crate::services::plot_summaries::load_plot_summary_mode(&db, conversation_id)
-                            .await
-                            .unwrap_or_else(|err| {
-                                eprintln!("[stream] spawn_stream_task: failed to load plot_summary_mode: {}, skipping overlay/summary", err);
-                                crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED.to_string()
-                            })
-                            != crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED;
-
-                    if plot_summary_enabled {
-                        crate::services::character_state_overlays::spawn_character_state_overlay_generation_task(
-                            app.clone(),
-                            db.clone(),
-                            conversation_id,
-                            round_id,
-                            provider_id,
-                        );
-                        crate::services::plot_summaries::spawn_plot_summary_processing_task(
-                            app.clone(),
-                            db.clone(),
-                            conversation_id,
-                            provider_id,
-                        );
-                    }
-                    // mem0 memory extraction: independent of plot_summary_mode;
-                    // gated by conversations.mem0_enabled inside the task. Best-effort,
-                    // never affects the conversation flow.
-                    crate::services::chat_service::spawn_memory_extraction_task(
-                        app.clone(),
-                        db.clone(),
+                    spawn_post_round_tasks(
+                        &app,
+                        &db,
                         conversation_id,
                         round_id,
+                        provider_id,
                         assistant_message_id,
-                    );
+                    )
+                    .await;
                 }
                 if let Ok(round) =
                     RoundRepository::load_state(&db, conversation_id, Some(round_id)).await
@@ -223,20 +198,38 @@ pub fn spawn_stream_task(
     });
 }
 
-async fn handle_stream_completion(
-    app: AppHandle,
-    db: SqlitePool,
+/// Unified post-round task spawner. In mem0 mode, only spawns memory extraction.
+/// In non-mem0 mode, preserves the legacy plot_summary + character_state_overlay
+/// logic (gated by plot_summary_mode).
+async fn spawn_post_round_tasks(
+    app: &AppHandle,
+    db: &SqlitePool,
     conversation_id: i64,
     round_id: i64,
     provider_id: i64,
-    data: StreamResponseData,
-) -> Result<(), String> {
-    if !data.full_content.is_empty() {
+    assistant_message_id: i64,
+) {
+    let memory_mode =
+        crate::services::prompt_compiler::load_memory_mode(db, conversation_id).await;
+    if memory_mode == crate::services::prompt_compiler::MEMORY_MODE_MEM0 {
+        // Mem0 mode: only spawn memory extraction task.
+        crate::services::chat_service::spawn_memory_extraction_task(
+            app.clone(),
+            db.clone(),
+            conversation_id,
+            round_id,
+            assistant_message_id,
+        );
+    } else {
+        // Non-mem0 mode: preserve legacy plot_summary + character_state_overlay logic.
         let plot_summary_enabled =
-            crate::services::plot_summaries::load_plot_summary_mode(&db, conversation_id)
+            crate::services::plot_summaries::load_plot_summary_mode(db, conversation_id)
                 .await
                 .unwrap_or_else(|err| {
-                    eprintln!("[stream] handle_stream_completion: failed to load plot_summary_mode: {}, skipping overlay/summary", err);
+                    eprintln!(
+                        "[stream] spawn_post_round_tasks: failed to load plot_summary_mode: {}, skipping overlay/summary",
+                        err
+                    );
                     crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED.to_string()
                 })
                 != crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED;
@@ -256,6 +249,28 @@ async fn handle_stream_completion(
                 provider_id,
             );
         }
+    }
+}
+
+async fn handle_stream_completion(
+    app: AppHandle,
+    db: SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    provider_id: i64,
+    assistant_message_id: i64,
+    data: StreamResponseData,
+) -> Result<(), String> {
+    if !data.full_content.is_empty() {
+        spawn_post_round_tasks(
+            &app,
+            &db,
+            conversation_id,
+            round_id,
+            provider_id,
+            assistant_message_id,
+        )
+        .await;
     }
 
     if let Ok(round) = RoundRepository::load_state(&db, conversation_id, Some(round_id)).await {
@@ -584,7 +599,7 @@ async fn stream_openai_text_response(
     conversation_id: i64,
     round_id: i64,
     assistant_message_id: i64,
-    compiled_prompt: &PromptCompileResult,
+    _compiled_prompt: &PromptCompileResult,
     response_mode: Option<&str>,
 ) -> Result<StreamResponseData, String> {
     let mut buffer = String::new();
@@ -953,7 +968,7 @@ async fn stream_anthropic_text_response(
     conversation_id: i64,
     round_id: i64,
     assistant_message_id: i64,
-    compiled_prompt: &PromptCompileResult,
+    _compiled_prompt: &PromptCompileResult,
     response_mode: Option<&str>,
 ) -> Result<StreamResponseData, String> {
     let mut buffer = String::new();

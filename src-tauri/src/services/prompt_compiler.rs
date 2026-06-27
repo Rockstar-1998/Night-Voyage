@@ -392,6 +392,24 @@ const MAX_WORLD_BOOK_TRIGGER_HISTORY_BLOCKS: usize = 6;
 const MAX_WORLD_BOOK_BLOCKS: usize = 8;
 const DEFAULT_MAX_WORLD_BOOK_TOKENS: usize = 512;
 
+pub const MEMORY_MODE_STATELESS: &str = "stateless";
+pub const MEMORY_MODE_MEM0: &str = "mem0";
+
+/// Load the per-conversation memory mode. Defaults to `stateless` on any error
+/// or missing row so the feature degrades safely.
+pub async fn load_memory_mode(db: &SqlitePool, conversation_id: i64) -> String {
+    sqlx::query_scalar::<_, String>(
+        "SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .filter(|v| v == MEMORY_MODE_MEM0)
+    .unwrap_or_else(|| MEMORY_MODE_STATELESS.to_string())
+}
+
 impl PromptCompileResult {
     pub fn validate_output_text(&self, content: &str) -> Result<(), String> {
         validate_output_text_with_validators(content, &self.output_validators)
@@ -560,13 +578,23 @@ pub async fn compile_prompt(
         ));
     }
     let mut latest_character_state_overlay_text = None;
-    let plot_summary_enabled = load_plot_summary_mode(db, input.conversation_id)
-        .await
-        .unwrap_or_else(|err| {
-            eprintln!("[prompt-compiler] compile_prompt: failed to load plot_summary_mode: {}, assuming disabled", err);
-            PLOT_SUMMARY_MODE_DISABLED.to_string()
-        })
-        != PLOT_SUMMARY_MODE_DISABLED;
+    let memory_mode = load_memory_mode(db, input.conversation_id).await;
+    let mem0_active = memory_mode == MEMORY_MODE_MEM0;
+
+    // In mem0 mode, Mem0 is the sole dynamic memory authority; all legacy
+    // dynamic layers (PlotSummary, CharacterStateOverlay) are gated off.
+    // In stateless mode, plot_summary_enabled controls the legacy layers.
+    let plot_summary_enabled = if mem0_active {
+        false
+    } else {
+        load_plot_summary_mode(db, input.conversation_id)
+            .await
+            .unwrap_or_else(|err| {
+                eprintln!("[prompt-compiler] compile_prompt: failed to load plot_summary_mode: {}, assuming disabled", err);
+                PLOT_SUMMARY_MODE_DISABLED.to_string()
+            })
+            != PLOT_SUMMARY_MODE_DISABLED
+    };
 
     if let Some(character_data) = character_data.as_ref() {
         if let Some(character_block) = build_character_base_block(character_data) {
@@ -623,26 +651,32 @@ pub async fn compile_prompt(
         (Vec::new(), HashSet::new())
     };
 
-    eprintln!(
-        "[prompt-compiler] compile_prompt: step=load_recent_history_blocks conversation_id={}",
-        input.conversation_id
-    );
-    let history_blocks = load_recent_history_blocks(
-        db,
-        input.conversation_id,
-        input.target_round_id,
-        exclude_message_id,
-        &summarized_round_ids,
-        &mut debug,
-    )
-    .await
-    .map_err(|err| {
+    // mem0 mode: 0-round recent history window — all historical context is
+    // provided by Mem0 retrieved detail blocks. Stateless mode: full history.
+    let history_blocks = if mem0_active {
+        Vec::new()
+    } else {
         eprintln!(
-            "[prompt-compiler] compile_prompt: ERROR at load_recent_history_blocks: {}",
-            err
+            "[prompt-compiler] compile_prompt: step=load_recent_history_blocks conversation_id={}",
+            input.conversation_id
         );
-        err
-    })?;
+        load_recent_history_blocks(
+            db,
+            input.conversation_id,
+            input.target_round_id,
+            exclude_message_id,
+            &summarized_round_ids,
+            &mut debug,
+        )
+        .await
+        .map_err(|err| {
+            eprintln!(
+                "[prompt-compiler] compile_prompt: ERROR at load_recent_history_blocks: {}",
+                err
+            );
+            err
+        })?
+    };
 
     let history_blocks = if preset_compiler_data.params.response_mode.as_deref() == Some("structured_json") {
         if let Some(ref context_keys_json) = preset_compiler_data.params.context_included_keys {
@@ -694,6 +728,8 @@ pub async fn compile_prompt(
         memory_service,
         input.conversation_id,
         &current_user_block.content,
+        character_data.as_ref().map(|c| c.name.as_str()),
+        mem0_active,
         input.budget.max_retrieved_detail_tokens,
         &mut debug,
     )
@@ -2022,14 +2058,19 @@ const DEFAULT_RETRIEVED_DETAIL_TOP_K: usize = 5;
 /// wrap each as a `RetrievedDetail` system block. Fully best-effort — any of the
 /// following yields an empty Vec without erroring:
 /// - no memory service configured (`None`)
-/// - `conversations.mem0_enabled = 0`
+/// - mem0 mode inactive (`mem0_active = false`)
 /// - empty query text
 /// - a backend search failure (logged to debug + stderr)
+///
+/// When mem0 is active, performs multi-strategy retrieval: detail recall,
+/// character-state recall, and plot-progress recall, deduplicating by memory id.
 async fn load_retrieved_detail_blocks(
-    db: &SqlitePool,
+    _db: &SqlitePool,
     memory_service: Option<&Arc<dyn MemoryService>>,
     conversation_id: i64,
     current_user_input: &str,
+    character_name: Option<&str>,
+    mem0_active: bool,
     max_tokens: Option<usize>,
     debug: &mut PromptCompileDebugReport,
 ) -> Vec<PromptBlock> {
@@ -2037,43 +2078,52 @@ async fn load_retrieved_detail_blocks(
         return Vec::new();
     };
 
-    let query = current_user_input.trim();
-    if query.is_empty() {
+    if !mem0_active {
         return Vec::new();
     }
 
-    // Honor the per-conversation toggle; default to disabled on read failure.
-    let enabled = sqlx::query_scalar::<_, i64>(
-        "SELECT mem0_enabled FROM conversations WHERE id = ? LIMIT 1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .map(|value| value != 0)
-    .unwrap_or(false);
-
-    if !enabled {
-        return Vec::new();
-    }
+    let detail_query = current_user_input.trim();
+    let character_query = character_name
+        .map(|name| format!("{name} 的当前状态、关系、情绪、信任度变化"))
+        .unwrap_or_else(|| detail_query.to_string());
+    let plot_query = "近期剧情进展、重要事件、委托状态、场景变化";
 
     let user_id = conversation_id.to_string();
-    let records = match memory_service
-        .search(query, &user_id, DEFAULT_RETRIEVED_DETAIL_TOP_K)
-        .await
-    {
-        Ok(records) => records,
-        Err(err) => {
-            eprintln!(
-                "[prompt-compiler] load_retrieved_detail_blocks: search failed (degrading to empty): {err}"
-            );
-            debug
-                .input_sources
-                .push(format!("retrieved_detail:error:{err}"));
-            return Vec::new();
+    let per_strategy_top_k = 3;
+
+    let mut all_records = Vec::new();
+    for (strategy, query) in [
+        ("detail", detail_query),
+        ("character_state", character_query.as_str()),
+        ("plot", plot_query),
+    ] {
+        if query.is_empty() {
+            continue;
         }
-    };
+        match memory_service
+            .search(query, &user_id, per_strategy_top_k)
+            .await
+        {
+            Ok(records) => {
+                for r in records {
+                    debug
+                        .input_sources
+                        .push(format!("retrieved_detail:{strategy}:{}", r.id));
+                    all_records.push(r);
+                }
+            }
+            Err(err) => eprintln!(
+                "[prompt-compiler] {strategy} search failed (degrading to empty): {err}"
+            ),
+        }
+    }
+
+    // Deduplicate by memory id.
+    let mut seen = HashSet::new();
+    let records: Vec<_> = all_records
+        .into_iter()
+        .filter(|r| seen.insert(r.id.clone()))
+        .collect();
 
     let mut blocks = Vec::with_capacity(records.len());
     let mut used_tokens = 0usize;
@@ -2091,9 +2141,6 @@ async fn load_retrieved_detail_blocks(
         // i64 fragment_id, so fall back to 0 when the id is not numeric. The
         // authoritative id is preserved in debug for traceability.
         let fragment_id = record.id.parse::<i64>().unwrap_or(0);
-        debug
-            .input_sources
-            .push(format!("retrieved_detail:{}", record.id));
 
         blocks.push(build_block(
             PromptBlockKind::RetrievedDetail,

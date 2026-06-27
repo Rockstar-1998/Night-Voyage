@@ -1,8 +1,8 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import { Select } from './ui/Select';
-import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Pencil, Save, Sparkles, UserRound } from '../lib/icons';
+import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Save, Sparkles, UserRound } from '../lib/icons';
 import { animate } from '../lib/animate';
-import type { ApiProviderSummary, CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
+import type { ApiProviderSummary, CharacterCard, PresetSummary, WorldBookSummary } from '../lib/backend';
 import { toAssetUrl } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 
@@ -17,13 +17,9 @@ interface RightDrawerProps {
   overlaySummary?: string | null;
   overlayStatus?: 'queued' | 'completed' | 'failed' | null;
   overlayError?: string | null;
-  plotSummaryMode: 'ai' | 'manual' | string;
-  plotSummaries: PlotSummaryRecord[];
-  onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
-  onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
-  mem0Enabled?: boolean;
+  memoryMode: 'stateless' | 'mem0' | string;
   mem0Available?: boolean;
-  onUpdateMem0Enabled: (enabled: boolean) => Promise<void> | void;
+  onUpdateMemoryMode: (mode: 'stateless' | 'mem0') => Promise<void> | void;
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
@@ -48,40 +44,9 @@ const getSectionLabel = (sectionKey: string) => {
   }
 };
 
-const getPlotSummarySourceLabel = (sourceKind?: string) => {
-  switch (sourceKind) {
-    case 'ai':
-      return 'AI 总结';
-    case 'manual':
-      return '手动总结';
-    case 'manual_override':
-      return '手动覆盖';
-    default:
-      return '未知来源';
-  }
-};
-
-const getPlotSummaryStatusLabel = (status?: string) => {
-  switch (status) {
-    case 'pending':
-      return '待填写';
-    case 'queued':
-      return '生成中';
-    case 'completed':
-      return '已完成';
-    case 'failed':
-      return '失败';
-    default:
-      return '未知状态';
-  }
-};
-
 export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [isOpen, setIsOpen] = createSignal(false);
-  const [drafts, setDrafts] = createSignal<Record<number, string>>({});
   const [modeUpdating, setModeUpdating] = createSignal(false);
-  const [mem0Updating, setMem0Updating] = createSignal(false);
-  const [savingBatchIndex, setSavingBatchIndex] = createSignal<number | null>(null);
   const [localError, setLocalError] = createSignal<string | null>(null);
   const [bindingPresetId, setBindingPresetId] = createSignal<string>('');
   const [bindingWorldBookId, setBindingWorldBookId] = createSignal<string>('');
@@ -105,8 +70,6 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     if (props.overlayStatus === 'queued') return '当前轮主回复完成后，后端正在异步生成最新角色状态覆盖层。';
     return '当前会话还没有可展示的角色状态覆盖层。';
   });
-  const sortedPlotSummaries = createMemo(() => [...props.plotSummaries].sort((a, b) => a.batchIndex - b.batchIndex));
-  const pendingSummaries = createMemo(() => sortedPlotSummaries().filter((summary) => summary.status === 'pending'));
   const selectedPresetLabel = createMemo(() => {
     const presetId = props.selectedPresetId;
     if (presetId == null) return '当前会话未绑定预设。';
@@ -126,55 +89,16 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     return provider ? `当前会话已绑定 API 档案：${provider.name}` : `当前会话已绑定 API 档案 #${providerId}`;
   });
 
-  const draftText = (summary: PlotSummaryRecord) => drafts()[summary.batchIndex] ?? summary.summaryText ?? '';
-  const canEdit = (summary: PlotSummaryRecord) => summary.status !== 'queued';
-
-  const handleDraftInput = (batchIndex: number, value: string) => {
-    setDrafts((prev) => ({ ...prev, [batchIndex]: value }));
-  };
-
-  const handleModeChange = async (mode: 'ai' | 'manual') => {
-    if (modeUpdating() || props.plotSummaryMode === mode) return;
+  const handleModeChange = async (mode: 'stateless' | 'mem0') => {
+    if (modeUpdating() || props.memoryMode === mode) return;
     setModeUpdating(true);
     setLocalError(null);
     try {
-      await props.onUpdatePlotSummaryMode(mode);
+      await props.onUpdateMemoryMode(mode);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
       setModeUpdating(false);
-    }
-  };
-
-  const handleToggleMem0 = async () => {
-    if (mem0Updating()) return;
-    const next = !props.mem0Enabled;
-    setMem0Updating(true);
-    setLocalError(null);
-    try {
-      await props.onUpdateMem0Enabled(next);
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMem0Updating(false);
-    }
-  };
-
-  const handleSaveSummary = async (summary: PlotSummaryRecord) => {
-    const nextText = draftText(summary).trim();
-    if (!nextText) {
-      setLocalError(`剧情总结 #${summary.batchIndex} 不能为空。`);
-      return;
-    }
-    setSavingBatchIndex(summary.batchIndex);
-    setLocalError(null);
-    try {
-      await props.onSavePlotSummary(summary.batchIndex, nextText);
-      setDrafts((prev) => ({ ...prev, [summary.batchIndex]: nextText }));
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSavingBatchIndex(null);
     }
   };
 
@@ -460,171 +384,32 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
           </section>
 
           <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-semibold text-white">第 5 层：剧情总结时间线</p>
-                <p class="text-xs text-mist-solid/40 mt-1">已总结轮次仍在聊天区可见，但默认不再作为原文进入请求体。</p>
-              </div>
-              <div class="flex items-center gap-3 shrink-0">
-                <div class="text-right">
-                  <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">模式</div>
-                  <div class="text-xs text-mist-solid/45 mt-1">{props.plotSummaryMode === 'manual' ? '手动' : 'AI'}</div>
-                </div>
-                <IconButton
-                  disabled={modeUpdating()}
-                  onClick={() => void handleModeChange('ai')}
-                  label="切换到 AI 总结"
-                  tone={props.plotSummaryMode === 'ai' ? 'accent' : 'neutral'}
-                  size="sm"
-                  active={props.plotSummaryMode === 'ai'}
-                >
-                  <Sparkles size={14} />
-                </IconButton>
-                <IconButton
-                  disabled={modeUpdating()}
-                  onClick={() => void handleModeChange('manual')}
-                  label="切换到手动总结"
-                  tone={props.plotSummaryMode === 'manual' ? 'accent' : 'neutral'}
-                  size="sm"
-                  active={props.plotSummaryMode === 'manual'}
-                >
-                  <Pencil size={14} />
-                </IconButton>
-              </div>
+            <div>
+              <p class="text-sm font-semibold text-white">记忆模式</p>
+              <p class="text-xs text-mist-solid/40 mt-1">
+                无状态：纯多轮对话，无记忆。Mem0：AI 自动提取与检索长期记忆，不保留原文窗口。
+              </p>
             </div>
-
-            <div class="grid grid-cols-3 gap-2 text-center text-xs">
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-                <p class="text-mist-solid/35 uppercase tracking-widest">模式</p>
-                <p class="text-white font-semibold mt-1">{props.plotSummaryMode === 'manual' ? '手动' : 'AI'}</p>
-              </div>
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-                <p class="text-mist-solid/35 uppercase tracking-widest">总条目</p>
-                <p class="text-white font-semibold mt-1">{sortedPlotSummaries().length}</p>
-              </div>
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-                <p class="text-mist-solid/35 uppercase tracking-widest">待填写</p>
-                <p class="text-white font-semibold mt-1">{pendingSummaries().length}</p>
-              </div>
-            </div>
-
-            <Show when={props.plotSummaryMode === 'manual' && pendingSummaries().length > 0}>
-              <div class="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50 leading-6">
-                当前有 {pendingSummaries().length} 个待总结窗口。未补写总结前，这些轮次会继续以原文进入请求体。
-              </div>
-            </Show>
-
-            <Show
-              when={sortedPlotSummaries().length > 0}
-              fallback={<div class="px-1 py-4 text-sm text-mist-solid/55 border-l-2 border-dashed border-white/20">当前会话还没有剧情总结条目。</div>}
-            >
-              <div class="space-y-4">
-                <For each={sortedPlotSummaries()}>
-                  {(summary) => (
-                    <div class="px-4 py-4 space-y-3 border-l-2 border-white/10 hover:border-white/30 transition-colors">
-                      <div class="flex items-start justify-between gap-3">
-                        <div>
-                          <p class="text-sm font-semibold text-white">摘要 {summary.batchIndex}</p>
-                          <p class="text-xs text-mist-solid/40 mt-1">
-                            轮次 {summary.startRoundIndex}-{summary.endRoundIndex} · {getPlotSummarySourceLabel(summary.sourceKind)} · {getPlotSummaryStatusLabel(summary.status)}
-                          </p>
-                        </div>
-                        <span class={`text-[10px] uppercase tracking-widest px-2 py-1 rounded-full border ${summary.status === 'completed' ? 'border-emerald-400/30 text-emerald-200 bg-emerald-400/10' : summary.status === 'queued' ? 'border-sky-400/30 text-sky-200 bg-sky-400/10' : summary.status === 'failed' ? 'border-red-400/30 text-red-200 bg-red-400/10' : 'border-amber-400/30 text-amber-100 bg-amber-400/10'}`}>
-                          {getPlotSummaryStatusLabel(summary.status)}
-                        </span>
-                      </div>
-
-                      <Show when={summary.errorMessage}>
-                        <div class="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-sm text-red-200 whitespace-pre-wrap leading-6 flex gap-3">
-                          <AlertTriangle size={16} class="shrink-0 mt-0.5" />
-                          <span>{summary.errorMessage}</span>
-                        </div>
-                      </Show>
-
-                      <Show when={summary.status === 'queued'}>
-                        <div class="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-3 text-sm text-sky-100 leading-6">
-                          当前窗口正在生成剧情总结，请等待后端异步完成。
-                        </div>
-                      </Show>
-
-                      <Show when={canEdit(summary)}>
-                        <div class="space-y-2">
-                          <textarea
-                            class="w-full min-h-[8rem] bg-transparent border-b border-white/20 rounded-none px-1 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6 outline-none focus:border-accent transition-all resize-y custom-scrollbar"
-                            value={draftText(summary)}
-                            onInput={(event) => handleDraftInput(summary.batchIndex, event.currentTarget.value)}
-                            placeholder="输入条目式剧情总结，例如：主角一行人从酒馆出发，到达山谷。\n委托：已接受\nXX 的状态：犯困"
-                          />
-                          <div class="flex items-center justify-between gap-3">
-                            <p class="text-xs text-mist-solid/40">
-                              {summary.status === 'pending'
-                                ? '保存后，该窗口对应轮次将不再以原文进入请求体。'
-                                : '你可以在这里修改 AI 生成内容并覆盖当前条目。'}
-                            </p>
-                            <IconButton
-                              disabled={savingBatchIndex() === summary.batchIndex}
-                              onClick={() => void handleSaveSummary(summary)}
-                              label={savingBatchIndex() === summary.batchIndex ? '剧情总结保存中' : summary.status === 'pending' ? '保存总结' : '覆盖保存'}
-                              tone="accent"
-                              size="md"
-                            >
-                              <Save size={16} class={savingBatchIndex() === summary.batchIndex ? 'animate-pulse' : ''} />
-                            </IconButton>
-                          </div>
-                        </div>
-                      </Show>
-
-                      <Show when={!canEdit(summary) && summary.summaryText}>
-                        <div class="px-1 py-3 text-sm text-mist-solid/80 whitespace-pre-wrap leading-6 border-l-2 border-white/20">
-                          {summary.summaryText}
-                        </div>
-                      </Show>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </section>
-
-          <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-semibold text-white">第 6 层：跨时间记忆召回</p>
-                <p class="text-xs text-mist-solid/40 mt-1">每轮对话结束后异步提取事实，下次编译时按当前输入语义检索并注入历史记忆（非当前状态，与最近对话矛盾时以最近对话为准）。</p>
-              </div>
-              <div class="flex items-center gap-3 shrink-0">
-                <div class="text-right">
-                  <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">记忆</div>
-                  <div class="text-xs text-mist-solid/45 mt-1">{props.mem0Enabled ? '已开启' : '已关闭'}</div>
-                </div>
-                <IconButton
-                  disabled={mem0Updating() || !props.mem0Available}
-                  onClick={() => void handleToggleMem0()}
-                  label={props.mem0Enabled ? '关闭 mem0 记忆' : '开启 mem0 记忆'}
-                  tone={props.mem0Enabled ? 'accent' : 'neutral'}
-                  size="sm"
-                  active={props.mem0Enabled ?? false}
-                >
-                  <Sparkles size={14} />
-                </IconButton>
-              </div>
-            </div>
-
             <Show when={!props.mem0Available}>
               <div class="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50 leading-6">
-                记忆后端未就绪：尚未配置 API 档案或 mem0 初始化失败。请在 API 档案中配置可用 provider 后重启应用。
+                记忆后端未就绪：请先配置 API 档案后重启。
               </div>
             </Show>
-
-            <div class="grid grid-cols-2 gap-2 text-center text-xs">
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-                <p class="text-mist-solid/35 uppercase tracking-widest">状态</p>
-                <p class="text-white font-semibold mt-1">{props.mem0Enabled ? '已开启' : '已关闭'}</p>
-              </div>
-              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-                <p class="text-mist-solid/35 uppercase tracking-widest">后端</p>
-                <p class="text-white font-semibold mt-1">{props.mem0Available ? '已就绪' : '未就绪'}</p>
-              </div>
+            <div class="flex gap-2">
+              <button
+                disabled={modeUpdating() || !props.mem0Available}
+                onClick={() => void handleModeChange('stateless')}
+                class={`flex-1 rounded-xl border px-4 py-3 text-sm font-medium transition-all ${props.memoryMode === 'stateless' ? 'border-accent/40 bg-accent/15 text-accent' : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'}`}
+              >
+                无状态
+              </button>
+              <button
+                disabled={modeUpdating() || !props.mem0Available}
+                onClick={() => void handleModeChange('mem0')}
+                class={`flex-1 rounded-xl border px-4 py-3 text-sm font-medium transition-all ${props.memoryMode === 'mem0' ? 'border-accent/40 bg-accent/15 text-accent' : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'}`}
+              >
+                Mem0 记忆
+              </button>
             </div>
           </section>
         </div>

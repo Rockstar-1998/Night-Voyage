@@ -46,32 +46,37 @@ pub async fn mem0_status(state: State<'_, AppState>) -> Result<Mem0Status, Strin
     })
 }
 
+/// Set the per-conversation memory mode ('stateless' or 'mem0').
+#[tauri::command]
+pub async fn memory_mode_set(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    mode: String,
+) -> Result<String, String> {
+    let normalized = match mode.as_str() {
+        "stateless" | "mem0" => mode,
+        _ => return Err("memory_mode 必须是 'stateless' 或 'mem0'".to_string()),
+    };
+    sqlx::query("UPDATE conversations SET memory_mode = ?, updated_at = ? WHERE id = ?")
+        .bind(&normalized)
+        .bind(now_ts())
+        .bind(conversation_id)
+        .execute(&state.db)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(normalized)
+}
+
+/// Deprecated: forwards to `memory_mode_set`. Use `memory_mode_set` directly.
 #[tauri::command]
 pub async fn mem0_set_enabled(
     state: State<'_, AppState>,
     conversation_id: i64,
     enabled: bool,
 ) -> Result<bool, String> {
-    let now = now_ts();
-    sqlx::query("UPDATE conversations SET mem0_enabled = ?, updated_at = ? WHERE id = ?")
-        .bind(if enabled { 1 } else { 0 })
-        .bind(now)
-        .bind(conversation_id)
-        .execute(&state.db)
-        .await
-        .map_err(|err| err.to_string())?;
-
-    // Read back to confirm the persisted value (explicit, no silent fallback).
-    let persisted: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT mem0_enabled FROM conversations WHERE id = ? LIMIT 1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|err| err.to_string())?
-    .map(|value| value != 0)
-    .unwrap_or(false);
-    Ok(persisted)
+    let mode = if enabled { "mem0" } else { "stateless" };
+    memory_mode_set(state, conversation_id, mode.to_string()).await?;
+    Ok(enabled)
 }
 
 #[tauri::command]

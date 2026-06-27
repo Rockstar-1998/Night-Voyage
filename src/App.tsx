@@ -52,11 +52,9 @@ import {
   listenRoundState,
   listenStreamError,
   messagesList,
-  mem0SetEnabled,
+  memoryModeSet,
   mem0Status,
   plotSummariesList,
-  plotSummariesUpdateMode,
-  plotSummariesUpsertManual,
   presetsList,
   providersCreate,
   providersDelete,
@@ -233,13 +231,9 @@ const DesktopView = (props: {
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: CharacterStateOverlayUiStatus;
   characterStateOverlayError?: string | null;
-  plotSummaryMode?: 'ai' | 'manual' | string;
-  plotSummaries: PlotSummaryRecord[];
-  onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
-  onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
-  mem0Enabled?: boolean;
+  memoryMode?: 'stateless' | 'mem0' | string;
   mem0Available?: boolean;
-  onUpdateMem0Enabled: (enabled: boolean) => Promise<void> | void;
+  onUpdateMemoryMode: (mode: 'stateless' | 'mem0') => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
@@ -419,13 +413,9 @@ const DesktopView = (props: {
               overlaySummary={props.characterStateOverlaySummary}
               overlayStatus={props.characterStateOverlayStatus}
               overlayError={props.characterStateOverlayError}
-              plotSummaryMode={props.plotSummaryMode ?? 'ai'}
-              plotSummaries={props.plotSummaries}
-              onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
-              onSavePlotSummary={props.onSavePlotSummary}
-              mem0Enabled={props.mem0Enabled}
+              memoryMode={props.memoryMode ?? 'stateless'}
               mem0Available={props.mem0Available}
-              onUpdateMem0Enabled={props.onUpdateMem0Enabled}
+              onUpdateMemoryMode={props.onUpdateMemoryMode}
               playerCharacters={props.playerCharacters}
               currentPlayerCharacter={props.currentPlayerCharacter}
               onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
@@ -554,13 +544,9 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           overlaySummary={props.characterStateOverlaySummary}
                           overlayStatus={props.characterStateOverlayStatus}
                           overlayError={props.characterStateOverlayError}
-                          plotSummaryMode={props.plotSummaryMode ?? 'ai'}
-                          plotSummaries={props.plotSummaries}
-                          onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
-                          onSavePlotSummary={props.onSavePlotSummary}
-                          mem0Enabled={props.mem0Enabled}
+                          memoryMode={props.memoryMode ?? 'stateless'}
                           mem0Available={props.mem0Available}
-                          onUpdateMem0Enabled={props.onUpdateMem0Enabled}
+                          onUpdateMemoryMode={props.onUpdateMemoryMode}
                           playerCharacters={props.playerCharacters}
                           currentPlayerCharacter={props.currentPlayerCharacter}
                           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
@@ -671,7 +657,7 @@ function App() {
   const [characterStateOverlaySummary, setCharacterStateOverlaySummary] = createSignal<string | null>(null);
   const [characterStateOverlayStatus, setCharacterStateOverlayStatus] = createSignal<CharacterStateOverlayUiStatus>(null);
   const [characterStateOverlayError, setCharacterStateOverlayError] = createSignal<string | null>(null);
-  const [plotSummaries, setPlotSummaries] = createStore<PlotSummaryRecord[]>([]);
+  const [_plotSummaries, setPlotSummaries] = createStore<PlotSummaryRecord[]>([]);
   const [enableDynamicEffects, setEnableDynamicEffects] = createSignal(true);
   const [formatConfig, setFormatConfig] = createSignal<MessageFormatConfig>(DEFAULT_FORMAT_CONFIG);
   const [roomClientSession, setRoomClientSession] = createSignal<RoomClientSession | null>(null);
@@ -1359,18 +1345,10 @@ function App() {
     await refreshWorldBooks();
   };
 
-  const handleUpdatePlotSummaryMode = async (mode: 'ai' | 'manual') => {
+  const handleUpdateMemoryMode = async (mode: 'stateless' | 'mem0') => {
     const conversationId = selectedConversationId();
     if (conversationId == null) return;
-    await plotSummariesUpdateMode({ conversationId, plotSummaryMode: mode });
-    await refreshSessions();
-    await refreshConversationContext(conversationId);
-  };
-
-  const handleUpdateMem0Enabled = async (enabled: boolean) => {
-    const conversationId = selectedConversationId();
-    if (conversationId == null) return;
-    await mem0SetEnabled(conversationId, enabled);
+    await memoryModeSet(conversationId, mode);
     await refreshSessions();
     await refreshConversationContext(conversationId);
   };
@@ -1384,13 +1362,6 @@ function App() {
       console.error('[mem0] status check failed:', error);
       setMem0Available(false);
     }
-  };
-
-  const handleSavePlotSummary = async (batchIndex: number, summaryText: string) => {
-    const conversationId = selectedConversationId();
-    if (conversationId == null) return;
-    await plotSummariesUpsertManual({ conversationId, batchIndex, summaryText });
-    await refreshConversationContext(conversationId);
   };
 
   const handleSetEnableDynamicEffects = async (enabled: boolean) => {
@@ -1805,13 +1776,9 @@ function App() {
         characterStateOverlaySummary={characterStateOverlaySummary()}
         characterStateOverlayStatus={characterStateOverlayStatus()}
         characterStateOverlayError={characterStateOverlayError()}
-        plotSummaryMode={selectedConversation()?.plotSummaryMode ?? 'ai'}
-        plotSummaries={plotSummaries}
-        onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
-        onSavePlotSummary={handleSavePlotSummary}
-        mem0Enabled={selectedConversation()?.mem0Enabled ?? false}
+        memoryMode={selectedConversation()?.memoryMode ?? 'stateless'}
         mem0Available={mem0Available()}
-        onUpdateMem0Enabled={handleUpdateMem0Enabled}
+        onUpdateMemoryMode={handleUpdateMemoryMode}
         onSaveConversationBindings={handleSaveConversationBindings}
         currentPlayerCharacter={currentPlayerCharacter()}
         onSwitchPlayerCharacter={handleSwitchPlayerCharacter}

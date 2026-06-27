@@ -27,8 +27,7 @@ export interface ConversationListItem {
   providerId?: number;
   chatMode: ChatMode;
   agentProviderPolicy: AgentProviderPolicy;
-  plotSummaryMode: 'ai' | 'manual' | string;
-  mem0Enabled?: boolean;
+  memoryMode: 'stateless' | 'mem0' | string;
   memberCount: number;
   pendingMemberCount: number;
   createdAt: number;
@@ -771,6 +770,10 @@ export interface Mem0MemoryEntry {
 
 export async function mem0Status() {
   return invokeCommand<Mem0Status>('mem0_status');
+}
+
+export async function memoryModeSet(conversationId: number, mode: 'stateless' | 'mem0') {
+  return invokeCommand<string>('memory_mode_set', { conversationId, mode });
 }
 
 export async function mem0SetEnabled(conversationId: number, enabled: boolean) {
