@@ -38,7 +38,7 @@ Night Voyage 的预设系统不应该是：
 也就是说：
 
 - 固定的是：预设如何被存储、排序、裁剪、编译
-- 灵活的是：用户可以放哪些 block、few-shot、参数与覆盖规则
+- 灵活的是：用户可以放哪些 block、参数与覆盖规则
 
 换句话说：
 
@@ -57,7 +57,6 @@ Night Voyage 的预设系统不应该是：
 - 输出格式
 - 长度偏好
 - 结构化输出模式
-- few-shot 示例
 - 采样参数归属
 - provider 兼容覆盖
 - Prompt Compiler 的部分运行策略
@@ -183,42 +182,7 @@ Night Voyage 的预设系统不应该是：
 
 ---
 
-## 3. Few-shot 示例层
-
-这一层保存对话示例，用于教模型“这种预设下该怎么说话 / 怎么排版 / 怎么组织输出”。
-
-### 推荐字段
-
-- `id`
-- `preset_id`
-- `role`
-- `content`
-- `sort_order`
-- `is_enabled`
-
-### 作用
-
-适合教：
-
-- 语气
-- 格式
-- 叙事颗粒度
-- 回答短长
-
-不适合教：
-
-- 世界观事实
-- 某个角色的固定设定
-- 当前剧情历史
-
-### 注入建议
-
-- 不进主 `system` 文本
-- 以 few-shot `assistant/user` 示例消息形式插在 `system` 后、真实历史前
-
----
-
-## 4. 采样参数层
+## 3. 采样参数层
 
 这层是你已经明确要从 API 档案里迁走的内容。
 
@@ -322,17 +286,6 @@ Night Voyage 的预设系统不应该是：
 - 同一预设内，相同 `exclusive_group_key` 且 `is_enabled = 1` 的 block 最多只能有一个
 - 保存命中互斥冲突时必须显式报错，不允许静默自动关闭旧条目
 
-## 3. `preset_examples`
-
-建议字段：
-
-- `id`
-- `preset_id`
-- `role`
-- `content`
-- `sort_order`
-- `is_enabled`
-
 ## 4. `preset_stop_sequences`
 
 建议字段：
@@ -409,9 +362,8 @@ Night Voyage 的预设系统不应该是：
 4. 世界书命中层 -> `system`
 5. 剧情总结层 -> `system`
 6. 向量细节层 -> `system` 的低权重参考区
-7. 预设 Few-shot 示例 -> `assistant/user` 示例消息层
-8. 最近原文窗口 -> `assistant/user history`
-9. 当前轮输入 -> 最后一条 `user`
+7. 最近原文窗口 -> `assistant/user history`
+8. 当前轮输入 -> 最后一条 `user`
 
 ### 为什么这么排
 
@@ -421,7 +373,6 @@ Night Voyage 的预设系统不应该是：
 - 再补当前场景设定
 - 再补历史主线
 - 再补少量检索细节
-- 然后进入 few-shot 示例
 - 最后是真实历史和当前输入
 
 ---
@@ -451,7 +402,6 @@ Night Voyage 的预设系统不应该是：
 
 - block 数量
 - block 类型组合
-- few-shot 数量
 - 是否启用某些 block
 - provider override 是否存在
 - 是否继承父预设
@@ -477,7 +427,7 @@ Night Voyage 的预设系统不应该是：
 也就是说：
 
 - 用户看到的是“效果项”与“子选项”
-- 系统内部保存的是 block、few-shot、参数与治理元数据
+- 系统内部保存的是 block、参数与治理元数据
 - Prompt Compiler 消费的仍然是结构化结果，而不是前台选项文案本身
 
 ### 1. 推荐的前台语义项
@@ -532,7 +482,7 @@ Night Voyage 的预设系统不应该是：
 
 1. 用户在统一界面中选择一个语义子选项
 2. 前端或保存层把该选择映射为稳定的机器键
-3. 保存时将机器键展开为对应的底层 block 组合、参数值或 few-shot 绑定
+3. 保存时将机器键展开为对应的底层 block 组合或参数值
 4. Prompt Compiler 只消费最终展开后的结构化结果
 
 这能保证：
@@ -578,7 +528,7 @@ Night Voyage 预设系统在交互层应遵循以下原则：
 
 - 编辑期保留“语义组选项树”这一层，供作者以缩进子项方式组织预设
 - 保存期由后端统一完成校验与展开
-- 运行期 Prompt Compiler 只读取已经物化好的 `preset_prompt_blocks`、`preset_examples` 与采样参数
+- 运行期 Prompt Compiler 只读取已经物化好的 `preset_prompt_blocks` 与采样参数
 
 推荐原因：
 
@@ -696,13 +646,11 @@ markdown 风格头标记更适合作为：
 Night Voyage 的预设系统最推荐做成：
 
 - 一组结构化 Prompt Blocks
-- 一组 few-shot 示例
 - 一组采样参数
 - 一层 provider 兼容覆盖
 
 其中：
 - Prompt Blocks -> `system`
-- few-shot -> `assistant/user` 示例消息层
 - 采样参数 -> 请求参数层
 - provider override -> 编译覆盖层
 

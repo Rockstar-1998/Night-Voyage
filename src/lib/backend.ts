@@ -28,6 +28,7 @@ export interface ConversationListItem {
   chatMode: ChatMode;
   agentProviderPolicy: AgentProviderPolicy;
   plotSummaryMode: 'ai' | 'manual' | string;
+  mem0Enabled?: boolean;
   memberCount: number;
   pendingMemberCount: number;
   createdAt: number;
@@ -157,18 +158,6 @@ export interface PresetPromptBlock {
   lockReason?: string;
   exclusiveGroupKey?: string;
   exclusiveGroupLabel?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface PresetExampleRecord {
-  id: number;
-  presetId: number;
-  semanticOptionId?: number;
-  role: 'user' | 'assistant' | string;
-  content: string;
-  sortOrder: number;
-  isEnabled: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -763,6 +752,49 @@ export async function plotSummariesUpdateMode(payload: {
   plotSummaryMode: 'ai' | 'manual' | string;
 }) {
   return invokeCommand<string>('plot_summaries_update_mode', toInvokeArgs(payload));
+}
+
+// ---- mem0 memory layer ----
+
+export interface Mem0Status {
+  enabled: boolean;
+  providerReady: boolean;
+  vectorStorePath: string;
+}
+
+export interface Mem0MemoryEntry {
+  id: string;
+  memory: string;
+  score?: number | null;
+  createdAt?: string | null;
+}
+
+export async function mem0Status() {
+  return invokeCommand<Mem0Status>('mem0_status');
+}
+
+export async function mem0SetEnabled(conversationId: number, enabled: boolean) {
+  return invokeCommand<boolean>('mem0_set_enabled', { conversationId, enabled });
+}
+
+export async function mem0SearchTest(
+  conversationId: number,
+  query: string,
+  limit?: number,
+) {
+  return invokeCommand<Mem0MemoryEntry[]>('mem0_search_test', { conversationId, query, limit });
+}
+
+export async function mem0ListMemories(conversationId: number, limit?: number) {
+  return invokeCommand<Mem0MemoryEntry[]>('mem0_list_memories', { conversationId, limit });
+}
+
+export async function mem0DeleteMemory(memoryId: string) {
+  return invokeCommand<void>('mem0_delete_memory', { memoryId });
+}
+
+export async function mem0DeleteAll(conversationId: number) {
+  return invokeCommand<number>('mem0_delete_all', { conversationId });
 }
 
 export async function characterCardsList(cardType?: CharacterCardType) {

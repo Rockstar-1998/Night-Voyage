@@ -52,6 +52,8 @@ import {
   listenRoundState,
   listenStreamError,
   messagesList,
+  mem0SetEnabled,
+  mem0Status,
   plotSummariesList,
   plotSummariesUpdateMode,
   plotSummariesUpsertManual,
@@ -235,6 +237,9 @@ const DesktopView = (props: {
   plotSummaries: PlotSummaryRecord[];
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
+  mem0Enabled?: boolean;
+  mem0Available?: boolean;
+  onUpdateMem0Enabled: (enabled: boolean) => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
@@ -418,6 +423,9 @@ const DesktopView = (props: {
               plotSummaries={props.plotSummaries}
               onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
               onSavePlotSummary={props.onSavePlotSummary}
+              mem0Enabled={props.mem0Enabled}
+              mem0Available={props.mem0Available}
+              onUpdateMem0Enabled={props.onUpdateMem0Enabled}
               playerCharacters={props.playerCharacters}
               currentPlayerCharacter={props.currentPlayerCharacter}
               onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
@@ -550,6 +558,9 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           plotSummaries={props.plotSummaries}
                           onUpdatePlotSummaryMode={props.onUpdatePlotSummaryMode}
                           onSavePlotSummary={props.onSavePlotSummary}
+                          mem0Enabled={props.mem0Enabled}
+                          mem0Available={props.mem0Available}
+                          onUpdateMem0Enabled={props.onUpdateMem0Enabled}
                           playerCharacters={props.playerCharacters}
                           currentPlayerCharacter={props.currentPlayerCharacter}
                           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
@@ -666,6 +677,7 @@ function App() {
   const [roomClientSession, setRoomClientSession] = createSignal<RoomClientSession | null>(null);
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'processing' | 'responding'>('idle');
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
+  const [mem0Available, setMem0Available] = createSignal(false);
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -1355,6 +1367,25 @@ function App() {
     await refreshConversationContext(conversationId);
   };
 
+  const handleUpdateMem0Enabled = async (enabled: boolean) => {
+    const conversationId = selectedConversationId();
+    if (conversationId == null) return;
+    await mem0SetEnabled(conversationId, enabled);
+    await refreshSessions();
+    await refreshConversationContext(conversationId);
+  };
+
+  const refreshMem0Status = async () => {
+    try {
+      const status = await mem0Status();
+      setMem0Available(status.enabled && status.providerReady);
+    } catch (error) {
+      // Explicit: surface failure as "not available" rather than silently hiding.
+      console.error('[mem0] status check failed:', error);
+      setMem0Available(false);
+    }
+  };
+
   const handleSavePlotSummary = async (batchIndex: number, summaryText: string) => {
     const conversationId = selectedConversationId();
     if (conversationId == null) return;
@@ -1415,6 +1446,9 @@ function App() {
     }, 800);
 
     await Promise.all([refreshSessions(), refreshProviders(), refreshPresets(), refreshCharacters(), refreshWorldBooks()]);
+
+    // mem0 capability is optional; probe its readiness without blocking startup.
+    void refreshMem0Status();
 
     const settingsData = await settingsGetAll();
     const dynamicEffectSetting = settingsData.find((s: { key: string }) => s.key === 'enableDynamicEffects');
@@ -1775,6 +1809,9 @@ function App() {
         plotSummaries={plotSummaries}
         onUpdatePlotSummaryMode={handleUpdatePlotSummaryMode}
         onSavePlotSummary={handleSavePlotSummary}
+        mem0Enabled={selectedConversation()?.mem0Enabled ?? false}
+        mem0Available={mem0Available()}
+        onUpdateMem0Enabled={handleUpdateMem0Enabled}
         onSaveConversationBindings={handleSaveConversationBindings}
         currentPlayerCharacter={currentPlayerCharacter()}
         onSwitchPlayerCharacter={handleSwitchPlayerCharacter}

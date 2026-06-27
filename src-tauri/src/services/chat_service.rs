@@ -1,4 +1,5 @@
 use sqlx::{Row, SqlitePool};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::{
@@ -12,6 +13,7 @@ use crate::repositories::message_repository::{
 };
 use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
+use crate::services::memory_service::{MemoryMessage, MemoryService};
 use crate::services::prompt_compiler::{
     validate_output_text_with_retry_snapshot, PromptCompileResult, RetryOutputValidatorSnapshot,
 };
@@ -40,6 +42,135 @@ pub fn chat_debug_log(app: &AppHandle, message: &str) {
             let _ = file.write_all(log_line.as_bytes());
         }
     }
+}
+
+/// Spawn an asynchronous, best-effort memory extraction task for a completed
+/// chat round. This must never block the streaming response path or affect the
+/// conversation flow — all failures degrade to `eprintln!` logs.
+///
+/// Extraction only runs when the conversation has `mem0_enabled = 1` and a
+/// memory backend is registered in `AppState`. The submitted content is the
+/// current round's aggregated user input + assistant reply (mirroring
+/// `character_state_overlays::load_overlay_generation_context`), scoped to
+/// `user_id = conversation_id` and `agent_id = character_id`.
+pub fn spawn_memory_extraction_task(
+    app: AppHandle,
+    db: SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    assistant_message_id: i64,
+) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = run_memory_extraction_task(
+            &app,
+            &db,
+            conversation_id,
+            round_id,
+            assistant_message_id,
+        )
+        .await
+        {
+            eprintln!(
+                "[memory] extraction task failed: conv={}, round={}, err={}",
+                conversation_id, round_id, err
+            );
+        }
+    });
+}
+
+async fn run_memory_extraction_task(
+    app: &AppHandle,
+    db: &SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    assistant_message_id: i64,
+) -> Result<(), String> {
+    // Optional capability: no backend registered → no-op.
+    let memory_service: Option<Arc<dyn MemoryService>> = {
+        let state = app.state::<crate::AppState>();
+        let guard = state.memory_service.lock().await;
+        guard.clone()
+    };
+    let Some(memory_service) = memory_service else {
+        return Ok(());
+    };
+
+    // Honor the per-conversation toggle; default to disabled on read failure.
+    let enabled = sqlx::query_scalar::<_, i64>(
+        "SELECT mem0_enabled FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .map(|value| value != 0)
+    .unwrap_or(false);
+    if !enabled {
+        return Ok(());
+    }
+
+    // user_content: aggregated user input for this round (nullable → "").
+    let user_content: String = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT aggregated_user_content FROM message_rounds \
+         WHERE id = ? AND conversation_id = ? LIMIT 1",
+    )
+    .bind(round_id)
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    if user_content.is_empty() {
+        return Err("memory extraction skipped: empty user content".to_string());
+    }
+
+    // assistant_content: persisted assistant reply for this round (nullable → "").
+    let assistant_content: String =
+        sqlx::query_scalar::<_, Option<String>>("SELECT content FROM messages WHERE id = ? LIMIT 1")
+            .bind(assistant_message_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| err.to_string())?
+            .flatten()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+    if assistant_content.is_empty() {
+        return Err("memory extraction skipped: empty assistant content".to_string());
+    }
+
+    // agent_id: character bound to the conversation (host_character_id preferred).
+    let character_id: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT COALESCE(host_character_id, character_id) FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten();
+    let Some(character_id) = character_id else {
+        return Err(
+            "memory extraction skipped: no character bound to conversation".to_string(),
+        );
+    };
+
+    let messages = vec![
+        MemoryMessage::user(user_content),
+        MemoryMessage::assistant(assistant_content),
+    ];
+    let user_id = conversation_id.to_string();
+    let agent_id = character_id.to_string();
+    if let Err(err) = memory_service.add(messages, &user_id, &agent_id).await {
+        // Write failure must not affect the conversation flow; log explicitly.
+        eprintln!(
+            "[memory] add failed: conv={}, round={}, character_id={}, err={}",
+            conversation_id, round_id, character_id, err
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_attachment_mime_types(attachments: &[ChatAttachment]) -> Result<(), String> {

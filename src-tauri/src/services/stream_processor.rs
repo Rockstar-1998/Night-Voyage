@@ -202,6 +202,16 @@ pub fn spawn_stream_task(
                             provider_id,
                         );
                     }
+                    // mem0 memory extraction: independent of plot_summary_mode;
+                    // gated by conversations.mem0_enabled inside the task. Best-effort,
+                    // never affects the conversation flow.
+                    crate::services::chat_service::spawn_memory_extraction_task(
+                        app.clone(),
+                        db.clone(),
+                        conversation_id,
+                        round_id,
+                        assistant_message_id,
+                    );
                 }
                 if let Ok(round) =
                     RoundRepository::load_state(&db, conversation_id, Some(round_id)).await
@@ -335,9 +345,19 @@ async fn stream_llm_response(
         },
     };
     eprintln!("[chat] stream_llm_response: calling compile_prompt...");
+    let memory_service = {
+        let state = app.state::<crate::AppState>();
+        let guard = state.memory_service.lock().await;
+        guard.clone()
+    };
     let mut compiled_prompt =
-        crate::services::prompt_compiler::compile_prompt(&db, &compile_input, assistant_message_id)
-            .await?;
+        crate::services::prompt_compiler::compile_prompt(
+            &db,
+            &compile_input,
+            assistant_message_id,
+            memory_service.as_ref(),
+        )
+        .await?;
     eprintln!(
         "[chat] stream_llm_response: compile_prompt done, response_mode={:?}, structured_output_schema={:?}, system_blocks={}, history_blocks={}",
         compiled_prompt.params.response_mode,

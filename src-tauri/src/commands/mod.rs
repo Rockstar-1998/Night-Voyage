@@ -2,6 +2,7 @@ pub mod assets;
 pub mod characters;
 pub mod chat;
 pub mod conversations;
+pub mod mem0;
 pub mod plot_summaries;
 pub mod presets;
 pub mod providers;

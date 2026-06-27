@@ -360,7 +360,7 @@ async fn load_conversation_summary(
 ) -> Result<ConversationListItem, String> {
     let row = sqlx::query(
         "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at \
+         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, mem0_enabled, created_at, updated_at \
          FROM conversations WHERE id = ? LIMIT 1",
     )
     .bind(conversation_id)
@@ -403,6 +403,10 @@ async fn load_conversation_summary(
         plot_summary_mode: row
             .try_get("plot_summary_mode")
             .unwrap_or_else(|_| "ai".to_string()),
+        mem0_enabled: row
+            .try_get::<i64, _>("mem0_enabled")
+            .map(|value| value != 0)
+            .unwrap_or(false),
         member_count,
         pending_member_count,
         created_at: row.try_get("created_at").unwrap_or_default(),

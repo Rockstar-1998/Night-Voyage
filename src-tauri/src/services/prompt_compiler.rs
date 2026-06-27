@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use minijinja::{Environment, UndefinedBehavior};
 use regex::Regex;
@@ -10,6 +11,7 @@ use crate::{
     models::{TokenLayerUsage, TokenUsageReport},
     services::{
         character_state_overlays::load_latest_character_state_overlay_block,
+        memory_service::MemoryService,
         plot_summaries::{
             load_completed_plot_summary_round_ids_before, load_plot_summary_blocks,
             load_plot_summary_mode, PLOT_SUMMARY_MODE_DISABLED,
@@ -98,7 +100,7 @@ impl PromptBlockKind {
             Self::WorldBookMatch => 300,
             Self::WorldVariable => 400,
             Self::PlotSummary => 500,
-            Self::RetrievedDetail => 600,
+            Self::RetrievedDetail => 550,
             Self::RecentHistory => 800,
             Self::CurrentUser => 900,
         }
@@ -458,6 +460,7 @@ pub async fn compile_prompt(
     db: &SqlitePool,
     input: &PromptCompileInput,
     exclude_message_id: i64,
+    memory_service: Option<&Arc<dyn MemoryService>>,
 ) -> Result<PromptCompileResult, String> {
     match input.mode {
         PromptCompileMode::ClassicChat | PromptCompileMode::ClassicRegenerate => {}
@@ -682,6 +685,21 @@ pub async fn compile_prompt(
         );
     }
     system_blocks.extend(plot_summary_blocks);
+
+    // Layer 6: retrieved memory details (mem0). Best-effort: a missing service,
+    // a disabled conversation, or a search failure all degrade to zero blocks
+    // without aborting compilation.
+    let retrieved_detail_blocks = load_retrieved_detail_blocks(
+        db,
+        memory_service,
+        input.conversation_id,
+        &current_user_block.content,
+        input.budget.max_retrieved_detail_tokens,
+        &mut debug,
+    )
+    .await;
+    system_blocks.extend(retrieved_detail_blocks);
+
     system_blocks.sort_by(|left, right| left.priority.cmp(&right.priority));
 
     let mut result = PromptCompileResult {
@@ -731,7 +749,7 @@ pub async fn compile_chat_messages(
         budget: PromptBudget::default(),
     };
 
-    let mut result = compile_prompt(db, &input, exclude_message_id).await?;
+    let mut result = compile_prompt(db, &input, exclude_message_id, None).await?;
     adapt_prompt_compile_result_to_openai_messages(&mut result, &provider_kind)
 }
 
@@ -763,7 +781,7 @@ pub async fn compile_token_usage_report(
         budget: PromptBudget::default(),
     };
 
-    let result = compile_prompt(db, &input, 0).await?;
+    let result = compile_prompt(db, &input, 0, None).await?;
 
     fn kind_color(kind: &PromptBlockKind) -> &'static str {
         match kind {
@@ -1992,6 +2010,104 @@ fn filter_structured_content(
     content.to_string()
 }
 
+/// Authority prefix marking retrieved memories as historical, non-authoritative
+/// context so the model defers to recent dialogue on conflict.
+const RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str =
+    "[历史记忆 - 非当前状态，如与最近对话矛盾以最近对话为准]\n";
+
+/// Default cap on retrieved memories per compilation.
+const DEFAULT_RETRIEVED_DETAIL_TOP_K: usize = 5;
+
+/// Layer 6 loader: pull relevant memories from the (optional) memory backend and
+/// wrap each as a `RetrievedDetail` system block. Fully best-effort — any of the
+/// following yields an empty Vec without erroring:
+/// - no memory service configured (`None`)
+/// - `conversations.mem0_enabled = 0`
+/// - empty query text
+/// - a backend search failure (logged to debug + stderr)
+async fn load_retrieved_detail_blocks(
+    db: &SqlitePool,
+    memory_service: Option<&Arc<dyn MemoryService>>,
+    conversation_id: i64,
+    current_user_input: &str,
+    max_tokens: Option<usize>,
+    debug: &mut PromptCompileDebugReport,
+) -> Vec<PromptBlock> {
+    let Some(memory_service) = memory_service else {
+        return Vec::new();
+    };
+
+    let query = current_user_input.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    // Honor the per-conversation toggle; default to disabled on read failure.
+    let enabled = sqlx::query_scalar::<_, i64>(
+        "SELECT mem0_enabled FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .map(|value| value != 0)
+    .unwrap_or(false);
+
+    if !enabled {
+        return Vec::new();
+    }
+
+    let user_id = conversation_id.to_string();
+    let records = match memory_service
+        .search(query, &user_id, DEFAULT_RETRIEVED_DETAIL_TOP_K)
+        .await
+    {
+        Ok(records) => records,
+        Err(err) => {
+            eprintln!(
+                "[prompt-compiler] load_retrieved_detail_blocks: search failed (degrading to empty): {err}"
+            );
+            debug
+                .input_sources
+                .push(format!("retrieved_detail:error:{err}"));
+            return Vec::new();
+        }
+    };
+
+    let mut blocks = Vec::with_capacity(records.len());
+    let mut used_tokens = 0usize;
+    for record in records {
+        let content = format!("{RETRIEVED_DETAIL_AUTHORITY_PREFIX}{}", record.memory);
+        let cost = estimate_token_cost(&content);
+        if let Some(budget) = max_tokens {
+            if used_tokens.saturating_add(cost) > budget {
+                break;
+            }
+        }
+        used_tokens = used_tokens.saturating_add(cost);
+
+        // mem0 ids are opaque strings; PromptBlockSource::Retrieval carries an
+        // i64 fragment_id, so fall back to 0 when the id is not numeric. The
+        // authoritative id is preserved in debug for traceability.
+        let fragment_id = record.id.parse::<i64>().unwrap_or(0);
+        debug
+            .input_sources
+            .push(format!("retrieved_detail:{}", record.id));
+
+        blocks.push(build_block(
+            PromptBlockKind::RetrievedDetail,
+            PromptRole::System,
+            Some("历史记忆".to_string()),
+            content,
+            PromptBlockSource::Retrieval { fragment_id },
+            false,
+        ));
+    }
+
+    blocks
+}
+
 fn build_block(
     kind: PromptBlockKind,
     role: PromptRole,
@@ -2103,10 +2219,13 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
             );
             break;
         }
+        if trim_oldest_history_block(result, "budget_trim:recent_history") {
+            continue;
+        }
         if trim_first_non_required_system_block(
             result,
-            PromptBlockKind::RetrievedDetail,
-            "budget_trim:retrieved_detail",
+            PromptBlockKind::WorldBookMatch,
+            "budget_trim:world_book",
         ) {
             continue;
         }
@@ -2119,19 +2238,9 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
         }
         if trim_first_non_required_system_block(
             result,
-            PromptBlockKind::WorldBookMatch,
-            "budget_trim:world_book",
+            PromptBlockKind::RetrievedDetail,
+            "budget_trim:retrieved_detail",
         ) {
-            continue;
-        }
-        if trim_first_non_required_system_block(
-            result,
-            PromptBlockKind::WorldVariable,
-            "budget_trim:character_state_overlay",
-        ) {
-            continue;
-        }
-        if trim_oldest_history_block(result, "budget_trim:recent_history") {
             continue;
         }
         eprintln!(

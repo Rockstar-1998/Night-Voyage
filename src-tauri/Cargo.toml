@@ -22,13 +22,18 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-sqlx = { version = "0.7", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate"] }
+sqlx = { version = "=0.8.0", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["time", "net", "rt", "sync", "io-util", "macros"] }
 minijinja = "2"
 regex = "1"
 axum = "0.8"
+async-trait = "0.1"
+# mem0-rs memory backend (library mode). Pinned by path to the vendored upstream
+# checkout. Only the adapter in services/memory_providers/mem0_rs.rs may touch
+# these types; business code depends solely on the local MemoryService trait.
+mem0 = { path = "../MEM0/mem0-rs/crates/mem0" }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
 

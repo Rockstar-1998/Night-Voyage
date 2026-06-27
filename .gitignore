@@ -55,6 +55,8 @@ plans/render.txt
 # OS files
 Thumbs.db
 desktop.ini
+nul
 letta-main/
 
-letta-main/
+# Vendored mem0-rs dependency (local path crate, not part of repo)
+MEM0/

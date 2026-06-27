@@ -88,6 +88,7 @@ pub struct ConversationListItem {
     pub chat_mode: String,
     pub agent_provider_policy: String,
     pub plot_summary_mode: String,
+    pub mem0_enabled: bool,
     pub member_count: i64,
     pub pending_member_count: i64,
     pub created_at: i64,
@@ -194,20 +195,6 @@ pub struct PresetPromptBlockRecord {
     pub lock_reason: Option<String>,
     pub exclusive_group_key: Option<String>,
     pub exclusive_group_label: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct PresetExampleRecord {
-    pub id: i64,
-    pub preset_id: i64,
-    pub semantic_option_id: Option<i64>,
-    pub role: String,
-    pub content: String,
-    pub sort_order: i64,
-    pub is_enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }

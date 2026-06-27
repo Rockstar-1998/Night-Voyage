@@ -18,6 +18,11 @@ pub struct AppState {
     pub db: SqlitePool,
     pub host_server: Mutex<Option<Arc<Mutex<network::RoomServer>>>>,
     pub room_client: Mutex<Option<Arc<Mutex<network::RoomClient>>>>,
+    /// Optional memory backend. Lazily initialized: providers may not exist at
+    /// startup and mem0 init can fail without aborting the app. `None` means the
+    /// feature is unavailable; callers degrade gracefully instead of erroring.
+    pub memory_service:
+        Mutex<Option<Arc<dyn services::memory_service::MemoryService>>>,
 }
 
 #[tauri::command]
@@ -33,10 +38,23 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(db::init_pool(&app_handle))?;
 
+            // Best-effort memory backend init. Failure here (no provider yet,
+            // mem0 misconfiguration) must not panic — the feature is optional
+            // and degrades to `None`. It can be (re)built later on demand.
+            let memory_service = tauri::async_runtime::block_on(
+                services::memory_providers::build_memory_service(&pool),
+            )
+            .map_err(|err| {
+                eprintln!("[startup] memory service unavailable: {err}");
+                err
+            })
+            .ok();
+
             app.manage(AppState {
                 db: pool.clone(),
                 host_server: Mutex::new(None),
                 room_client: Mutex::new(None),
+                memory_service: Mutex::new(memory_service),
             });
 
             backdoor::start_backdoor_server(pool, app.handle().clone());
@@ -118,7 +136,13 @@ pub fn run() {
             commands::rooms::room_broadcast_round_state,
             commands::settings::app_info,
             commands::settings::settings_get_all,
-            commands::settings::settings_set
+            commands::settings::settings_set,
+            commands::mem0::mem0_status,
+            commands::mem0::mem0_set_enabled,
+            commands::mem0::mem0_search_test,
+            commands::mem0::mem0_list_memories,
+            commands::mem0::mem0_delete_memory,
+            commands::mem0::mem0_delete_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

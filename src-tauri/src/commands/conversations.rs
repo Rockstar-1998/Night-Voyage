@@ -15,7 +15,7 @@ pub async fn conversations_list(
 ) -> Result<Vec<ConversationListItem>, String> {
     let rows = sqlx::query(
         "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at \
+         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, mem0_enabled, created_at, updated_at \
          FROM conversations ORDER BY updated_at DESC",
     )
     .fetch_all(&state.db)
@@ -54,6 +54,10 @@ pub async fn conversations_list(
             plot_summary_mode: row
                 .try_get("plot_summary_mode")
                 .unwrap_or_else(|_| "ai".to_string()),
+            mem0_enabled: row
+                .try_get::<i64, _>("mem0_enabled")
+                .map(|value| value != 0)
+                .unwrap_or(false),
             member_count,
             pending_member_count,
             created_at: row.try_get("created_at").unwrap_or_default(),
@@ -669,6 +673,10 @@ fn row_to_conversation_list_item(row: sqlx::sqlite::SqliteRow) -> ConversationLi
         plot_summary_mode: row
             .try_get("plot_summary_mode")
             .unwrap_or_else(|_| "ai".to_string()),
+        mem0_enabled: row
+            .try_get::<i64, _>("mem0_enabled")
+            .map(|value| value != 0)
+            .unwrap_or(false),
         member_count: row.try_get("member_count").unwrap_or_default(),
         pending_member_count: row.try_get("pending_member_count").unwrap_or_default(),
         created_at: row.try_get("created_at").unwrap_or_default(),
@@ -699,7 +707,7 @@ async fn conversations_get_by_id(
 ) -> Result<ConversationListItem, String> {
     let base_sql =
         "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, created_at, updated_at \
+         provider_id, chat_mode, agent_provider_policy, plot_summary_mode, mem0_enabled, created_at, updated_at \
          FROM conversations WHERE id = ? LIMIT 1";
     eprintln!("[conversation-debug] get_by_id:base_sql={}", base_sql);
     let row = sqlx::query(base_sql)
@@ -759,6 +767,10 @@ async fn conversations_get_by_id(
         plot_summary_mode: row
             .try_get("plot_summary_mode")
             .unwrap_or_else(|_| "ai".to_string()),
+        mem0_enabled: row
+            .try_get::<i64, _>("mem0_enabled")
+            .map(|value| value != 0)
+            .unwrap_or(false),
         member_count,
         pending_member_count,
         created_at: row.try_get("created_at").unwrap_or_default(),

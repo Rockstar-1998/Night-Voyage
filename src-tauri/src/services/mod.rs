@@ -1,6 +1,8 @@
 pub mod character_state_overlays;
 pub mod chat_service;
 pub mod http_client;
+pub mod memory_providers;
+pub mod memory_service;
 pub mod plot_summaries;
 pub mod preset_service;
 pub mod prompt_compiler;

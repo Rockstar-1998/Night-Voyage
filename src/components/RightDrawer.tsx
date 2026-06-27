@@ -21,6 +21,9 @@ interface RightDrawerProps {
   plotSummaries: PlotSummaryRecord[];
   onUpdatePlotSummaryMode: (mode: 'ai' | 'manual') => Promise<void> | void;
   onSavePlotSummary: (batchIndex: number, summaryText: string) => Promise<void> | void;
+  mem0Enabled?: boolean;
+  mem0Available?: boolean;
+  onUpdateMem0Enabled: (enabled: boolean) => Promise<void> | void;
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
@@ -77,6 +80,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [isOpen, setIsOpen] = createSignal(false);
   const [drafts, setDrafts] = createSignal<Record<number, string>>({});
   const [modeUpdating, setModeUpdating] = createSignal(false);
+  const [mem0Updating, setMem0Updating] = createSignal(false);
   const [savingBatchIndex, setSavingBatchIndex] = createSignal<number | null>(null);
   const [localError, setLocalError] = createSignal<string | null>(null);
   const [bindingPresetId, setBindingPresetId] = createSignal<string>('');
@@ -139,6 +143,20 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
       setModeUpdating(false);
+    }
+  };
+
+  const handleToggleMem0 = async () => {
+    if (mem0Updating()) return;
+    const next = !props.mem0Enabled;
+    setMem0Updating(true);
+    setLocalError(null);
+    try {
+      await props.onUpdateMem0Enabled(next);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMem0Updating(false);
     }
   };
 
@@ -566,6 +584,48 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
                 </For>
               </div>
             </Show>
+          </section>
+
+          <section class="border-b border-white/10 pb-6 mb-6 space-y-5">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-white">第 6 层：跨时间记忆召回</p>
+                <p class="text-xs text-mist-solid/40 mt-1">每轮对话结束后异步提取事实，下次编译时按当前输入语义检索并注入历史记忆（非当前状态，与最近对话矛盾时以最近对话为准）。</p>
+              </div>
+              <div class="flex items-center gap-3 shrink-0">
+                <div class="text-right">
+                  <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">记忆</div>
+                  <div class="text-xs text-mist-solid/45 mt-1">{props.mem0Enabled ? '已开启' : '已关闭'}</div>
+                </div>
+                <IconButton
+                  disabled={mem0Updating() || !props.mem0Available}
+                  onClick={() => void handleToggleMem0()}
+                  label={props.mem0Enabled ? '关闭 mem0 记忆' : '开启 mem0 记忆'}
+                  tone={props.mem0Enabled ? 'accent' : 'neutral'}
+                  size="sm"
+                  active={props.mem0Enabled ?? false}
+                >
+                  <Sparkles size={14} />
+                </IconButton>
+              </div>
+            </div>
+
+            <Show when={!props.mem0Available}>
+              <div class="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50 leading-6">
+                记忆后端未就绪：尚未配置 API 档案或 mem0 初始化失败。请在 API 档案中配置可用 provider 后重启应用。
+              </div>
+            </Show>
+
+            <div class="grid grid-cols-2 gap-2 text-center text-xs">
+              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+                <p class="text-mist-solid/35 uppercase tracking-widest">状态</p>
+                <p class="text-white font-semibold mt-1">{props.mem0Enabled ? '已开启' : '已关闭'}</p>
+              </div>
+              <div class="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+                <p class="text-mist-solid/35 uppercase tracking-widest">后端</p>
+                <p class="text-white font-semibold mt-1">{props.mem0Available ? '已就绪' : '未就绪'}</p>
+              </div>
+            </div>
           </section>
         </div>
 
