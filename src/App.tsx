@@ -43,17 +43,15 @@ import {
   conversationsDelete,
   conversationsList,
   conversationsUpdateBindings,
-  listenCharacterStateOverlayError,
-  listenCharacterStateOverlayUpdated,
   listenLlmStreamEvent,
   listenPlotSummaryError,
   listenPlotSummaryPending,
   listenPlotSummaryUpdated,
   listenRoundState,
   listenStreamError,
+  listenStreamRetry,
   messagesList,
-  memoryModeSet,
-  mem0Status,
+  mem0SnapshotWindowSet,
   plotSummariesList,
   presetsList,
   providersCreate,
@@ -74,48 +72,77 @@ import {
   worldBooksDelete,
   worldBooksList,
   worldBooksUpdate,
+  characterCardsExport,
+  worldBooksExport,
+  exchangeImport,
+  downloadJsonFile,
+  sanitizeFileName,
   type WorldBookEntryRecord,
   type WorldBookSummary,
   toAssetUrl,
   roomSendMessage,
   listenRoomStreamChunk,
   listenRoomStreamEnd,
+  listenRoomStreamRetry,
+  listenRoomMessageReset,
+  listenRoomStreamStructuredFieldDelta,
+  listenRoomStreamObjectFieldComplete,
   listenRoomRoundStateUpdate,
   listenRoomError,
   listenRoomDisconnected,
   listenRoomMemberJoined,
   listenRoomMemberLeft,
   listenRoomPlayerMessage,
+  listenRoomContextSnapshot,
+  roomRequestContext,
+  roomOpen,
+  roomClose,
   type RoomStreamChunkEvent,
   type RoomStreamEndEvent,
+  type RoomStreamRetryEvent,
+  type RoomStreamStructuredFieldDeltaEvent,
+  type RoomStreamObjectFieldCompleteEvent,
+  type RoomMessageResetEvent,
   type RoomRoundStateUpdateEvent,
   type RoomPlayerMessageEvent,
+  type RoomContextSnapshotEvent,
+  type RoomHostCharacter,
   type RoomJoinResult,
   roomLeave,
+  listenMemoryError,
+  mem0InitStatus,
+  type MemoryBackendErrorEvent,
 } from './lib/backend';
 
-const toChatMessage = (message: UiMessage, aiCharacter?: CharacterCard, playerCharacter?: CharacterCard): ChatMessage => ({
-  id: String(message.id),
-  backendId: message.id,
-  sender: message.role === 'assistant' ? 'ai' : 'user',
-  senderName:
-    message.role === 'assistant'
-      ? (aiCharacter?.name || 'AI')
-      : (playerCharacter?.name || message.displayName || '玩家'),
-  avatar: message.role === 'assistant'
-    ? toAssetUrl(aiCharacter?.imagePath)
-    : toAssetUrl(playerCharacter?.imagePath),
-  content: message.content,
-  isStreaming: false,
-  roundId: message.roundId,
-  messageKind: message.messageKind,
-  isSwipe: message.isSwipe,
-  swipeIndex: message.swipeIndex,
-  replyToId: message.replyToId,
-  summaryBatchIndex: message.summaryBatchIndex,
-  summaryEntryId: message.summaryEntryId,
-  isActiveInRound: message.isActiveInRound,
-});
+const toChatMessage = (
+  message: UiMessage,
+  aiCharacter?: CharacterCard,
+  playerCharacter?: CharacterCard,
+  remoteHost?: RoomHostCharacter | null,
+): ChatMessage => {
+  const aiAvatar = remoteHost?.imageBase64 ?? toAssetUrl(aiCharacter?.imagePath);
+  const playerAvatar = toAssetUrl(playerCharacter?.imagePath);
+  return {
+    id: String(message.id),
+    backendId: message.id,
+    sender: message.role === 'assistant' ? 'ai' : 'user',
+    senderName:
+      message.role === 'assistant'
+        ? (aiCharacter?.name || remoteHost?.name || 'AI')
+        : (playerCharacter?.name || message.displayName || '玩家'),
+    avatar: message.role === 'assistant' ? aiAvatar : playerAvatar,
+    content: message.content,
+    isStreaming: false,
+    roundId: message.roundId,
+    messageKind: message.messageKind,
+    isSwipe: message.isSwipe,
+    swipeIndex: message.swipeIndex,
+    replyToId: message.replyToId,
+    summaryBatchIndex: message.summaryBatchIndex,
+    summaryEntryId: message.summaryEntryId,
+    isActiveInRound: message.isActiveInRound,
+  };
+};
 
 type CharacterEditorPayload = {
   cardType: 'npc' | 'player';
@@ -130,6 +157,7 @@ type CharacterEditorPayload = {
 };
 
 type CharacterStateOverlayUiStatus = 'queued' | 'completed' | 'failed' | null;
+// NOTE: overlay signals retained for backward compat but unused after three-mode refactor
 
 type RoomClientSession = {
   roomId?: number;
@@ -138,6 +166,7 @@ type RoomClientSession = {
   displayName: string;
   hostAddress: string;
   port: number;
+  hostCharacter?: RoomHostCharacter | null;
 };
 
 const DESKTOP_WORKSPACE_IDS = ['chat', 'settings', 'character', 'kb', 'workspace'] as const;
@@ -171,12 +200,15 @@ const DesktopView = (props: {
   selectedConversationId: number | null;
   selectedConversationMembers: ConversationMember[];
   sessionsLoading: boolean;
+  roomActionLoading?: boolean;
   selectedConversationTitle?: string;
   currentRoundState?: RoundState | null;
   sending?: boolean;
   allowEmptySend?: boolean;
   onSelectConversation: (conversationId: number) => void;
   onDeleteConversation: (id: number) => Promise<void> | void;
+  onOpenRoom?: (conversationId: number) => void;
+  onCloseRoom?: (conversationId: number) => void;
   providers: ApiProviderSummary[];
   providerModels: Record<number, RemoteModel[]>;
   providersLoading: boolean;
@@ -223,18 +255,21 @@ const DesktopView = (props: {
   onCreateCharacter: (payload: CharacterEditorPayload) => Promise<void> | void;
   onUpdateCharacter: (payload: CharacterEditorPayload & { id: number }) => Promise<void> | void;
   onDeleteCharacter: (id: number) => Promise<void> | void;
+  onImportExchange: (file: File) => Promise<void> | void;
+  onExportCharacter: (character: CharacterCard) => Promise<void> | void;
   selectedCharacter?: CharacterCard | null;
   selectedPresetId?: number | null;
   selectedWorldBookId?: number | null;
   selectedProviderId?: number | null;
+  selectedEmbeddingProviderId?: number | null;
   presetSummaries: PresetSummary[];
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: CharacterStateOverlayUiStatus;
   characterStateOverlayError?: string | null;
-  memoryMode?: 'stateless' | 'mem0' | string;
-  mem0Available?: boolean;
-  onUpdateMemoryMode: (mode: 'stateless' | 'mem0') => Promise<void> | void;
-  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
+  memoryMode?: 'stateless' | 'legacy' | 'mem0' | string;
+  mem0SnapshotWindow?: number;
+  onSnapshotWindowChange?: (window: number) => Promise<void> | void;
+  onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number; embeddingProviderId?: number | null }) => Promise<void> | void;
   currentPlayerCharacter?: CharacterCard;
   onSwitchPlayerCharacter: (playerCharacterId: number) => Promise<void> | void;
   worldBooks: WorldBookSummary[];
@@ -244,6 +279,7 @@ const DesktopView = (props: {
   onCreateWorldBook: (payload: { title: string; description?: string; imagePath?: string }) => Promise<void> | void;
   onUpdateWorldBook: (payload: { id: number; title?: string; description?: string; imagePath?: string }) => Promise<void> | void;
   onDeleteWorldBook: (id: number) => Promise<void> | void;
+  onExportWorldBook: (book: WorldBookSummary) => Promise<void> | void;
   onUpsertWorldBookEntry: (payload: {
     worldBookId: number;
     entryId?: number;
@@ -261,7 +297,12 @@ const DesktopView = (props: {
   worldBookKeywords?: string[];
   onSetFormatConfig: (config: MessageFormatConfig) => void;
   isRoomClient?: boolean;
+  isOnline?: boolean;
   onPresetsChanged?: () => void;
+  /** mem0 startup error — forwarded to SettingsArea for display. */
+  mem0InitError?: string | null;
+  /** Runtime memory backend errors — forwarded to ChatArea for display. */
+  memoryErrors?: import('./lib/backend').MemoryBackendErrorEvent[];
 }) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
@@ -290,10 +331,13 @@ const DesktopView = (props: {
               selectedConversationId={props.selectedConversationId}
               selectedConversationMembers={props.selectedConversationMembers}
               loading={props.sessionsLoading}
+              roomActionLoading={props.roomActionLoading}
               onSelect={props.onSelectConversation}
               onNewChat={() => props.setActiveModal('new_chat')}
               onJoinRoom={() => props.setActiveModal('join_room')}
               onDeleteConversation={props.onDeleteConversation}
+              onOpenRoom={props.onOpenRoom}
+              onCloseRoom={props.onCloseRoom}
             />
           </div>
         </Show>
@@ -322,6 +366,8 @@ const DesktopView = (props: {
                     onCreateCharacter={props.onCreateCharacter}
                     onUpdateCharacter={props.onUpdateCharacter}
                     onDeleteCharacter={props.onDeleteCharacter}
+                    onImportExchange={props.onImportExchange}
+                    onExportCharacter={props.onExportCharacter}
                   />
                 </Show>
                 <Show when={props.activeWorkspace === 'settings'}>
@@ -339,6 +385,7 @@ const DesktopView = (props: {
                     onSetEnableDynamicEffects={props.onSetEnableDynamicEffects}
                     formatConfig={props.formatConfig ?? DEFAULT_FORMAT_CONFIG}
                     onSetFormatConfig={props.onSetFormatConfig}
+                    mem0InitError={props.mem0InitError}
                   />
                 </Show>
                 <Show when={props.activeWorkspace === 'kb'}>
@@ -350,6 +397,8 @@ const DesktopView = (props: {
                     onCreateWorldBook={props.onCreateWorldBook}
                     onUpdateWorldBook={props.onUpdateWorldBook}
                     onDeleteWorldBook={props.onDeleteWorldBook}
+                    onImportExchange={props.onImportExchange}
+                    onExportWorldBook={props.onExportWorldBook}
                     onUpsertEntry={props.onUpsertWorldBookEntry}
                     onDeleteEntry={props.onDeleteWorldBookEntry}
                   />
@@ -372,7 +421,7 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
@@ -383,6 +432,7 @@ const DesktopView = (props: {
                     allowEmptySend={props.allowEmptySend}
                     disabled={props.sending || !props.selectedConversationId}
                     placeholder={props.selectedConversationId ? '输入消息，联机会话可留空后发送表示本轮放弃发言' : '请先选择或创建会话'}
+                    isRoomClient={props.isRoomClient}
                   />
                 </div>
               </div>
@@ -410,17 +460,15 @@ const DesktopView = (props: {
               presetSummaries={props.presetSummaries}
               worldBooks={props.worldBooks}
               onSaveConversationBindings={props.onSaveConversationBindings}
-              overlaySummary={props.characterStateOverlaySummary}
-              overlayStatus={props.characterStateOverlayStatus}
-              overlayError={props.characterStateOverlayError}
               memoryMode={props.memoryMode ?? 'stateless'}
-              mem0Available={props.mem0Available}
-              onUpdateMemoryMode={props.onUpdateMemoryMode}
+              mem0SnapshotWindow={props.mem0SnapshotWindow}
+              onSnapshotWindowChange={props.onSnapshotWindowChange}
               playerCharacters={props.playerCharacters}
               currentPlayerCharacter={props.currentPlayerCharacter}
               onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
               providers={props.providers}
               selectedProviderId={props.selectedProviderId ?? null}
+              selectedEmbeddingProviderId={props.selectedEmbeddingProviderId ?? null}
             />
           </div>
         </Show>
@@ -464,10 +512,13 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                             selectedConversationId={props.selectedConversationId}
                             selectedConversationMembers={props.selectedConversationMembers}
                             loading={props.sessionsLoading}
+                            roomActionLoading={props.roomActionLoading}
                             onSelect={props.onSelectConversation}
                             onNewChat={() => props.setActiveModal('new_chat')}
                             onJoinRoom={() => props.setActiveModal('join_room')}
                             onDeleteConversation={props.onDeleteConversation}
+                            onOpenRoom={props.onOpenRoom}
+                            onCloseRoom={props.onCloseRoom}
                           />
                         </div>
                       </Show>
@@ -502,7 +553,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                                   </Show>
                                 </div>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">
@@ -513,6 +564,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                                       allowEmptySend={props.allowEmptySend}
                                       disabled={props.sending || !props.selectedConversationId}
                                       placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
+                                      isRoomClient={props.isRoomClient}
                                     />
                                   </div>
                                 </div>
@@ -541,17 +593,15 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           presetSummaries={props.presetSummaries}
                           worldBooks={props.worldBooks}
                           onSaveConversationBindings={props.onSaveConversationBindings}
-                          overlaySummary={props.characterStateOverlaySummary}
-                          overlayStatus={props.characterStateOverlayStatus}
-                          overlayError={props.characterStateOverlayError}
                           memoryMode={props.memoryMode ?? 'stateless'}
-                          mem0Available={props.mem0Available}
-                          onUpdateMemoryMode={props.onUpdateMemoryMode}
+                          mem0SnapshotWindow={props.mem0SnapshotWindow}
+                          onSnapshotWindowChange={props.onSnapshotWindowChange}
                           playerCharacters={props.playerCharacters}
                           currentPlayerCharacter={props.currentPlayerCharacter}
                           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
                           providers={props.providers}
                           selectedProviderId={props.selectedProviderId ?? null}
+                          selectedEmbeddingProviderId={props.selectedEmbeddingProviderId ?? null}
                         />
                       </div>
                     </>
@@ -580,6 +630,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           onSetEnableDynamicEffects={props.onSetEnableDynamicEffects}
                           formatConfig={props.formatConfig ?? DEFAULT_FORMAT_CONFIG}
                           onSetFormatConfig={props.onSetFormatConfig}
+                          mem0InitError={props.mem0InitError}
                         />
                       </div>
                     </>
@@ -596,6 +647,8 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                         onCreateCharacter={props.onCreateCharacter}
                         onUpdateCharacter={props.onUpdateCharacter}
                         onDeleteCharacter={props.onDeleteCharacter}
+                        onImportExchange={props.onImportExchange}
+                        onExportCharacter={props.onExportCharacter}
                       />
                     </div>
                   );
@@ -610,6 +663,8 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                         onCreateWorldBook={props.onCreateWorldBook}
                         onUpdateWorldBook={props.onUpdateWorldBook}
                         onDeleteWorldBook={props.onDeleteWorldBook}
+                        onImportExchange={props.onImportExchange}
+                        onExportWorldBook={props.onExportWorldBook}
                         onUpsertEntry={props.onUpsertWorldBookEntry}
                         onDeleteEntry={props.onDeleteWorldBookEntry}
                       />
@@ -641,6 +696,7 @@ function App() {
   const [characterLoading, setCharacterLoading] = createSignal(true);
   const [worldBookEntriesLoading, setWorldBookEntriesLoading] = createSignal(false);
   const [sending, setSending] = createSignal(false);
+  const [roomActionLoading, setRoomActionLoading] = createSignal(false);
   const [fetchingModelsFor, setFetchingModelsFor] = createSignal<number | null>(null);
   const [selectedConversationId, setSelectedConversationId] = createSignal<number | null>(null);
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
@@ -663,7 +719,12 @@ function App() {
   const [roomClientSession, setRoomClientSession] = createSignal<RoomClientSession | null>(null);
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'processing' | 'responding'>('idle');
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
-  const [mem0Available, setMem0Available] = createSignal(false);
+  const [mem0InitError, setMem0InitError] = createSignal<string | null>(null);
+  const [memoryBackendErrors, setMemoryBackendErrors] = createStore<MemoryBackendErrorEvent[]>([]);
+  // Auto-retry toast: shown whenever the backend emits llm-stream-retry.
+  // Holds { error, attemptCount } for a short period, then auto-clears.
+  const [retryNotice, setRetryNotice] = createSignal<{ error: string; attemptCount: number } | null>(null);
+  let retryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -680,7 +741,10 @@ function App() {
     const remote = roomClientSession()?.conversation;
     return remote?.id === selectedConversationId() ? remote : null;
   });
+  const remoteHostCharacter = createMemo(() => activeRoomClientSession()?.hostCharacter ?? null);
   const selectedCharacter = createMemo(() => {
+    const remote = remoteHostCharacter();
+    if (remote) return remote as unknown as CharacterCard;
     const hostCharacterId = selectedConversation()?.hostCharacterId;
     if (hostCharacterId == null) return null;
     return [...npcCharacters, ...playerCharacters].find((character) => character.id === hostCharacterId) ?? null;
@@ -795,7 +859,7 @@ function App() {
         plotSummariesList(conversationId),
       ]);
 
-      setMessages(messageList.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter())));
+      setMessages(messageList.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
       setSelectedConversationMembers(members);
       setCurrentRoundState(roundState);
       setPlotSummaries(summaryList);
@@ -821,6 +885,7 @@ function App() {
 
   const upsertStreamingAssistant = (messageId: number, roundId: number) => {
     const existing = messages.find((message) => message.backendId === messageId);
+    const remoteHost = remoteHostCharacter();
     if (existing) {
       upsertAssistantMessage({
         ...existing,
@@ -834,8 +899,8 @@ function App() {
       id: String(messageId),
       backendId: messageId,
       sender: 'ai',
-      senderName: currentAiCharacter()?.name || 'AI',
-      avatar: toAssetUrl(currentAiCharacter()?.imagePath),
+      senderName: remoteHost?.name || currentAiCharacter()?.name || 'AI',
+      avatar: remoteHost?.imageBase64 ?? toAssetUrl(currentAiCharacter()?.imagePath),
       content: '',
       isStreaming: true,
       roundId,
@@ -877,11 +942,11 @@ function App() {
       if (allowEmptySend() && hostMember()) {
         const result = await chatSubmitInput(conversationId, hostMember()!.id, content);
         if (result.visibleUserMessage) {
-          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter()));
+          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter()));
         }
         if (result.assistantMessage) {
           upsertAssistantMessage({
-            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
+            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter()),
             isStreaming: true,
           });
           queueCharacterStateOverlay();
@@ -892,11 +957,11 @@ function App() {
       } else if (providerId) {
         const result = await sendMessage(conversationId, providerId, content);
         if (result.visibleUserMessage) {
-          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter()));
+          upsertUserMessage(toChatMessage(result.visibleUserMessage, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter()));
         }
         if (result.assistantMessage) {
           upsertAssistantMessage({
-            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter()),
+            ...toChatMessage(result.assistantMessage, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter()),
             isStreaming: true,
           });
           queueCharacterStateOverlay();
@@ -919,13 +984,16 @@ function App() {
   };
 
   const handleAbortReply = async () => {
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id;
+    if (!conversationId || !memberId) return;
     const roundId = abortingRoundId();
     if (!roundId) {
       const streamingMsg = messages.find((m) => m.sender === 'ai' && m.isStreaming);
       if (streamingMsg?.roundId) {
         setAbortingRoundId(streamingMsg.roundId);
         try {
-          await abortRoundStream(streamingMsg.roundId);
+          await abortRoundStream(conversationId, memberId, streamingMsg.roundId);
           setReplyStatus('idle');
           setAbortingRoundId(null);
           setMessages(
@@ -944,7 +1012,7 @@ function App() {
     }
 
     try {
-      await abortRoundStream(roundId);
+      await abortRoundStream(conversationId, memberId, roundId);
       setReplyStatus('idle');
       setAbortingRoundId(null);
       setMessages(
@@ -1033,9 +1101,11 @@ function App() {
   };
 
   const handleEditMessage = async (id: string, content: string) => {
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id;
     const backendId = messages.find(m => m.id === id)?.backendId;
-    if (!backendId) return;
-    await messagesUpdateContent(backendId, content);
+    if (!conversationId || !memberId || !backendId) return;
+    await messagesUpdateContent(conversationId, memberId, backendId, content);
     setMessages(
       (m) => m.id === id,
       'content',
@@ -1044,6 +1114,7 @@ function App() {
   };
 
   const handleForkMessage = async (id: string) => {
+    if (selectedConversation()?.conversationType === 'online') return;
     const conversationId = selectedConversationId();
     const backendId = messages.find(m => m.id === id)?.backendId;
     if (!conversationId || !backendId) return;
@@ -1064,12 +1135,14 @@ function App() {
   };
 
   const handleDeleteMessage = async (id: string) => {
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id;
     const msg = messages.find(m => m.id === id);
     const backendId = msg?.backendId;
-    if (!backendId) return;
+    if (!conversationId || !memberId || !backendId) return;
 
     try {
-      await messagesDelete(backendId);
+      await messagesDelete(conversationId, memberId, backendId);
 
       if (msg?.sender === 'ai' && msg?.roundId != null) {
         setMessages((list) => list.filter((m) => m.roundId !== msg.roundId));
@@ -1121,8 +1194,10 @@ function App() {
   const getSwipeInfo = (messageId: string) => SwipeInfoMap().get(messageId);
 
   const handleSwitchSwipe = async (messageId: string, direction: 'prev' | 'next') => {
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id;
     const msg = messages.find(m => m.id === messageId);
-    if (!msg || msg.roundId == null) return;
+    if (!conversationId || !memberId || !msg || msg.roundId == null) return;
     const roundMessages = messages.filter(m => m.sender === 'ai' && m.roundId === msg.roundId);
     const currentIndex = roundMessages.findIndex(m => m.id === messageId);
     if (currentIndex < 0) return;
@@ -1135,8 +1210,8 @@ function App() {
     if (!targetBackendId) return;
 
     try {
-      const result = await messagesSwitchSwipe(msg.roundId, targetBackendId);
-      upsertAssistantMessage(toChatMessage(result, currentAiCharacter(), currentPlayerCharacter()));
+      const result = await messagesSwitchSwipe(conversationId, memberId, msg.roundId, targetBackendId);
+      upsertAssistantMessage(toChatMessage(result, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter()));
     } catch (error) {
       console.error('[conversation-debug] frontend:swipe_switch:error', {
         messageId,
@@ -1182,6 +1257,38 @@ function App() {
         error,
       });
       window.alert(`删除会话失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleOpenRoom = async (conversationId: number) => {
+    setRoomActionLoading(true);
+    try {
+      await roomOpen({ conversationId });
+      await refreshSessions();
+    } catch (error) {
+      console.error('[room] frontend:open_room:error', {
+        conversationId,
+        error,
+      });
+      window.alert(`开启房间失败：${toErrorMessage(error)}`);
+    } finally {
+      setRoomActionLoading(false);
+    }
+  };
+
+  const handleCloseRoom = async (conversationId: number) => {
+    setRoomActionLoading(true);
+    try {
+      await roomClose();
+      await refreshSessions();
+    } catch (error) {
+      console.error('[room] frontend:close_room:error', {
+        conversationId,
+        error,
+      });
+      window.alert(`关闭房间失败：${toErrorMessage(error)}`);
+    } finally {
+      setRoomActionLoading(false);
     }
   };
 
@@ -1274,10 +1381,47 @@ function App() {
     await refreshCharacters();
   };
 
+  const handleImportExchange = async (file: File) => {
+    try {
+      const payloadJson = await file.text();
+      const report = await exchangeImport(payloadJson);
+      await Promise.all([refreshCharacters(), refreshWorldBooks()]);
+      window.alert(
+        `导入完成：角色 ${report.characters} 个、世界书 ${report.worldBooks} 本、条目 ${report.worldBookEntries} 条、头像 ${report.avatars} 张。`,
+      );
+    } catch (error) {
+      console.error('[exchange] frontend:import:error', { fileName: file.name, error });
+      window.alert(`导入失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleExportCharacter = async (character: CharacterCard) => {
+    try {
+      const json = await characterCardsExport(character.id);
+      const fileName = `${sanitizeFileName(character.name, 'character')}.nvexchange.json`;
+      downloadJsonFile(fileName, json);
+    } catch (error) {
+      console.error('[exchange] frontend:export_character:error', { id: character.id, error });
+      window.alert(`导出角色卡失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleExportWorldBook = async (book: WorldBookSummary) => {
+    try {
+      const json = await worldBooksExport(book.id);
+      const fileName = `${sanitizeFileName(book.title, 'worldbook')}.nvexchange.json`;
+      downloadJsonFile(fileName, json);
+    } catch (error) {
+      console.error('[exchange] frontend:export_world_book:error', { id: book.id, error });
+      window.alert(`导出世界书失败：${toErrorMessage(error)}`);
+    }
+  };
+
   const handleSaveConversationBindings = async (payload: {
     presetId?: number;
     worldBookId?: number;
     providerId?: number;
+    embeddingProviderId?: number | null;
   }) => {
     const conversationId = selectedConversationId();
     if (conversationId == null) {
@@ -1288,6 +1432,7 @@ function App() {
       presetId: payload.presetId,
       worldBookId: payload.worldBookId,
       providerId: payload.providerId,
+      embeddingProviderId: payload.embeddingProviderId,
     });
     await refreshSessions();
     await refreshConversationContext(conversationId);
@@ -1345,23 +1490,11 @@ function App() {
     await refreshWorldBooks();
   };
 
-  const handleUpdateMemoryMode = async (mode: 'stateless' | 'mem0') => {
+  const handleSnapshotWindowChange = async (window: number) => {
     const conversationId = selectedConversationId();
     if (conversationId == null) return;
-    await memoryModeSet(conversationId, mode);
+    await mem0SnapshotWindowSet(conversationId, window);
     await refreshSessions();
-    await refreshConversationContext(conversationId);
-  };
-
-  const refreshMem0Status = async () => {
-    try {
-      const status = await mem0Status();
-      setMem0Available(status.enabled && status.providerReady);
-    } catch (error) {
-      // Explicit: surface failure as "not available" rather than silently hiding.
-      console.error('[mem0] status check failed:', error);
-      setMem0Available(false);
-    }
   };
 
   const handleSetEnableDynamicEffects = async (enabled: boolean) => {
@@ -1379,9 +1512,19 @@ function App() {
     connection: { hostAddress: string; port: number; displayName: string },
   ) => {
     if (!result.conversation || result.memberId == null) {
-      console.error('[room:join] missing room session metadata', result);
+      console.error('[room-join] missing room session metadata', result);
       return;
     }
+
+    const hostCharacter: RoomHostCharacter | null =
+      result.hostCharacterImageBase64 || result.hostCharacterName
+        ? {
+            name: result.hostCharacterName ?? '',
+            description: result.hostCharacterDescription ?? '',
+            imagePath: null,
+            imageBase64: result.hostCharacterImageBase64 ?? null,
+          }
+        : null;
 
     setRoomClientSession({
       roomId: result.roomId,
@@ -1390,13 +1533,23 @@ function App() {
       displayName: connection.displayName,
       hostAddress: connection.hostAddress,
       port: connection.port,
+      hostCharacter,
+    });
+    console.debug('[room-joined]', {
+      conversationId: result.conversation.id,
+      memberId: result.memberId,
+      messageCount: result.fullMessages?.length ?? result.recentMessages?.length ?? 0,
+      memberCount: result.members?.length ?? 0,
+      hasHostCharacter: !!(result.hostCharacterImageBase64 || result.hostCharacterName),
     });
     setActiveWorkspace('chat');
     setSelectedConversationId(result.conversation.id);
     setSelectedConversationMembers(result.members ?? []);
-    setMessages((result.recentMessages ?? []).map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter())));
+    setMessages((result.fullMessages ?? result.recentMessages ?? []).map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
     setCurrentRoundState(result.roundState ?? null);
     setActiveModal(null);
+    // 主动拉取全量上下文（兜底处理 MemberJoined 广播失败的情况）
+    void roomRequestContext();
   };
 
   const handleRoomLeft = () => {
@@ -1418,8 +1571,15 @@ function App() {
 
     await Promise.all([refreshSessions(), refreshProviders(), refreshPresets(), refreshCharacters(), refreshWorldBooks()]);
 
-    // mem0 capability is optional; probe its readiness without blocking startup.
-    void refreshMem0Status();
+    // Check mem0 init status at startup and surface any error to the UI.
+    try {
+      const initStatus = await mem0InitStatus();
+      if (initStatus.error) {
+        setMem0InitError(initStatus.error);
+      }
+    } catch (err) {
+      console.error('[mem0] failed to query init status:', err);
+    }
 
     const settingsData = await settingsGetAll();
     const dynamicEffectSetting = settingsData.find((s: { key: string }) => s.key === 'enableDynamicEffects');
@@ -1440,6 +1600,11 @@ function App() {
 
     const chunkUnlisten = await listenLlmStreamEvent((payload) => {
       if (payload.conversationId !== selectedConversationId()) return;
+
+      // Stream lifecycle broadcasts (text_delta / message_stop / structured field
+      // deltas) are emitted by the backend directly via host_server.broadcast_message,
+      // so the host frontend only updates local UI here. Guests receive room:stream_*
+      // events via the dedicated listeners below.
 
       switch (payload.eventKind) {
         case 'text_delta': {
@@ -1525,6 +1690,23 @@ function App() {
       setAbortingRoundId(null);
     });
 
+    const retryUnlisten = await listenStreamRetry((payload) => {
+      if (payload.conversationId !== selectedConversationId()) return;
+      console.warn('[llm-stream-retry] auto-retrying after error:', payload.error, 'messageId=', payload.messageId, 'roundId=', payload.roundId, 'attemptCount=', payload.attemptCount);
+      // 弹窗通知用户:展示失败原因与重试次数,4 秒后自动消失。
+      setRetryNotice({ error: payload.error, attemptCount: payload.attemptCount });
+      if (retryNoticeTimer) clearTimeout(retryNoticeTimer);
+      retryNoticeTimer = setTimeout(() => setRetryNotice(null), 4000);
+      upsertStreamingAssistant(payload.messageId, payload.roundId);
+      updateMessageContent(payload.messageId, () => ({
+        content: '',
+        isStreaming: true,
+        error: undefined,
+        structuredFields: undefined,
+      }));
+      setReplyStatus('connecting');
+    });
+
     const messageResetUnlisten = await listenMessageReset((payload) => {
       if (payload.conversationId !== selectedConversationId()) return;
       updateMessageContent(payload.messageId, () => ({
@@ -1540,19 +1722,6 @@ function App() {
     const roundUnlisten = await listenRoundState((payload) => {
       if (payload.round.conversationId !== selectedConversationId()) return;
       setCurrentRoundState(payload.round);
-    });
-
-    const overlayUpdatedUnlisten = await listenCharacterStateOverlayUpdated((payload) => {
-      if (payload.conversationId !== selectedConversationId()) return;
-      setCharacterStateOverlaySummary(payload.summaryText);
-      setCharacterStateOverlayStatus('completed');
-      setCharacterStateOverlayError(null);
-    });
-
-    const overlayErrorUnlisten = await listenCharacterStateOverlayError((payload) => {
-      if (payload.conversationId !== selectedConversationId()) return;
-      setCharacterStateOverlayStatus('failed');
-      setCharacterStateOverlayError(payload.error);
     });
 
     const plotSummaryUpdatedUnlisten = await listenPlotSummaryUpdated((payload) => {
@@ -1571,6 +1740,11 @@ function App() {
     });
 
     const roomChunkUnlisten = await listenRoomStreamChunk((payload: RoomStreamChunkEvent) => {
+      console.debug('[room-stream_chunk] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        deltaLength: payload.delta?.length ?? 0,
+      });
       if (payload.conversationId !== selectedConversationId()) return;
       // Host already receives stream data via llm-stream-event; skip to avoid duplicates
       if (!activeRoomClientSession()) return;
@@ -1582,6 +1756,11 @@ function App() {
     });
 
     const roomStreamEndUnlisten = await listenRoomStreamEnd((payload: RoomStreamEndEvent) => {
+      console.debug('[room-stream_end] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        roundId: payload.roundId,
+      });
       if (payload.conversationId !== selectedConversationId()) return;
       // Host already receives stream end via llm-stream-event; skip to avoid duplicates
       if (!activeRoomClientSession()) return;
@@ -1591,12 +1770,125 @@ function App() {
       }));
     });
 
+    const roomStructuredDeltaUnlisten = await listenRoomStreamStructuredFieldDelta((payload: RoomStreamStructuredFieldDeltaEvent) => {
+      if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives structured deltas via llm-stream-event; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
+      const delta = payload.delta ?? '';
+      const fieldKey = payload.fieldKey ?? '';
+      if (!delta || !fieldKey) return;
+      const normalizedDelta = delta.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+      upsertStreamingAssistant(payload.messageId, payload.roundId);
+      updateMessageContent(payload.messageId, (message) => {
+        const existing = message.structuredFields ?? {};
+        const field = existing[fieldKey] ?? '';
+        return {
+          structuredFields: { ...existing, [fieldKey]: field + normalizedDelta },
+          isStreaming: true,
+        } as any;
+      });
+      setReplyStatus('responding');
+      setAbortingRoundId(payload.roundId);
+    });
+
+    const roomObjectCompleteUnlisten = await listenRoomStreamObjectFieldComplete((payload: RoomStreamObjectFieldCompleteEvent) => {
+      if (payload.conversationId !== selectedConversationId()) return;
+      if (!activeRoomClientSession()) return;
+      const fieldKey = payload.fieldKey ?? '';
+      const jsonStr = payload.json ?? '';
+      if (!fieldKey || !jsonStr) return;
+      upsertStreamingAssistant(payload.messageId, payload.roundId);
+      updateMessageContent(payload.messageId, (message) => {
+        const existing = message.structuredFields ?? {};
+        return {
+          structuredFields: { ...existing, [fieldKey]: jsonStr },
+          isStreaming: true,
+        } as any;
+      });
+      setReplyStatus('responding');
+      setAbortingRoundId(payload.roundId);
+    });
+
+    const roomStreamRetryUnlisten = await listenRoomStreamRetry((payload: RoomStreamRetryEvent) => {
+      console.debug('[room-stream_retry] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        roundId: payload.roundId,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives retry via llm-stream-retry; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
+      upsertStreamingAssistant(payload.messageId, payload.roundId);
+      updateMessageContent(payload.messageId, () => ({
+        content: '',
+        isStreaming: true,
+      }));
+    });
+
+    const roomMessageResetUnlisten = await listenRoomMessageReset((payload: RoomMessageResetEvent) => {
+      console.debug('[room-message_reset] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        roundId: payload.roundId,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives reset via llm-stream-event message_reset; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
+      upsertStreamingAssistant(payload.messageId, payload.roundId);
+      updateMessageContent(payload.messageId, () => ({
+        content: '',
+        isStreaming: true,
+      }));
+    });
+
+    const roomContextSnapshotUnlisten = await listenRoomContextSnapshot((payload: RoomContextSnapshotEvent) => {
+      console.debug('[room-context_snapshot] received', {
+        conversationId: payload.conversationId,
+        messageCount: payload.messages?.length ?? 0,
+        memberCount: payload.members?.length ?? 0,
+        hasHostCharacter: !!(payload.hostCharacterImageBase64 || payload.hostCharacterName),
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      // Host already has the data; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
+      console.debug('[room-context_snapshot] before update: messages.length=', messages.length, 'members.length=', selectedConversationMembers.length, 'roundState.status=', currentRoundState()?.status);
+      setMessages(payload.messages.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
+      setSelectedConversationMembers(payload.members ?? []);
+      setCurrentRoundState(payload.roundState ?? null);
+      // 同时更新 remoteHostCharacter（如果房主后发来了带图片的 ContextSnapshot）
+      if (payload.hostCharacterImageBase64 || payload.hostCharacterName) {
+        const remote = activeRoomClientSession();
+        if (remote) {
+          setRoomClientSession({
+            ...remote,
+            hostCharacter: {
+              name: payload.hostCharacterName ?? '',
+              description: payload.hostCharacterDescription ?? '',
+              imagePath: null,
+              imageBase64: payload.hostCharacterImageBase64 ?? null,
+            },
+          });
+        }
+      }
+    });
+
     const roomRoundStateUnlisten = await listenRoomRoundStateUpdate((payload: RoomRoundStateUpdateEvent) => {
+      console.debug('[room-round_state_update] received', {
+        conversationId: payload.roundState.conversationId,
+        status: payload.roundState.status,
+      });
       if (payload.roundState.conversationId !== selectedConversationId()) return;
+      console.debug('[room-round_state_update] before update: roundState.status=', currentRoundState()?.status);
       setCurrentRoundState(payload.roundState);
     });
 
     const roomPlayerMessageUnlisten = await listenRoomPlayerMessage((payload: RoomPlayerMessageEvent) => {
+      console.debug('[room-player_message] received', {
+        conversationId: payload.conversationId,
+        memberId: payload.memberId,
+        messageId: payload.messageId,
+        actionType: payload.actionType,
+      });
       const conversationId = payload.conversationId ?? selectedConversationId();
       if (conversationId !== selectedConversationId()) return;
       if (payload.actionType === 'skipped') return;
@@ -1606,6 +1898,7 @@ function App() {
       const host = hostMember();
       if (!activeRoomClientSession() && host && payload.memberId === host.id) return;
 
+      console.debug('[room-player_message] before upsert: messages.length=', messages.length);
       upsertUserMessage({
         id: payload.messageId != null
           ? String(payload.messageId)
@@ -1623,17 +1916,28 @@ function App() {
 
     const roomErrorUnlisten = await listenRoomError((payload) => {
       const msg = typeof payload === 'string' ? payload : payload.message;
-      console.error('[room:error]', msg);
+      console.error('[room-error]', msg);
+      console.debug('[room-error] payload', payload);
     });
 
     const roomDisconnectedUnlisten = await listenRoomDisconnected(() => {
+      console.debug('[room-disconnected] received, before clear: roomClientSession.conversation.id=', roomClientSession()?.conversation?.id);
       setRoomClientSession(null);
+      setSelectedConversationMembers([]);
+      setCurrentRoundState(null);
+      setMessages([]);
+      console.debug('[room-disconnected] cleared signals: messages, members, roundState');
     });
 
     // Refresh member list when a remote member joins or leaves the room
     const roomMemberJoinedUnlisten = await listenRoomMemberJoined((payload) => {
+      console.debug('[room-member_joined] received', {
+        memberId: payload.memberId,
+        displayName: payload.displayName,
+      });
       const remote = activeRoomClientSession();
       if (remote) {
+        console.debug('[room-member_joined] before update: members.length=', selectedConversationMembers.length, 'roomClientSession.conversation.id=', remote.conversation.id);
         const nextMemberCount = selectedConversationMembers.some((member) => member.id === payload.memberId)
           ? selectedConversationMembers.length
           : selectedConversationMembers.length + 1;
@@ -1667,8 +1971,12 @@ function App() {
     });
 
     const roomMemberLeftUnlisten = await listenRoomMemberLeft((payload) => {
+      console.debug('[room-member_left] received', {
+        memberId: payload.memberId,
+      });
       const remote = activeRoomClientSession();
       if (remote) {
+        console.debug('[room-member_left] before update: members.length=', selectedConversationMembers.length, 'roomClientSession.conversation.id=', remote.conversation.id);
         const nextMembers = selectedConversationMembers.filter((member) => member.id !== payload.memberId);
         setSelectedConversationMembers(nextMembers);
         setRoomClientSession({
@@ -1687,24 +1995,35 @@ function App() {
       }
     });
 
+    const memoryErrorUnlisten = await listenMemoryError((payload) => {
+      console.error('[llm-memory-error]', payload.operation, payload.strategy, payload.error, 'conv=', payload.conversationId, 'round=', payload.roundId);
+      setMemoryBackendErrors(produce((errs) => { errs.push(payload); }));
+    });
+
     onCleanup(() => {
       chunkUnlisten();
       errorUnlisten();
+      retryUnlisten();
       messageResetUnlisten();
       roundUnlisten();
-      overlayUpdatedUnlisten();
-      overlayErrorUnlisten();
       plotSummaryUpdatedUnlisten();
       plotSummaryErrorUnlisten();
       plotSummaryPendingUnlisten();
       roomChunkUnlisten();
       roomStreamEndUnlisten();
+      roomStructuredDeltaUnlisten();
+      roomObjectCompleteUnlisten();
+      roomStreamRetryUnlisten();
+      roomMessageResetUnlisten();
+      roomContextSnapshotUnlisten();
       roomRoundStateUnlisten();
       roomPlayerMessageUnlisten();
+      if (retryNoticeTimer) clearTimeout(retryNoticeTimer);
       roomErrorUnlisten();
       roomDisconnectedUnlisten();
       roomMemberJoinedUnlisten();
       roomMemberLeftUnlisten();
+      memoryErrorUnlisten();
     });
   });
 
@@ -1723,9 +2042,46 @@ function App() {
     <>
       <AuroraBackground
         isActive={activeWorkspace() === 'chat' && selectedConversationId() !== null}
-        characterImageUrl={toAssetUrl(selectedCharacter()?.imagePath)}
+        characterImageUrl={
+          activeRoomClientSession()?.hostCharacter?.imageBase64
+          ?? toAssetUrl(selectedCharacter()?.imagePath)
+        }
         enableAurora={enableDynamicEffects()}
       />
+      <Show when={retryNotice()}>
+        {(notice) => (
+          <div
+            style={{
+              position: 'fixed',
+              top: '24px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              'z-index': 9999,
+              'min-width': '320px',
+              'max-width': '560px',
+              padding: '12px 18px',
+              'border-radius': '10px',
+              background: 'rgba(20, 20, 28, 0.95)',
+              color: '#fff',
+              'font-size': '14px',
+              'line-height': '1.5',
+              'box-shadow': '0 8px 32px rgba(0, 0, 0, 0.45)',
+              border: '1px solid rgba(255, 120, 120, 0.5)',
+              display: 'flex',
+              'flex-direction': 'column',
+              gap: '4px',
+              'pointer-events': 'none',
+            }}
+          >
+            <div style={{ 'font-weight': 600, color: '#ff9a9a' }}>
+              自动重试中 · 第 {notice().attemptCount} 次尝试
+            </div>
+            <div style={{ opacity: 0.85, 'word-break': 'break-word' }}>
+              失败原因:{notice().error}
+            </div>
+          </div>
+        )}
+      </Show>
       <AnimatedDesktopView
         messages={visibleMessages()}
         activeWorkspace={activeWorkspace()}
@@ -1754,6 +2110,9 @@ function App() {
         allowEmptySend={allowEmptySend()}
         onSelectConversation={setSelectedConversationId}
         onDeleteConversation={handleDeleteConversation}
+        onOpenRoom={handleOpenRoom}
+        onCloseRoom={handleCloseRoom}
+        roomActionLoading={roomActionLoading()}
         providers={providers}
         providerModels={providerModels}
         providersLoading={providersLoading()}
@@ -1768,17 +2127,20 @@ function App() {
         onCreateCharacter={handleCreateCharacter}
         onUpdateCharacter={handleUpdateCharacter}
         onDeleteCharacter={handleDeleteCharacter}
+        onImportExchange={handleImportExchange}
+        onExportCharacter={handleExportCharacter}
         selectedCharacter={selectedCharacter()}
         selectedPresetId={selectedConversation()?.presetId ?? null}
         selectedWorldBookId={selectedConversation()?.worldBookId ?? null}
         selectedProviderId={selectedConversation()?.providerId ?? null}
+        selectedEmbeddingProviderId={selectedConversation()?.embeddingProviderId ?? null}
         presetSummaries={presetSummaries}
         characterStateOverlaySummary={characterStateOverlaySummary()}
         characterStateOverlayStatus={characterStateOverlayStatus()}
         characterStateOverlayError={characterStateOverlayError()}
         memoryMode={selectedConversation()?.memoryMode ?? 'stateless'}
-        mem0Available={mem0Available()}
-        onUpdateMemoryMode={handleUpdateMemoryMode}
+        mem0SnapshotWindow={selectedConversation()?.mem0SnapshotWindow}
+        onSnapshotWindowChange={handleSnapshotWindowChange}
         onSaveConversationBindings={handleSaveConversationBindings}
         currentPlayerCharacter={currentPlayerCharacter()}
         onSwitchPlayerCharacter={handleSwitchPlayerCharacter}
@@ -1789,6 +2151,7 @@ function App() {
         onCreateWorldBook={handleCreateWorldBook}
         onUpdateWorldBook={handleUpdateWorldBook}
         onDeleteWorldBook={handleDeleteWorldBook}
+        onExportWorldBook={handleExportWorldBook}
         onUpsertWorldBookEntry={handleUpsertWorldBookEntry}
         onDeleteWorldBookEntry={handleDeleteWorldBookEntry}
         enableDynamicEffects={enableDynamicEffects()}
@@ -1797,7 +2160,10 @@ function App() {
         worldBookKeywords={worldBookKeywords()}
         onSetFormatConfig={handleSetFormatConfig}
         isRoomClient={activeRoomClientSession() !== null}
+        isOnline={selectedConversation()?.conversationType === 'online'}
         onPresetsChanged={refreshPresets}
+        mem0InitError={mem0InitError()}
+        memoryErrors={memoryBackendErrors}
       />
 
       <NewChatModal
@@ -1814,6 +2180,7 @@ function App() {
       <JoinRoomModal
         isOpen={activeModal() === 'join_room'}
         onClose={() => setActiveModal(null)}
+        playerCharacters={playerCharacters}
         onJoined={handleRoomJoined}
         onLeft={handleRoomLeft}
       />

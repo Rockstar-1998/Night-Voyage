@@ -25,6 +25,7 @@ export interface ConversationListItem {
   mem0SnapshotWindow?: number;
   memberCount: number;
   pendingMemberCount: number;
+  roomStatus?: 'open' | 'closed' | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -428,6 +429,21 @@ export interface CreateCharacterCardPayload {
   defaultProviderId?: number;
 }
 
+// ─── Guest character card payload (room join) ───
+
+export interface GuestCharacterBaseSection {
+  sectionKey: string;
+  title?: string;
+  content: string;
+}
+
+export interface GuestCharacterCardPayload {
+  name: string;
+  description: string;
+  tags: string[];
+  baseSections: GuestCharacterBaseSection[];
+}
+
 // ─── World book ───
 
 export interface WorldBookSummary {
@@ -733,6 +749,20 @@ export interface RoomCreateResult {
   alternativeAddresses: string[];
 }
 
+export interface RoomOpenResult {
+  roomId: number;
+  hostAddress: string;
+  port: number;
+  alternativeAddresses: string[];
+}
+
+export interface RoomStatusResult {
+  roomId?: number;
+  isOpen: boolean;
+  port?: number;
+  currentPlayerCount: number;
+}
+
 export interface RoomJoinResult {
   success: boolean;
   message: string;
@@ -742,6 +772,30 @@ export interface RoomJoinResult {
   members?: ConversationMember[];
   recentMessages?: UiMessage[];
   roundState?: RoundState;
+  // Extended fields for guest client synchronization (fix-room-guest-client-sync).
+  // Backend uses `#[serde(alias = "recentMessages")]` to also serialize under the old
+  // field name, so older clients that only know `recentMessages` keep working.
+  hostCharacterImageBase64?: string | null;
+  hostCharacterName?: string | null;
+  hostCharacterDescription?: string | null;
+  fullMessages?: UiMessage[];
+}
+
+export interface RoomHostCharacter {
+  name: string;
+  description: string;
+  imagePath?: string | null;
+  imageBase64?: string | null;
+}
+
+export interface RoomContextSnapshotEvent {
+  conversationId: number;
+  messages: UiMessage[];
+  members: ConversationMember[];
+  roundState: RoundState | null;
+  hostCharacterImageBase64?: string | null;
+  hostCharacterName?: string | null;
+  hostCharacterDescription?: string | null;
 }
 
 export interface RoomMemberJoinedEvent {
@@ -776,6 +830,22 @@ export interface RoomStreamEndEvent {
   conversationId: number;
   roundId: number;
   messageId: number;
+}
+
+export interface RoomStreamStructuredFieldDeltaEvent {
+  conversationId: number;
+  roundId: number;
+  messageId: number;
+  fieldKey: string;
+  delta: string;
+}
+
+export interface RoomStreamObjectFieldCompleteEvent {
+  conversationId: number;
+  roundId: number;
+  messageId: number;
+  fieldKey: string;
+  json: string;
 }
 
 export interface RoomStreamRetryEvent {

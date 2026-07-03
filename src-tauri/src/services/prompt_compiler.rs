@@ -10,7 +10,6 @@ use crate::{
     llm::ChatMessage,
     models::{TokenLayerUsage, TokenUsageReport},
     services::{
-        character_state_overlays::load_latest_character_state_overlay_block,
         memory_service::MemoryService,
         plot_summaries::{
             load_completed_plot_summary_round_ids_before, load_plot_summary_blocks,
@@ -48,6 +47,9 @@ pub struct PromptCompileInput {
     pub model_name: String,
     pub include_streaming_seed: bool,
     pub budget: PromptBudget,
+    /// Optional log directory for intermediate LLM request logging (e.g. MEM0 search).
+    /// When set, intermediate requests are logged to `{log_dir}/llm_debug_logs/`.
+    pub log_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,6 +366,8 @@ pub struct PromptCompileDebugReport {
     pub capability_checks: Vec<String>,
     pub total_token_estimate_before_trim: usize,
     pub total_token_estimate_after_trim: usize,
+    /// Errors encountered during compilation (e.g. failed mem0 search strategies).
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +387,7 @@ struct ConversationCompileContext {
     preset_id: Option<i64>,
     conversation_type: String,
     player_character_id: Option<i64>,
+    guest_characters: Vec<CharacterCompileData>,
 }
 
 const TEMPLATE_BLOCK_TYPE_PREFIX: &str = "template:";
@@ -393,10 +398,12 @@ const MAX_WORLD_BOOK_BLOCKS: usize = 8;
 const DEFAULT_MAX_WORLD_BOOK_TOKENS: usize = 512;
 
 pub const MEMORY_MODE_STATELESS: &str = "stateless";
+pub const MEMORY_MODE_LEGACY: &str = "legacy";
 pub const MEMORY_MODE_MEM0: &str = "mem0";
 
 /// Load the per-conversation memory mode. Defaults to `stateless` on any error
 /// or missing row so the feature degrades safely.
+/// Recognised values: "mem0", "legacy", anything else → "stateless".
 pub async fn load_memory_mode(db: &SqlitePool, conversation_id: i64) -> String {
     sqlx::query_scalar::<_, String>(
         "SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1",
@@ -406,7 +413,7 @@ pub async fn load_memory_mode(db: &SqlitePool, conversation_id: i64) -> String {
     .await
     .ok()
     .flatten()
-    .filter(|v| v == MEMORY_MODE_MEM0)
+    .filter(|v| v == MEMORY_MODE_MEM0 || v == MEMORY_MODE_LEGACY)
     .unwrap_or_else(|| MEMORY_MODE_STATELESS.to_string())
 }
 
@@ -577,16 +584,16 @@ pub async fn compile_prompt(
             true,
         ));
     }
-    let mut latest_character_state_overlay_text = None;
+    let mut latest_world_variable_text = None;
     let memory_mode = load_memory_mode(db, input.conversation_id).await;
     let mem0_active = memory_mode == MEMORY_MODE_MEM0;
+    let is_legacy = memory_mode == MEMORY_MODE_LEGACY;
 
-    // In mem0 mode, Mem0 is the sole dynamic memory authority; all legacy
-    // dynamic layers (PlotSummary, CharacterStateOverlay) are gated off.
-    // In stateless mode, plot_summary_enabled controls the legacy layers.
-    let plot_summary_enabled = if mem0_active {
-        false
-    } else {
+    // Three-mode gating:
+    // - mem0: Mem0 is sole dynamic memory authority; no PlotSummary/WorldVariable/RecentHistory.
+    // - legacy: PlotSummary (batch + placeholder) + WorldVariable (preset-gated) + RecentHistory (windowed).
+    // - stateless: No PlotSummary, WorldVariable (preset-gated), RecentHistory (full/unlimited).
+    let plot_summary_enabled = if is_legacy {
         load_plot_summary_mode(db, input.conversation_id)
             .await
             .unwrap_or_else(|err| {
@@ -594,6 +601,8 @@ pub async fn compile_prompt(
                 PLOT_SUMMARY_MODE_DISABLED.to_string()
             })
             != PLOT_SUMMARY_MODE_DISABLED
+    } else {
+        false
     };
 
     if let Some(character_data) = character_data.as_ref() {
@@ -603,19 +612,20 @@ pub async fn compile_prompt(
                 .push(format!("character:{}", character_data.character_id));
             system_blocks.push(character_block);
         }
-        if plot_summary_enabled {
-            if let Some(character_state_overlay_block) = load_latest_character_state_overlay_block(
+        // WorldVariable: preset-gated, reads from message_rounds.world_variables.
+        // Active in stateless and legacy modes; skipped in mem0 mode.
+        if !mem0_active {
+            if let Some(wv_block) = load_world_variable_block(
                 db,
                 input.conversation_id,
-                character_data.character_id,
                 input.target_round_id,
+                context.preset_id,
                 &mut debug,
             )
             .await?
             {
-                latest_character_state_overlay_text =
-                    Some(character_state_overlay_block.content.clone());
-                system_blocks.push(character_state_overlay_block);
+                latest_world_variable_text = Some(wv_block.content.clone());
+                system_blocks.push(wv_block);
             }
         }
     }
@@ -623,6 +633,12 @@ pub async fn compile_prompt(
         if let Some(player_block) = build_player_base_block(player_data) {
             debug.input_sources.push(format!("player_character:{}", player_data.character_id));
             system_blocks.push(player_block);
+        }
+    }
+    for guest_data in &context.guest_characters {
+        if let Some(guest_block) = build_player_base_block_for_guest(guest_data) {
+            debug.input_sources.push(format!("guest_character:{}", guest_data.character_id));
+            system_blocks.push(guest_block);
         }
     }
 
@@ -651,8 +667,10 @@ pub async fn compile_prompt(
         (Vec::new(), HashSet::new())
     };
 
-    // mem0 mode: 0-round recent history window — all historical context is
-    // provided by Mem0 retrieved detail blocks. Stateless mode: full history.
+    // RecentHistory gating:
+    // - mem0: 0-round recent history window (context via RetrievedDetail),
+    //         but the opening message is always injected below as foundational scene context
+    // - legacy / stateless: full history (summarized_round_ids empty for stateless)
     let history_blocks = if mem0_active {
         Vec::new()
     } else {
@@ -678,7 +696,7 @@ pub async fn compile_prompt(
         })?
     };
 
-    let history_blocks = if preset_compiler_data.params.response_mode.as_deref() == Some("structured_json") {
+    let mut history_blocks = if preset_compiler_data.params.response_mode.as_deref() == Some("structured_json") {
         if let Some(ref context_keys_json) = preset_compiler_data.params.context_included_keys {
             if let Ok(context_map) = serde_json::from_str::<std::collections::HashMap<String, bool>>(context_keys_json) {
                 history_blocks.into_iter().map(|mut block| {
@@ -697,6 +715,19 @@ pub async fn compile_prompt(
         history_blocks
     };
 
+    // Ensure the opening message is always present and marked as required
+    // across all memory modes. The opening establishes the initial scene and
+    // must never be omitted regardless of history windowing or memory mode.
+    ensure_opening_in_history(
+        db,
+        input.conversation_id,
+        input.target_round_id,
+        exclude_message_id,
+        &mut history_blocks,
+        &mut debug,
+    )
+    .await;
+
     if let Some(world_book_id) = context.world_book_id {
         eprintln!(
             "[prompt-compiler] compile_prompt: step=load_world_book_blocks world_book_id={}",
@@ -705,7 +736,7 @@ pub async fn compile_prompt(
         let world_book_trigger_sources = build_world_book_trigger_sources(
             &current_user_block,
             &history_blocks,
-            latest_character_state_overlay_text.as_deref(),
+            latest_world_variable_text.as_deref(),
         );
         system_blocks.extend(
             load_world_book_blocks(
@@ -720,20 +751,21 @@ pub async fn compile_prompt(
     }
     system_blocks.extend(plot_summary_blocks);
 
-    // Layer 6: retrieved memory details (mem0). Best-effort: a missing service,
-    // a disabled conversation, or a search failure all degrade to zero blocks
-    // without aborting compilation.
+    // Layer 6: retrieved memory details (mem0). Propagates errors so the UI
+    // can display retrieval failures rather than silently degrading.
     let retrieved_detail_blocks = load_retrieved_detail_blocks(
         db,
         memory_service,
         input.conversation_id,
+        input.target_round_id,
         &current_user_block.content,
         character_data.as_ref().map(|c| c.name.as_str()),
         mem0_active,
         input.budget.max_retrieved_detail_tokens,
         &mut debug,
+        input.log_dir.as_deref(),
     )
-    .await;
+    .await?;
     system_blocks.extend(retrieved_detail_blocks);
 
     system_blocks.sort_by(|left, right| left.priority.cmp(&right.priority));
@@ -783,6 +815,7 @@ pub async fn compile_chat_messages(
         model_name: String::new(),
         include_streaming_seed: false,
         budget: PromptBudget::default(),
+        log_dir: None,
     };
 
     let mut result = compile_prompt(db, &input, exclude_message_id, None).await?;
@@ -815,6 +848,7 @@ pub async fn compile_token_usage_report(
         model_name: String::new(),
         include_streaming_seed: false,
         budget: PromptBudget::default(),
+        log_dir: None,
     };
 
     let result = compile_prompt(db, &input, 0, None).await?;
@@ -1102,6 +1136,20 @@ fn build_player_base_block(character_data: &CharacterCompileData) -> Option<Prom
     ))
 }
 
+fn build_player_base_block_for_guest(character_data: &CharacterCompileData) -> Option<PromptBlock> {
+    let content = build_player_system_message(character_data)?;
+    Some(build_block(
+        PromptBlockKind::PlayerBase,
+        PromptRole::System,
+        Some(format!("Player Base — {}", character_data.name)),
+        content,
+        PromptBlockSource::Player {
+            character_id: character_data.character_id,
+        },
+        true,
+    ))
+}
+
 fn build_player_system_message(character_data: &CharacterCompileData) -> Option<String> {
     let mut sections = Vec::new();
     if !character_data.name.is_empty() {
@@ -1263,18 +1311,88 @@ async fn load_conversation_compile_context(
          WHERE c.id = ? LIMIT 1",
     )
     .bind(conversation_id)
-    .fetch_one(db)
+    .fetch_optional(db)
     .await
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| format!("conversation {} not found locally", conversation_id))?;
+
+    let conversation_type = row
+        .try_get("conversation_type")
+        .unwrap_or_else(|_| "single".to_string());
+
+    let guest_characters = if conversation_type == "online" {
+        let guest_rows = sqlx::query(
+            "SELECT id, guest_character_json FROM conversation_members \
+             WHERE conversation_id = ? AND member_role = 'member' AND is_active = 1 AND guest_character_json IS NOT NULL",
+        )
+        .bind(conversation_id)
+        .fetch_all(db)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        guest_rows
+            .into_iter()
+            .filter_map(|guest_row| {
+                let member_id: i64 = guest_row.try_get("id").ok()?;
+                let json: String = guest_row.try_get("guest_character_json").ok()?;
+                load_guest_character_compile_data(member_id, &json)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     Ok(ConversationCompileContext {
         host_character_id: row.try_get("host_character_id").ok(),
         world_book_id: row.try_get("world_book_id").ok(),
         preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
-        conversation_type: row
-            .try_get("conversation_type")
-            .unwrap_or_else(|_| "single".to_string()),
+        conversation_type,
         player_character_id: row.try_get("player_character_id").ok(),
+        guest_characters,
+    })
+}
+
+fn load_guest_character_compile_data(member_id: i64, json: &str) -> Option<CharacterCompileData> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GuestCharacterBaseSectionJson {
+        section_key: String,
+        title: Option<String>,
+        content: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GuestCharacterJson {
+        name: String,
+        description: String,
+        tags: Vec<String>,
+        base_sections: Vec<GuestCharacterBaseSectionJson>,
+    }
+
+    let parsed: GuestCharacterJson = serde_json::from_str(json).ok()?;
+    let base_sections = parsed
+        .base_sections
+        .into_iter()
+        .filter_map(|section| {
+            let content = section.content.trim().to_string();
+            if content.is_empty() {
+                return None;
+            }
+            Some(CharacterBaseSectionCompileData {
+                section_key: section.section_key.trim().to_string(),
+                title: normalize_optional_title(section.title),
+                content,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(CharacterCompileData {
+        character_id: -member_id,
+        name: parsed.name.trim().to_string(),
+        description: parsed.description.trim().to_string(),
+        tags: parsed.tags,
+        base_sections,
     })
 }
 
@@ -1754,7 +1872,7 @@ async fn load_character_base_block(
 fn build_world_book_trigger_sources(
     current_user_block: &PromptBlock,
     history_blocks: &[PromptBlock],
-    latest_character_state_overlay_text: Option<&str>,
+    latest_world_variable_text: Option<&str>,
 ) -> Vec<WorldBookTriggerSource> {
     let mut sources = Vec::new();
 
@@ -1785,13 +1903,13 @@ fn build_world_book_trigger_sources(
 
     sources.extend(recent_history_sources);
 
-    if let Some(overlay_text) = latest_character_state_overlay_text
+    if let Some(wv_text) = latest_world_variable_text
         .map(str::trim)
-        .filter(|overlay_text| !overlay_text.is_empty())
+        .filter(|wv_text| !wv_text.is_empty())
     {
         sources.push(WorldBookTriggerSource {
             kind: WorldBookTriggerSourceKind::CharacterStateOverlay,
-            text: overlay_text.to_string(),
+            text: wv_text.to_string(),
         });
     }
 
@@ -1805,21 +1923,19 @@ async fn load_world_book_blocks(
     max_world_book_tokens: Option<usize>,
     debug: &mut PromptCompileDebugReport,
 ) -> Result<Vec<PromptBlock>, String> {
-    if trigger_sources.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let entries = load_triggered_world_book_entries(db, world_book_id, trigger_sources).await?;
     let max_tokens = max_world_book_tokens.unwrap_or(DEFAULT_MAX_WORLD_BOOK_TOKENS);
     let mut blocks = Vec::new();
     let mut total_world_book_tokens = 0usize;
+    let mut non_constant_count = 0usize;
 
     for entry in entries {
         debug.input_sources.push(format!(
-            "world_book:{}:{}:{}",
+            "world_book:{}:{}:{}{}",
             entry.world_book_id,
             entry.entry_id,
-            entry.trigger_source_kind.as_str()
+            entry.trigger_source_kind.as_str(),
+            if entry.is_constant { ":constant" } else { "" }
         ));
         let content = if entry.title.trim().is_empty() {
             entry.content.clone()
@@ -1839,20 +1955,24 @@ async fn load_world_book_blocks(
                 world_book_id: entry.world_book_id,
                 entry_id: entry.entry_id,
             },
-            false,
+            entry.is_constant,
         );
         let token_cost = block
             .token_cost_estimate
             .unwrap_or_else(|| estimate_token_cost(&block.content));
 
-        if !blocks.is_empty()
-            && (blocks.len() >= MAX_WORLD_BOOK_BLOCKS
-                || total_world_book_tokens.saturating_add(token_cost) > max_tokens)
-        {
-            break;
+        // Constant (always) entries bypass the budget limit — they are
+        // foundational context that must always be included.
+        if !entry.is_constant {
+            if non_constant_count >= MAX_WORLD_BOOK_BLOCKS
+                || total_world_book_tokens.saturating_add(token_cost) > max_tokens
+            {
+                break;
+            }
+            total_world_book_tokens = total_world_book_tokens.saturating_add(token_cost);
+            non_constant_count += 1;
         }
 
-        total_world_book_tokens = total_world_book_tokens.saturating_add(token_cost);
         blocks.push(block);
     }
 
@@ -2031,6 +2151,118 @@ async fn load_recent_history_blocks(
     }
     Ok(blocks)
 }
+
+/// Load the opening message (first assistant turn that establishes the initial scene).
+/// The opening is foundational context that must always be included regardless of memory mode.
+/// Returns None if no opening exists (conversation created without an opener, or opening was deleted).
+async fn load_opening_block(
+    db: &SqlitePool,
+    conversation_id: i64,
+    target_round_id: Option<i64>,
+    exclude_message_id: i64,
+    debug: &mut PromptCompileDebugReport,
+) -> Result<Option<PromptBlock>, String> {
+    let tid = target_round_id.unwrap_or(0);
+
+    let row = sqlx::query(
+        "SELECT m.id, m.role, m.content
+         FROM messages m
+         JOIN message_rounds r ON r.active_assistant_message_id = m.id
+         WHERE m.conversation_id = ?
+           AND m.id != ?
+           AND m.message_kind = 'assistant_visible'
+           AND r.conversation_id = ?
+           AND r.round_index = 1
+           AND r.status = 'completed'
+           AND r.id != ?
+         ORDER BY m.id ASC
+         LIMIT 1",
+    )
+    .bind(conversation_id)
+    .bind(exclude_message_id)
+    .bind(conversation_id)
+    .bind(tid)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| {
+        eprintln!(
+            "[prompt-compiler] load_opening_block: SQL_ERROR: {}",
+            err
+        );
+        err.to_string()
+    })?;
+
+    let Some(row) = row else {
+        debug
+            .input_sources
+            .push("history:opening:none".to_string());
+        return Ok(None);
+    };
+
+    let message_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
+    let role = PromptRole::from_message_role(
+        &row.try_get::<String, _>("role")
+            .unwrap_or_else(|_| "assistant".to_string()),
+    );
+    let content: String = row.try_get("content").unwrap_or_default();
+
+    if content.trim().is_empty() {
+        debug
+            .input_sources
+            .push(format!("history:opening:message:{message_id}:empty"));
+        return Ok(None);
+    }
+
+    debug
+        .input_sources
+        .push(format!("history:opening:message:{message_id}"));
+
+    Ok(Some(build_block(
+        PromptBlockKind::RecentHistory,
+        role,
+        None,
+        content,
+        PromptBlockSource::Message { message_id },
+        true,
+    )))
+}
+
+/// Ensure the opening message is present in history_blocks and marked as required.
+/// In mem0 mode where history is empty, this prepends the opening.
+/// In stateless/legacy mode where history is loaded, this finds the existing opening
+/// block and marks it as required (budget-safe), or prepends it if missing.
+/// Best-effort: errors are logged but do not abort compilation.
+async fn ensure_opening_in_history(
+    db: &SqlitePool,
+    conversation_id: i64,
+    target_round_id: Option<i64>,
+    exclude_message_id: i64,
+    history_blocks: &mut Vec<PromptBlock>,
+    debug: &mut PromptCompileDebugReport,
+) {
+    let opening = match load_opening_block(db, conversation_id, target_round_id, exclude_message_id, debug).await {
+        Ok(Some(block)) => block,
+        Ok(None) => return,
+        Err(err) => {
+            eprintln!("[prompt-compiler] ensure_opening_in_history: failed to load opening (non-fatal): {}", err);
+            return;
+        }
+    };
+
+    let opening_message_id = match &opening.source {
+        PromptBlockSource::Message { message_id } => *message_id,
+        _ => return,
+    };
+
+    if let Some(existing) = history_blocks.iter_mut().find(|b| {
+        matches!(&b.source, PromptBlockSource::Message { message_id } if *message_id == opening_message_id)
+    }) {
+        existing.required = true;
+    } else {
+        history_blocks.insert(0, opening);
+    }
+}
+
 fn filter_structured_content(
     content: &str,
     context_included_keys: &std::collections::HashMap<String, bool>,
@@ -2051,35 +2283,118 @@ fn filter_structured_content(
 const RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str =
     "[历史记忆 - 非当前状态，如与最近对话矛盾以最近对话为准]\n";
 
+const WORLD_VARIABLE_AUTHORITY_PREFIX: &str =
+    "[世界变量 - 当前权威状态，由系统维护]\n";
+
+/// Load the latest world variable snapshot from `message_rounds.world_variables`.
+/// Returns `None` if:
+/// - the preset does not enable world variables (`world_variable_enabled = 0`)
+/// - no completed round has a non-empty `world_variables` value
+/// - the preset_id is unknown / missing
+async fn load_world_variable_block(
+    db: &SqlitePool,
+    conversation_id: i64,
+    target_round_id: Option<i64>,
+    preset_id: Option<i64>,
+    debug: &mut PromptCompileDebugReport,
+) -> Result<Option<PromptBlock>, String> {
+    // 1. Check preset gate
+    let Some(preset_id) = preset_id else {
+        return Ok(None);
+    };
+    let enabled: bool = sqlx::query_scalar::<_, i64>(
+        "SELECT world_variable_enabled FROM presets WHERE id = ? LIMIT 1",
+    )
+    .bind(preset_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .map(|v| v != 0)
+    .unwrap_or(false);
+
+    if !enabled {
+        return Ok(None);
+    }
+
+    // 2. Fetch the latest non-empty world_variables snapshot
+    let row = sqlx::query(
+        "SELECT id, round_index, world_variables \
+         FROM message_rounds \
+         WHERE conversation_id = ? \
+           AND status = 'completed' \
+           AND world_variables IS NOT NULL \
+           AND TRIM(world_variables) <> '' \
+           AND (? IS NULL OR id < ?) \
+         ORDER BY round_index DESC, id DESC \
+         LIMIT 1",
+    )
+    .bind(conversation_id)
+    .bind(target_round_id)
+    .bind(target_round_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let round_id: i64 = row.try_get("id").unwrap_or_default();
+    let round_index: i64 = row.try_get("round_index").unwrap_or_default();
+    let world_variables = row
+        .try_get::<String, _>("world_variables")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if world_variables.is_empty() {
+        return Ok(None);
+    }
+
+    debug.input_sources.push(format!(
+        "world_variable:{conversation_id}:{round_index}:{round_id}"
+    ));
+
+    let content = format!("{WORLD_VARIABLE_AUTHORITY_PREFIX}{world_variables}");
+
+    Ok(Some(build_block(
+        PromptBlockKind::WorldVariable,
+        PromptRole::System,
+        Some("世界变量".to_string()),
+        content,
+        PromptBlockSource::Compiler,
+        false,
+    )))
+}
+
 /// Default cap on retrieved memories per compilation.
 const DEFAULT_RETRIEVED_DETAIL_TOP_K: usize = 5;
 
 /// Layer 6 loader: pull relevant memories from the (optional) memory backend and
-/// wrap each as a `RetrievedDetail` system block. Fully best-effort — any of the
-/// following yields an empty Vec without erroring:
-/// - no memory service configured (`None`)
-/// - mem0 mode inactive (`mem0_active = false`)
-/// - empty query text
-/// - a backend search failure (logged to debug + stderr)
+/// wrap each as a `RetrievedDetail` system block.
 ///
-/// When mem0 is active, performs multi-strategy retrieval: detail recall,
-/// character-state recall, and plot-progress recall, deduplicating by memory id.
+/// Returns `Ok(blocks)` when retrieval succeeds (possibly empty when mem0 is
+/// inactive or no service is configured). Individual strategy failures are
+/// recorded in `debug.errors` **and** returned via `Err` so the caller can
+/// surface them to the UI. A `None` memory service or inactive mem0 mode is
+/// **not** an error — it returns `Ok(vec![])`.
 async fn load_retrieved_detail_blocks(
     _db: &SqlitePool,
     memory_service: Option<&Arc<dyn MemoryService>>,
     conversation_id: i64,
+    target_round_id: Option<i64>,
     current_user_input: &str,
     character_name: Option<&str>,
     mem0_active: bool,
     max_tokens: Option<usize>,
     debug: &mut PromptCompileDebugReport,
-) -> Vec<PromptBlock> {
+    log_dir: Option<&std::path::Path>,
+) -> Result<Vec<PromptBlock>, String> {
     let Some(memory_service) = memory_service else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     if !mem0_active {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let detail_query = current_user_input.trim();
@@ -2100,10 +2415,45 @@ async fn load_retrieved_detail_blocks(
         if query.is_empty() {
             continue;
         }
-        match memory_service
+
+        let search_request = serde_json::json!({
+            "operation": "mem0_search",
+            "strategy": strategy,
+            "query": query,
+            "user_id": user_id,
+            "top_k": per_strategy_top_k,
+        });
+
+        let search_result = memory_service
             .search(query, &user_id, per_strategy_top_k)
-            .await
-        {
+            .await;
+
+        let search_response = match &search_result {
+            Ok(records) => serde_json::json!({
+                "status": "ok",
+                "results": records.iter().map(|r| serde_json::json!({
+                    "id": r.id,
+                    "memory": r.memory,
+                    "score": r.score,
+                })).collect::<Vec<_>>()
+            }).to_string(),
+            Err(err) => serde_json::json!({
+                "status": "error",
+                "error": err.to_string()
+            }).to_string(),
+        };
+
+        // Append mem0 search step to the consolidated per-round mem0 log file.
+        crate::services::chat_service::append_mem0_round_log(
+            conversation_id,
+            target_round_id.unwrap_or(0),
+            &format!("mem0_search_{strategy}"),
+            &search_request,
+            &search_response,
+            log_dir,
+        );
+
+        match search_result {
             Ok(records) => {
                 for r in records {
                     debug
@@ -2112,10 +2462,18 @@ async fn load_retrieved_detail_blocks(
                     all_records.push(r);
                 }
             }
-            Err(err) => eprintln!(
-                "[prompt-compiler] {strategy} search failed (degrading to empty): {err}"
-            ),
+            Err(err) => {
+                let msg = format!("{strategy} search failed: {err}");
+                eprintln!("[prompt-compiler] {msg}");
+                debug.errors.push(msg.clone());
+            }
         }
+    }
+
+    // If every strategy that was attempted failed, surface a hard error.
+    if !debug.errors.is_empty() && all_records.is_empty() {
+        let combined = debug.errors.join("; ");
+        return Err(format!("mem0 retrieval failed: {combined}"));
     }
 
     // Deduplicate by memory id.
@@ -2152,7 +2510,7 @@ async fn load_retrieved_detail_blocks(
         ));
     }
 
-    blocks
+    Ok(blocks)
 }
 
 fn build_block(

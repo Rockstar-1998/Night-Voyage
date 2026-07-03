@@ -4,8 +4,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::{
     ChatAttachment, ChatRoundStateEvent, ChatSubmitInputResult, LlmStreamEventPayload,
-    LlmStreamToolUseEvent, RegenerateRoundResult, RetryFailedRoundResult, RoundState,
-    StreamChunkEvent, SubmitRoundAction, UiMessage,
+    LlmStreamToolUseEvent, MemoryBackendErrorEvent, RegenerateRoundResult, RetryFailedRoundResult,
+    RoundState, StreamChunkEvent, SubmitRoundAction, UiMessage,
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::message_repository::{
@@ -13,7 +13,7 @@ use crate::repositories::message_repository::{
 };
 use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
-use crate::services::memory_service::{MemoryMessage, MemoryService};
+use crate::services::memory_service::MemoryMessage;
 use crate::services::prompt_compiler::{
     validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot,
 };
@@ -44,14 +44,14 @@ pub fn chat_debug_log(app: &AppHandle, message: &str) {
     }
 }
 
-/// Spawn an asynchronous, best-effort memory extraction task for a completed
-/// chat round. This must never block the streaming response path or affect the
-/// conversation flow — all failures degrade to `eprintln!` logs.
+/// Spawn an asynchronous memory extraction task for a completed chat round.
+/// This must never block the streaming response path or affect the
+/// conversation flow. All failures are reported via `llm-memory-error` events
+/// rather than silently degraded.
 ///
 /// Extraction only runs when the conversation has `memory_mode = 'mem0'` and a
 /// memory backend is registered in `AppState`. The submitted content is the
-/// current round's aggregated user input + assistant reply (mirroring
-/// `character_state_overlays::load_overlay_generation_context`), scoped to
+/// current round's aggregated user input + assistant reply, scoped to
 /// `user_id = conversation_id` and `agent_id = character_id`.
 pub fn spawn_memory_extraction_task(
     app: AppHandle,
@@ -85,15 +85,16 @@ async fn run_memory_extraction_task(
     round_id: i64,
     assistant_message_id: i64,
 ) -> Result<(), String> {
-    // Optional capability: no backend registered → no-op.
-    let memory_service: Option<Arc<dyn MemoryService>> = {
-        let state = app.state::<crate::AppState>();
-        let guard = state.memory_service.lock().await;
-        guard.clone()
-    };
-    let Some(memory_service) = memory_service else {
-        return Ok(());
-    };
+    // Construct the memory backend lazily for this conversation (cached by
+    // embedding_provider_id). A build error is propagated rather than
+    // silently degrading.
+    let state = app.state::<crate::AppState>();
+    let memory_service = crate::services::memory_providers::get_or_build_memory_service(
+        &state.db,
+        &state.memory_service,
+        conversation_id,
+    )
+    .await?;
 
     // Honor the per-conversation memory mode; skip unless in mem0 mode.
     let mode = sqlx::query_scalar::<_, String>(
@@ -162,11 +163,50 @@ async fn run_memory_extraction_task(
     ];
     let user_id = conversation_id.to_string();
     let agent_id = character_id.to_string();
-    if let Err(err) = memory_service.add(messages, &user_id, &agent_id).await {
-        // Write failure must not affect the conversation flow; log explicitly.
+
+    // Build a loggable representation of the mem0 add request.
+    let log_request = serde_json::json!({
+        "operation": "mem0_add",
+        "messages": messages.iter().map(|m| {
+            serde_json::json!({ "role": m.role, "content": m.content })
+        }).collect::<Vec<_>>(),
+        "user_id": user_id,
+        "agent_id": agent_id,
+    });
+
+    let log_dir = app.path().app_data_dir().ok();
+
+    let add_result = memory_service.add(messages, &user_id, &agent_id).await;
+
+    // Log the intermediate mem0 add request (input + result/error).
+    let log_response = match &add_result {
+        Ok(()) => serde_json::json!({ "status": "ok" }).to_string(),
+        Err(err) => serde_json::json!({ "status": "error", "error": err.to_string() }).to_string(),
+    };
+    append_mem0_round_log(
+        conversation_id,
+        round_id,
+        "mem0_add",
+        &log_request,
+        &log_response,
+        log_dir.as_deref(),
+    );
+
+    if let Err(err) = add_result {
+        // Write failure: report explicitly to UI via event instead of silent log.
         eprintln!(
             "[memory] add failed: conv={}, round={}, character_id={}, err={}",
             conversation_id, round_id, character_id, err
+        );
+        let _ = app.emit(
+            "llm-memory-error",
+            MemoryBackendErrorEvent {
+                conversation_id,
+                round_id,
+                operation: "add".to_string(),
+                strategy: None,
+                error: err.to_string(),
+            },
         );
     }
     Ok(())
@@ -227,6 +267,51 @@ impl ChatService {
 
         let now = now_ts();
         let trimmed = content.trim().to_string();
+
+        // MEM0 snapshot: taken at the START of a new round, before the transaction.
+        // Only triggers when the latest round is completed (i.e., a new round will
+        // be created). Non-fatal on failure.
+        {
+            let memory_mode =
+                crate::services::prompt_compiler::load_memory_mode(&db, conversation_id).await;
+            if memory_mode == crate::services::prompt_compiler::MEMORY_MODE_MEM0 {
+                let latest_status: Option<String> = sqlx::query_scalar(
+                    "SELECT status FROM message_rounds WHERE conversation_id = ? ORDER BY round_index DESC LIMIT 1",
+                )
+                .bind(conversation_id)
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten();
+
+                // Only snapshot when the previous round is finished (a new round is about to start)
+                if let Some(status) = latest_status {
+                    if status == "completed" || status == "failed" || status == "aborted" {
+                        let latest_round_index: Option<i64> = sqlx::query_scalar(
+                            "SELECT round_index FROM message_rounds WHERE conversation_id = ? ORDER BY round_index DESC LIMIT 1",
+                        )
+                        .bind(conversation_id)
+                        .fetch_optional(&db)
+                        .await
+                        .ok()
+                        .flatten();
+
+                        if let Some(ri) = latest_round_index {
+                            if let Err(err) = crate::services::mem0_snapshot::create_snapshot(
+                                &db, conversation_id, ri,
+                            ).await {
+                                eprintln!("[chat] mem0 snapshot failed (non-fatal): {err}");
+                            }
+                            let window = crate::services::mem0_snapshot::load_snapshot_window(&db, conversation_id).await;
+                            let _ = crate::services::mem0_snapshot::prune_old_snapshots(
+                                conversation_id, window as usize,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let mut tx = db.begin().await.map_err(|err| err.to_string())?;
 
         ConversationRepository::ensure_member_active(&mut tx, conversation_id, member_id).await?;
@@ -698,14 +783,23 @@ impl ChatService {
 
     pub async fn switch_swipe(
         db: &SqlitePool,
+        conversation_id: i64,
+        member_id: i64,
         round_id: i64,
         target_message_id: i64,
     ) -> Result<UiMessage, String> {
+        ConversationRepository::ensure_member_is_host(db, conversation_id, member_id).await?;
         RoundRepository::set_active_assistant_message(db, round_id, target_message_id).await?;
         MessageRepository::find_by_id(db, target_message_id).await
     }
 
-    pub async fn delete_message(db: &SqlitePool, message_id: i64) -> Result<(), String> {
+    pub async fn delete_message(
+        db: &SqlitePool,
+        conversation_id: i64,
+        member_id: i64,
+        message_id: i64,
+    ) -> Result<(), String> {
+        ConversationRepository::ensure_member_is_host(db, conversation_id, member_id).await?;
         let message = MessageRepository::find_by_id(db, message_id).await?;
         let round_id = message.round_id;
         let role = message.role;
@@ -876,6 +970,7 @@ impl ChatService {
 
         emit_round_state(&app, round.clone())?;
         emit_message_reset_event(&app, conversation_id, round_id, assistant_message_id)?;
+        broadcast_room_message_reset(&app, conversation_id, round_id, assistant_message_id);
 
         crate::services::stream_processor::spawn_stream_task(
             app,
@@ -890,11 +985,17 @@ impl ChatService {
         Ok(RetryFailedRoundResult {
             round,
             assistant_message,
-            attempt_count: 0,
+            attempt_count: snapshot.attempt_count,
         })
     }
 
-    pub async fn abort_round_stream(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+    pub async fn abort_round_stream(
+        db: &SqlitePool,
+        conversation_id: i64,
+        member_id: i64,
+        round_id: i64,
+    ) -> Result<(), String> {
+        ConversationRepository::ensure_member_is_host(db, conversation_id, member_id).await?;
         RoundRepository::mark_aborted(db, round_id).await?;
         let _ = RetrySnapshotRepository::mark_aborted(db, round_id).await;
         Ok(())
@@ -926,6 +1027,11 @@ pub fn emit_round_state(app: &AppHandle, round: RoundState) -> Result<(), String
             let host_server = state.host_server.lock().await;
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
+                let client_count = server.client_count().await;
+                eprintln!(
+                    "[room-broadcast] RoundStateUpdate: round_id={}, status={}, clients={}",
+                    round.round_id, round.status, client_count,
+                );
                 let msg = crate::network::RoomMessage::RoundStateUpdate { round_state: round };
                 server.broadcast_message(&msg).await;
             }
@@ -965,6 +1071,37 @@ fn broadcast_room_player_message(app: &AppHandle, message: UiMessage, action_typ
                 }
                 let server = server.lock().await;
                 server.broadcast_message(&msg).await;
+            }
+        }
+    });
+}
+
+pub fn broadcast_room_message_reset(
+    app: &AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+    message_id: i64,
+) {
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let client_count = server.client_count().await;
+                eprintln!(
+                    "[room-broadcast] MessageReset: conv={}, round={}, msg={}, clients={}",
+                    conversation_id, round_id, message_id, client_count,
+                );
+                let msg = crate::network::RoomMessage::MessageReset {
+                    conversation_id,
+                    round_id,
+                    message_id,
+                };
+                server.broadcast_message(&msg).await;
+            } else {
+                eprintln!("[room-broadcast] MessageReset skipped: host_server is None");
             }
         }
     });
@@ -1062,6 +1199,16 @@ pub fn flush_text_delta_event(
             let host_server = state.host_server.lock().await;
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
+                let client_count = server.client_count().await;
+                eprintln!(
+                    "[room-broadcast] StreamChunk: conv={}, round={}, msg={}, delta_len={}, done={}, clients={}",
+                    chunk_event.conversation_id,
+                    chunk_event.round_id,
+                    chunk_event.message_id,
+                    chunk_event.delta.len(),
+                    chunk_event.done,
+                    client_count,
+                );
                 let msg = crate::network::RoomMessage::StreamChunk {
                     conversation_id: chunk_event.conversation_id,
                     round_id: chunk_event.round_id,
@@ -1070,6 +1217,8 @@ pub fn flush_text_delta_event(
                     done: chunk_event.done,
                 };
                 server.broadcast_message(&msg).await;
+            } else {
+                eprintln!("[room-broadcast] StreamChunk skipped: host_server is None");
             }
         }
     });
@@ -1120,12 +1269,30 @@ pub fn emit_stream_message_stop(
             let host_server = state.host_server.lock().await;
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
+                let client_count = server.client_count().await;
+                eprintln!(
+                    "[room-broadcast] StreamEnd: conv={}, round={}, msg={}, clients={}",
+                    chunk_event.conversation_id,
+                    chunk_event.round_id,
+                    chunk_event.message_id,
+                    client_count,
+                );
+                let done_chunk = crate::network::RoomMessage::StreamChunk {
+                    conversation_id: chunk_event.conversation_id,
+                    round_id: chunk_event.round_id,
+                    message_id: chunk_event.message_id,
+                    delta: String::new(),
+                    done: true,
+                };
+                server.broadcast_message(&done_chunk).await;
                 let msg = crate::network::RoomMessage::StreamEnd {
                     conversation_id: chunk_event.conversation_id,
                     round_id: chunk_event.round_id,
                     message_id: chunk_event.message_id,
                 };
                 server.broadcast_message(&msg).await;
+            } else {
+                eprintln!("[room-broadcast] StreamEnd skipped: host_server is None");
             }
         }
     });
@@ -1146,6 +1313,133 @@ pub fn emit_stream_message_stop(
         prompt_tokens,
         completion_tokens,
     )
+}
+
+/// Broadcast `RoomMessage::StreamEnd` to all room clients.
+/// Used by the error/abort paths of `spawn_stream_task` so guests stop streaming.
+pub fn broadcast_stream_end(app: &AppHandle, conversation_id: i64, round_id: i64, message_id: i64) {
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let msg = crate::network::RoomMessage::StreamEnd {
+                    conversation_id,
+                    round_id,
+                    message_id,
+                };
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+}
+
+/// Emit `string_field_delta` to the host frontend AND broadcast it to room clients.
+/// Replaces the plain `emit_llm_stream_event(..., "string_field_delta", ...)` call so
+/// structured-output streaming reaches guests incrementally.
+pub fn emit_structured_field_delta_event(
+    app: &AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+    message_id: i64,
+    provider_kind: &str,
+    field_key: &str,
+    content_index: i64,
+    delta: &str,
+) -> Result<(), String> {
+    emit_llm_stream_event(
+        app,
+        conversation_id,
+        round_id,
+        message_id,
+        provider_kind,
+        "string_field_delta",
+        Some(content_index),
+        Some(field_key),
+        Some(delta.to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        let field_key = field_key.to_string();
+        let delta = delta.to_string();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let msg = crate::network::RoomMessage::StreamStructuredFieldDelta {
+                    conversation_id,
+                    round_id,
+                    message_id,
+                    field_key,
+                    delta,
+                };
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Emit `object_field_complete` to the host frontend AND broadcast it to room clients.
+pub fn emit_object_field_complete_event(
+    app: &AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+    message_id: i64,
+    provider_kind: &str,
+    field_key: &str,
+    content_index: i64,
+    json: &str,
+) -> Result<(), String> {
+    emit_llm_stream_event(
+        app,
+        conversation_id,
+        round_id,
+        message_id,
+        provider_kind,
+        "object_field_complete",
+        Some(content_index),
+        Some(field_key),
+        None,
+        Some(json.to_string()),
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        let field_key = field_key.to_string();
+        let json = json.to_string();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let msg = crate::network::RoomMessage::StreamObjectFieldComplete {
+                    conversation_id,
+                    round_id,
+                    message_id,
+                    field_key,
+                    json,
+                };
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+
+    Ok(())
 }
 
 pub async fn finalize_streamed_response(
@@ -1312,6 +1606,182 @@ pub fn save_llm_debug_log(
     }
 }
 
+/// Save an intermediate LLM request (e.g. MEM0 memory search/extraction,
+/// legacy plot summary) to the same log directory as the main request.
+/// The log entry is appended as a separate file with a `_intermediate` suffix
+/// so it can be correlated with the main request via conversation_id + round_id.
+pub fn save_intermediate_llm_log(
+    conversation_id: i64,
+    round_id: i64,
+    step: &str,
+    provider_kind: &str,
+    model: &str,
+    request_body: &serde_json::Value,
+    response_body: &str,
+    log_dir_override: Option<&std::path::Path>,
+) {
+    let timestamp = now_ts();
+    let safe_model = model.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let safe_step = step.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let filename = format!(
+        "llm_req_{}_cid{}_rid{}_{}_{}.json",
+        timestamp, conversation_id, round_id, safe_step, safe_model
+    );
+
+    let log_dir = if let Some(dir) = log_dir_override {
+        dir.join("llm_debug_logs")
+    } else {
+        let mut dir = std::path::PathBuf::from(".");
+        if let Ok(cargo_manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            dir = std::path::PathBuf::from(&cargo_manifest)
+                .parent()
+                .unwrap()
+                .to_path_buf();
+        }
+        dir.push("llm_debug_logs");
+        dir
+    };
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        return;
+    }
+
+    let full_path = log_dir.join(&filename);
+
+    let combined = serde_json::json!({
+        "conversation_id": conversation_id,
+        "round_id": round_id,
+        "step": step,
+        "provider_kind": provider_kind,
+        "model": model,
+        "timestamp": timestamp,
+        "is_intermediate": true,
+        "request": request_body,
+        "response": if response_body.len() > 100_000 {
+            format!("[TRUNCATED, {} chars]", response_body.len())
+        } else {
+            response_body.to_string()
+        }
+    });
+
+    if let Err(e) = std::fs::write(&full_path, combined.to_string()) {
+        eprintln!("[llm-debug] failed to write intermediate log {}: {}", filename, e);
+    } else {
+        eprintln!("[llm-debug] intermediate log saved to {}", full_path.display());
+    }
+}
+
+/// Append a mem0 step (search or add) to a single per-round mem0 log file.
+///
+/// All mem0 operations for a given (conversation_id, round_id) — typically
+/// 3 search strategies + 1 add — are consolidated into one file so the full
+/// "user sends message → user sees final article" mem0 trail can be inspected
+/// in one place. The file is JSON with a `steps` array; each call appends a
+/// new entry via read-modify-write. Writes are serialized by an in-process
+/// Mutex keyed by file path to avoid clobbering between concurrent tasks
+/// (e.g. memory extraction running while the next round's searches start).
+pub fn append_mem0_round_log(
+    conversation_id: i64,
+    round_id: i64,
+    step: &str,
+    request_body: &serde_json::Value,
+    response_body: &str,
+    log_dir_override: Option<&std::path::Path>,
+) {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static FILE_LOCKS: OnceLock<Mutex<HashMap<std::path::PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let locks = FILE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let log_dir = if let Some(dir) = log_dir_override {
+        dir.join("llm_debug_logs")
+    } else {
+        let mut dir = std::path::PathBuf::from(".");
+        if let Ok(cargo_manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            dir = std::path::PathBuf::from(&cargo_manifest)
+                .parent()
+                .unwrap()
+                .to_path_buf();
+        }
+        dir.push("llm_debug_logs");
+        dir
+    };
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        return;
+    }
+
+    let filename = format!("llm_mem0_cid{}_rid{}.json", conversation_id, round_id);
+    let full_path = log_dir.join(&filename);
+
+    // Acquire a per-path lock so concurrent appends to the same round file
+    // serialize cleanly. Locks are retained for the process lifetime.
+    let path_lock = {
+        let mut guard = locks.lock().expect("FILE_LOCKS poisoned");
+        guard
+            .entry(full_path.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = path_lock.lock().expect("path lock poisoned");
+
+    // Read existing document or initialize a new one.
+    let mut doc = match std::fs::read(&full_path) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+        Err(_) => None,
+    };
+    if doc.is_none() {
+        doc = Some(serde_json::json!({
+            "conversation_id": conversation_id,
+            "round_id": round_id,
+            "started_at": now_ts(),
+            "steps": [],
+        }));
+    }
+
+    let timestamp = now_ts();
+    let new_entry = serde_json::json!({
+        "step": step,
+        "timestamp": timestamp,
+        "request": request_body,
+        "response": if response_body.len() > 100_000 {
+            format!("[TRUNCATED, {} chars]", response_body.len())
+        } else {
+            response_body.to_string()
+        },
+    });
+
+    if let Some(obj) = doc.as_mut().and_then(|v| v.as_object_mut()) {
+        obj.insert("updated_at".to_string(), serde_json::Value::Number(timestamp.into()));
+        if let Some(steps) = obj.get_mut("steps").and_then(|v| v.as_array_mut()) {
+            steps.push(new_entry);
+        } else {
+            obj.insert("steps".to_string(), serde_json::Value::Array(vec![new_entry]));
+        }
+    }
+
+    // Atomic write: temp file + rename.
+    let tmp_path = full_path.with_extension("json.tmp");
+    let payload = match serde_json::to_string_pretty(&doc) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[llm-debug] failed to serialize mem0 log {}: {}", filename, e);
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&tmp_path, &payload) {
+        eprintln!("[llm-debug] failed to write mem0 tmp {}: {}", tmp_path.display(), e);
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &full_path) {
+        eprintln!("[llm-debug] failed to rename mem0 log {} -> {}: {}", tmp_path.display(), full_path.display(), e);
+        let _ = std::fs::remove_file(&tmp_path);
+        return;
+    }
+    eprintln!("[llm-debug] mem0 round log appended: {}", full_path.display());
+}
+
 pub fn build_openai_url(base_url: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     if trimmed.ends_with("/v1") {
@@ -1319,4 +1789,61 @@ pub fn build_openai_url(base_url: &str) -> String {
     } else {
         format!("{}/v1/chat/completions", trimmed)
     }
+}
+
+/// Build a full `RoomMessage::ContextSnapshot` for the given conversation.
+///
+/// This loads the entire message history (no limit), active members, current
+/// round state, and the host character card image (if available) so a freshly
+/// joined guest can render the room without any local drift. Used by the room
+/// host during the join handshake and by the `room_request_context` command
+/// when a guest manually asks for a resync.
+pub async fn build_context_snapshot(
+    db: &SqlitePool,
+    conversation_id: i64,
+    app_handle: &AppHandle,
+) -> Result<crate::network::RoomMessage, String> {
+    let messages = ChatService::list_messages(db, conversation_id, None).await?;
+    let members = crate::network::load_active_conversation_members(db, conversation_id).await?;
+    let round_state = RoundRepository::load_state(db, conversation_id, None).await?;
+
+    let host_character_id: Option<i64> =
+        sqlx::query_scalar("SELECT host_character_id FROM conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| err.to_string())?
+            .flatten();
+
+    let (host_character_image_base64, host_character_name, host_character_description) =
+        match host_character_id {
+            Some(card_id) => {
+                let state = app_handle.state::<crate::AppState>();
+                let image =
+                    crate::commands::characters::character_card_export_image(state, card_id)
+                        .await
+                        .ok()
+                        .flatten();
+                let card = crate::commands::characters::character_card_get(db, card_id)
+                    .await
+                    .ok();
+                let name = card.as_ref().map(|c| c.name.clone()).filter(|n| !n.is_empty());
+                let description = card
+                    .as_ref()
+                    .map(|c| c.description.clone())
+                    .filter(|d| !d.is_empty());
+                (image, name, description)
+            }
+            None => (None, None, None),
+        };
+
+    Ok(crate::network::RoomMessage::ContextSnapshot {
+        conversation_id,
+        messages,
+        members,
+        round_state,
+        host_character_image_base64,
+        host_character_name,
+        host_character_description,
+    })
 }

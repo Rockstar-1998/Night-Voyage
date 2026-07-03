@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -18,11 +19,18 @@ pub struct AppState {
     pub db: SqlitePool,
     pub host_server: Mutex<Option<Arc<Mutex<network::RoomServer>>>>,
     pub room_client: Mutex<Option<Arc<Mutex<network::RoomClient>>>>,
-    /// Optional memory backend. Lazily initialized: providers may not exist at
-    /// startup and mem0 init can fail without aborting the app. `None` means the
-    /// feature is unavailable; callers degrade gracefully instead of erroring.
+    /// Per-embedding-provider memory backend cache, keyed by
+    /// `embedding_provider_id`. Services are constructed lazily on first use
+    /// via `memory_providers::get_or_build_memory_service`. An empty map
+    /// means no conversation has triggered construction yet, not that mem0
+    /// is disabled — callers must report build errors rather than silently
+    /// degrading.
     pub memory_service:
-        Mutex<Option<Arc<dyn services::memory_service::MemoryService>>>,
+        Mutex<HashMap<i64, Arc<dyn services::memory_service::MemoryService>>>,
+    /// Records why mem0 is unavailable. Always `None` under lazy
+    /// construction (errors are reported per-conversation at build time);
+    /// retained for API compatibility with `mem0_init_status`.
+    pub mem0_init_error: Option<String>,
 }
 
 #[tauri::command]
@@ -38,23 +46,21 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(db::init_pool(&app_handle))?;
 
-            // Best-effort memory backend init. Failure here (no provider yet,
-            // mem0 misconfiguration) must not panic — the feature is optional
-            // and degrades to `None`. It can be (re)built later on demand.
-            let memory_service = tauri::async_runtime::block_on(
-                services::memory_providers::build_memory_service(&pool),
-            )
-            .map_err(|err| {
-                eprintln!("[startup] memory service unavailable: {err}");
-                err
-            })
-            .ok();
-
+            // Memory backend is constructed lazily per-conversation based on
+            // its `embedding_provider_id`. The cache starts empty; services
+            // are built on first use via `get_or_build_memory_service`.
+            // Build errors surface per-conversation rather than at startup.
             app.manage(AppState {
                 db: pool.clone(),
                 host_server: Mutex::new(None),
                 room_client: Mutex::new(None),
-                memory_service: Mutex::new(memory_service),
+                memory_service: Mutex::new(HashMap::new()),
+                mem0_init_error: None,
+            });
+
+            let cleanup_pool = pool.clone();
+            tauri::async_runtime::spawn(async move {
+                db::cleanup_stale_rooms(&cleanup_pool).await;
             });
 
             backdoor::start_backdoor_server(pool, app.handle().clone());
@@ -120,6 +126,7 @@ pub fn run() {
             commands::characters::character_cards_create,
             commands::characters::character_cards_update,
             commands::characters::character_cards_delete,
+            commands::characters::character_card_export_image,
             commands::world_books::world_books_list,
             commands::world_books::world_books_create,
             commands::world_books::world_books_update,
@@ -127,13 +134,18 @@ pub fn run() {
             commands::world_books::world_book_entries_list,
             commands::world_books::world_book_entries_upsert,
             commands::world_books::world_book_entries_delete,
+            commands::exchange::character_cards_export,
+            commands::exchange::world_books_export,
+            commands::exchange::exchange_import,
             commands::rooms::room_create,
+            commands::rooms::room_open,
+            commands::rooms::room_get_status,
             commands::rooms::room_join,
             commands::rooms::room_leave,
             commands::rooms::room_close,
             commands::rooms::room_send_message,
-            commands::rooms::room_broadcast_stream_chunk,
             commands::rooms::room_broadcast_round_state,
+            commands::rooms::room_request_context,
             commands::settings::app_info,
             commands::settings::settings_get_all,
             commands::settings::settings_set,
@@ -143,7 +155,10 @@ pub fn run() {
             commands::mem0::mem0_search_test,
             commands::mem0::mem0_list_memories,
             commands::mem0::mem0_delete_memory,
-            commands::mem0::mem0_delete_all
+            commands::mem0::mem0_delete_all,
+            commands::mem0_snapshot::mem0_snapshot_list,
+            commands::mem0_snapshot::mem0_snapshot_window_set,
+            commands::mem0::mem0_init_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

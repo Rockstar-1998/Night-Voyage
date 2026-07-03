@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -16,19 +16,50 @@ use crate::services::chat_service::ChatService;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct GuestCharacterBaseSection {
+    pub section_key: String,
+    pub title: Option<String>,
+    pub content: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestCharacterCardPayload {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub base_sections: Vec<GuestCharacterBaseSection>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 #[serde(tag = "type", content = "payload")]
 pub enum RoomMessage {
     JoinRoom {
         display_name: String,
         passphrase: Option<String>,
+        character: Option<GuestCharacterCardPayload>,
     },
     JoinSuccess {
         room_id: i64,
         member_id: i64,
         conversation: ConversationListItem,
         members: Vec<ConversationMember>,
-        recent_messages: Vec<UiMessage>,
+        #[serde(alias = "recentMessages")]
+        full_messages: Vec<UiMessage>,
         round_state: RoundState,
+        host_character_image_base64: Option<String>,
+        host_character_name: Option<String>,
+        host_character_description: Option<String>,
+    },
+    ContextSnapshot {
+        conversation_id: i64,
+        messages: Vec<UiMessage>,
+        members: Vec<ConversationMember>,
+        round_state: RoundState,
+        host_character_image_base64: Option<String>,
+        host_character_name: Option<String>,
+        host_character_description: Option<String>,
     },
     MemberJoined {
         member_id: i64,
@@ -58,6 +89,32 @@ pub enum RoomMessage {
         done: bool,
     },
     StreamEnd {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
+    },
+    StreamStructuredFieldDelta {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
+        field_key: String,
+        delta: String,
+    },
+    StreamObjectFieldComplete {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
+        field_key: String,
+        json: String,
+    },
+    StreamRetry {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
+        error: String,
+        attempt_count: i64,
+    },
+    MessageReset {
         conversation_id: i64,
         round_id: i64,
         message_id: i64,
@@ -121,6 +178,44 @@ pub struct StreamEndPayload {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct StreamStructuredFieldDeltaPayload {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+    pub field_key: String,
+    pub delta: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamObjectFieldCompletePayload {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+    pub field_key: String,
+    pub json: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomStreamRetryPayload {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+    pub error: String,
+    pub attempt_count: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomMessageResetPayload {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct RoomClosedPayload {
     pub reason: String,
 }
@@ -138,6 +233,18 @@ pub struct RoundStateUpdatePayload {
     pub round_state: crate::models::RoundState,
 }
 
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSnapshotPayload {
+    pub conversation_id: i64,
+    pub messages: Vec<UiMessage>,
+    pub members: Vec<ConversationMember>,
+    pub round_state: RoundState,
+    pub host_character_image_base64: Option<String>,
+    pub host_character_name: Option<String>,
+    pub host_character_description: Option<String>,
+}
+
 impl RoomMessage {
     /// Map this message to the Tauri event name used on the frontend.
     pub fn event_name(&self) -> &'static str {
@@ -148,8 +255,13 @@ impl RoomMessage {
             RoomMessage::RoundStateUpdate { .. } => "room:round_state_update",
             RoomMessage::StreamChunk { .. } => "room:stream_chunk",
             RoomMessage::StreamEnd { .. } => "room:stream_end",
+            RoomMessage::StreamStructuredFieldDelta { .. } => "room:stream_structured_field_delta",
+            RoomMessage::StreamObjectFieldComplete { .. } => "room:stream_object_field_complete",
+            RoomMessage::StreamRetry { .. } => "room:stream_retry",
+            RoomMessage::MessageReset { .. } => "room:message_reset",
             RoomMessage::RoomClosed { .. } => "room:room_closed",
             RoomMessage::Error { .. } => "room:error",
+            RoomMessage::ContextSnapshot { .. } => "room:context_snapshot",
             _ => "room:message",
         }
     }
@@ -216,6 +328,58 @@ impl RoomMessage {
                 message_id: *message_id,
             })
             .ok(),
+            RoomMessage::StreamStructuredFieldDelta {
+                conversation_id,
+                round_id,
+                message_id,
+                field_key,
+                delta,
+            } => serde_json::to_value(StreamStructuredFieldDeltaPayload {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
+                field_key: field_key.clone(),
+                delta: delta.clone(),
+            })
+            .ok(),
+            RoomMessage::StreamObjectFieldComplete {
+                conversation_id,
+                round_id,
+                message_id,
+                field_key,
+                json,
+            } => serde_json::to_value(StreamObjectFieldCompletePayload {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
+                field_key: field_key.clone(),
+                json: json.clone(),
+            })
+            .ok(),
+            RoomMessage::StreamRetry {
+                conversation_id,
+                round_id,
+                message_id,
+                error,
+                attempt_count,
+            } => serde_json::to_value(RoomStreamRetryPayload {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
+                error: error.clone(),
+                attempt_count: *attempt_count,
+            })
+            .ok(),
+            RoomMessage::MessageReset {
+                conversation_id,
+                round_id,
+                message_id,
+            } => serde_json::to_value(RoomMessageResetPayload {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
+            })
+            .ok(),
             RoomMessage::RoomClosed { reason } => serde_json::to_value(RoomClosedPayload {
                 reason: reason.clone(),
             })
@@ -231,6 +395,24 @@ impl RoomMessage {
                 })
                 .ok()
             }
+            RoomMessage::ContextSnapshot {
+                conversation_id,
+                messages,
+                members,
+                round_state,
+                host_character_image_base64,
+                host_character_name,
+                host_character_description,
+            } => serde_json::to_value(ContextSnapshotPayload {
+                conversation_id: *conversation_id,
+                messages: messages.clone(),
+                members: members.clone(),
+                round_state: round_state.clone(),
+                host_character_image_base64: host_character_image_base64.clone(),
+                host_character_name: host_character_name.clone(),
+                host_character_description: host_character_description.clone(),
+            })
+            .ok(),
             _ => None,
         }
     }
@@ -346,8 +528,11 @@ pub struct RoomJoinSession {
     pub member_id: i64,
     pub conversation: ConversationListItem,
     pub members: Vec<ConversationMember>,
-    pub recent_messages: Vec<UiMessage>,
+    pub full_messages: Vec<UiMessage>,
     pub round_state: RoundState,
+    pub host_character_image_base64: Option<String>,
+    pub host_character_name: Option<String>,
+    pub host_character_description: Option<String>,
 }
 
 fn normalize_optional_positive_id(value: Option<i64>) -> Option<i64> {
@@ -357,10 +542,12 @@ fn normalize_optional_positive_id(value: Option<i64>) -> Option<i64> {
 async fn load_conversation_summary(
     db: &SqlitePool,
     conversation_id: i64,
+    room_status: Option<String>,
 ) -> Result<ConversationListItem, String> {
     let row = sqlx::query(
         "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at \
+         provider_id, embedding_provider_id, chat_mode, agent_provider_policy, memory_mode, \
+         mem0_snapshot_window, created_at, updated_at \
          FROM conversations WHERE id = ? LIMIT 1",
     )
     .bind(conversation_id)
@@ -394,6 +581,7 @@ async fn load_conversation_summary(
         world_book_id: row.try_get("world_book_id").ok(),
         preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
         provider_id: row.try_get("provider_id").ok(),
+        embedding_provider_id: row.try_get("embedding_provider_id").ok(),
         chat_mode: row
             .try_get("chat_mode")
             .unwrap_or_else(|_| "classic".to_string()),
@@ -403,14 +591,18 @@ async fn load_conversation_summary(
         memory_mode: row
             .try_get("memory_mode")
             .unwrap_or_else(|_| "stateless".to_string()),
+        mem0_snapshot_window: row
+            .try_get("mem0_snapshot_window")
+            .unwrap_or(20),
         member_count,
         pending_member_count,
+        room_status,
         created_at: row.try_get("created_at").unwrap_or_default(),
         updated_at: row.try_get("updated_at").unwrap_or_default(),
     })
 }
 
-async fn load_active_conversation_members(
+pub async fn load_active_conversation_members(
     db: &SqlitePool,
     conversation_id: i64,
 ) -> Result<Vec<ConversationMember>, String> {
@@ -549,8 +741,8 @@ impl RoomServer {
                             }
 
                             // Handle first message (JoinRoom)
-                            let display_name = match read_frame(&mut stream).await {
-                                Ok(Some(RoomMessage::JoinRoom { display_name, .. })) => display_name,
+                            let (display_name, character) = match read_frame(&mut stream).await {
+                                Ok(Some(RoomMessage::JoinRoom { display_name, character, .. })) => (display_name, character),
                                 Ok(Some(other)) => {
                                     eprintln!("[room-server] invalid first room message from {}: {:?}", addr, other);
                                     write_error_frame(&mut stream, "INVALID_JOIN", "加入失败：首个消息不是加入房间请求").await;
@@ -565,6 +757,38 @@ impl RoomServer {
                                     write_error_frame(&mut stream, "INVALID_JOIN", format!("加入失败：读取加入请求失败: {}", error)).await;
                                     return;
                                 }
+                            };
+
+                            let guest_character_json: Option<String> = match &character {
+                                Some(payload) => {
+                                    let json = match serde_json::to_string(payload) {
+                                        Ok(json) => json,
+                                        Err(error) => {
+                                            eprintln!(
+                                                "[room-server] failed to serialize guest character for {}: {}",
+                                                addr, error
+                                            );
+                                            write_error_frame(
+                                                &mut stream,
+                                                "CHARACTER_INVALID",
+                                                format!("角色卡数据序列化失败: {}", error),
+                                            )
+                                            .await;
+                                            return;
+                                        }
+                                    };
+                                    if json.len() > 256 * 1024 {
+                                        write_error_frame(
+                                            &mut stream,
+                                            "CHARACTER_TOO_LARGE",
+                                            "角色卡数据过大（超过 256KB），请精简后重试",
+                                        )
+                                        .await;
+                                        return;
+                                    }
+                                    Some(json)
+                                }
+                                None => None,
                             };
 
                             // Create conversation_member DB record for the joining client
@@ -609,12 +833,13 @@ impl RoomServer {
 
                             let db_member_id: i64 = match sqlx::query_scalar::<_, i64>(
                                 "INSERT INTO conversation_members \
-                                 (conversation_id, member_role, display_name, player_character_id, join_order, is_active, created_at, updated_at) \
-                                 VALUES (?, 'member', ?, NULL, ?, 1, ?, ?) RETURNING id",
+                                 (conversation_id, member_role, display_name, player_character_id, join_order, is_active, guest_character_json, created_at, updated_at) \
+                                 VALUES (?, 'member', ?, NULL, ?, 1, ?, ?, ?) RETURNING id",
                             )
                             .bind(conversation_id)
                             .bind(&display_name)
                             .bind(join_order)
+                            .bind(&guest_character_json)
                             .bind(now)
                             .bind(now)
                             .fetch_one(&db_inner)
@@ -648,7 +873,7 @@ impl RoomServer {
                                 return;
                             }
 
-                            let conversation = match load_conversation_summary(&db_inner, conversation_id).await {
+                            let conversation = match load_conversation_summary(&db_inner, conversation_id, Some("open".to_string())).await {
                                 Ok(conversation) => conversation,
                                 Err(error) => {
                                     eprintln!(
@@ -674,7 +899,7 @@ impl RoomServer {
                                 }
                             };
 
-                            let recent_messages = match ChatService::list_messages(&db_inner, conversation_id, Some(200)).await {
+                            let full_messages = match ChatService::list_messages(&db_inner, conversation_id, None).await {
                                 Ok(messages) => messages,
                                 Err(error) => {
                                     eprintln!(
@@ -700,13 +925,47 @@ impl RoomServer {
                                 }
                             };
 
+                            // Load host character card so the guest can render the avatar/name/description
+                            // alongside the join handshake. Image export errors are non-fatal: a missing or
+                            // oversized image simply renders as `None` on the guest side.
+                            let (host_character_image_base64, host_character_name, host_character_description) =
+                                match conversation.host_character_id {
+                                    Some(card_id) => {
+                                        let state = app_handle.state::<crate::AppState>();
+                                        let image = crate::commands::characters::character_card_export_image(
+                                            state, card_id,
+                                        )
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                        let card = crate::commands::characters::character_card_get(
+                                            &db_inner, card_id,
+                                        )
+                                        .await
+                                        .ok();
+                                        let name = card
+                                            .as_ref()
+                                            .map(|c| c.name.clone())
+                                            .filter(|n| !n.is_empty());
+                                        let description = card
+                                            .as_ref()
+                                            .map(|c| c.description.clone())
+                                            .filter(|d| !d.is_empty());
+                                        (image, name, description)
+                                    }
+                                    None => (None, None, None),
+                                };
+
                             let success_msg = RoomMessage::JoinSuccess {
                                 room_id: room_id_inner,
                                 member_id: db_member_id,
                                 conversation,
                                 members: member_profiles,
-                                recent_messages,
+                                full_messages,
                                 round_state,
+                                host_character_image_base64,
+                                host_character_name,
+                                host_character_description,
                             };
                             if let Err(error) = write_frame(&mut stream, &success_msg).await {
                                 eprintln!(
@@ -722,6 +981,27 @@ impl RoomServer {
                             {
                                 let mut c = clients.write().await;
                                 c.insert(client_id, ClientHandle { tx: tx.clone(), display_name: display_name.clone(), db_member_id });
+                            }
+
+                            // Build and unicast a full `ContextSnapshot` to the freshly joined client only.
+                            // Snapshot failures are non-fatal: the client already has the (now full) message
+                            // history from `JoinSuccess`, so a stale snapshot is preferable to aborting join.
+                            match crate::services::chat_service::build_context_snapshot(
+                                &db_inner,
+                                conversation_id,
+                                &app_handle,
+                            )
+                            .await
+                            {
+                                Ok(snapshot) => {
+                                    let _ = tx.send(snapshot);
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "[room-server] failed to build context snapshot for new client {} in room {}: {}",
+                                        addr, room_id_inner, error
+                                    );
+                                }
                             }
 
                             // Notify existing TCP clients about new member (don't send to the new client again)
@@ -847,6 +1127,9 @@ impl RoomServer {
 
     pub async fn broadcast_message(&self, msg: &RoomMessage) {
         let c = self.clients.read().await;
+        let count = c.len();
+        let msg_type = msg.event_name();
+        eprintln!("[room-server] broadcast_message: type={}, clients={}", msg_type, count);
         for (_, handle) in c.iter() {
             let _ = handle.tx.send(msg.clone());
         }
@@ -876,17 +1159,24 @@ pub struct RoomClient {
     pub host_address: String,
     pub port: u32,
     pub display_name: String,
+    character: Option<GuestCharacterCardPayload>,
     stream: Option<tokio::net::tcp::OwnedWriteHalf>,
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 impl RoomClient {
-    pub fn new(host_address: String, port: u32, display_name: String) -> Self {
+    pub fn new(
+        host_address: String,
+        port: u32,
+        display_name: String,
+        character: Option<GuestCharacterCardPayload>,
+    ) -> Self {
         RoomClient {
             room_id: None,
             host_address,
             port,
             display_name,
+            character,
             stream: None,
             shutdown_tx: None,
         }
@@ -896,7 +1186,9 @@ impl RoomClient {
         &mut self,
         app_handle: tauri::AppHandle,
     ) -> Result<RoomJoinSession, String> {
+        eprintln!("[room-client] connecting to {}:{}", self.host_address, self.port);
         if self.port == 0 || self.port > 65535 {
+            eprintln!("[room-client] connect error: port {} out of range", self.port);
             return Err(format!(
                 "端口 {} 超出 TCP 有效范围 (1-65535)，当前仅支持标准 TCP 端口",
                 self.port
@@ -905,13 +1197,22 @@ impl RoomClient {
         let tcp_port = self.port as u16;
         let mut stream = TcpStream::connect((self.host_address.as_str(), tcp_port))
             .await
-            .map_err(|e| format!("连接失败: {}", e))?;
+            .map_err(|e| {
+                eprintln!("[room-client] connect error: {}", e);
+                format!("连接失败: {}", e)
+            })?;
 
         let join_msg = RoomMessage::JoinRoom {
             display_name: self.display_name.clone(),
             passphrase: None,
+            character: self.character.clone(),
         };
-        write_frame(&mut stream, &join_msg).await?;
+        write_frame(&mut stream, &join_msg)
+            .await
+            .map_err(|e| {
+                eprintln!("[room-client] connect error: {}", e);
+                e
+            })?;
 
         let handshake_result = timeout(Duration::from_secs(10), read_frame(&mut stream)).await;
 
@@ -921,8 +1222,11 @@ impl RoomClient {
                 member_id,
                 conversation,
                 members,
-                recent_messages,
+                full_messages,
                 round_state,
+                host_character_image_base64,
+                host_character_name,
+                host_character_description,
             }))) => {
                 self.room_id = Some(room_id);
                 // Emit each existing member to the frontend
@@ -940,23 +1244,31 @@ impl RoomClient {
                     member_id,
                     conversation,
                     members,
-                    recent_messages,
+                    full_messages,
                     round_state,
+                    host_character_image_base64,
+                    host_character_name,
+                    host_character_description,
                 }
             }
             Ok(Ok(Some(RoomMessage::Error { message, .. }))) => {
+                eprintln!("[room-client] connect error: {}", message);
                 return Err(message);
             }
             Ok(Ok(Some(_))) => {
+                eprintln!("[room-client] connect error: unexpected server response");
                 return Err("连接失败：收到意外的服务器响应".to_string());
             }
             Ok(Ok(None)) => {
+                eprintln!("[room-client] connect error: server closed connection");
                 return Err("连接失败：服务器关闭了连接".to_string());
             }
             Ok(Err(e)) => {
+                eprintln!("[room-client] connect error: {}", e);
                 return Err(format!("连接失败：读取响应错误: {}", e));
             }
             Err(_) => {
+                eprintln!("[room-client] connect timeout");
                 return Err("连接超时：服务器未响应".to_string());
             }
         };
@@ -973,6 +1285,7 @@ impl RoomClient {
                     result = read_frame_split(&mut read_half) => {
                         match result {
                             Ok(Some(msg)) => {
+                                eprintln!("[room-client] received message: type={}", msg.event_name());
                                 if let Some(payload) = msg.event_payload() {
                                     let _ = app_handle_clone.emit(msg.event_name(), payload);
                                 } else {
@@ -980,10 +1293,12 @@ impl RoomClient {
                                 }
                             }
                             Ok(None) => {
+                                eprintln!("[room-client] peer closed connection");
                                 let _ = app_handle_clone.emit("room:disconnected", ());
                                 break;
                             }
                             Err(e) => {
+                                eprintln!("[room-client] read error: {}", e);
                                 let _ = app_handle_clone.emit("room:error", serde_json::json!({
                                     "code": "READ_ERROR",
                                     "message": format!("读取错误: {}", e),
@@ -1001,23 +1316,43 @@ impl RoomClient {
 
         self.stream = Some(write_half);
 
+        eprintln!(
+            "[room-client] connected, room_id={:?}, member_id={:?}, messages={}, members={}",
+            join_session.room_id,
+            join_session.member_id,
+            join_session.full_messages.len(),
+            join_session.members.len()
+        );
         Ok(join_session)
     }
 
     pub async fn send_message(&mut self, msg: &RoomMessage) -> Result<(), String> {
+        eprintln!("[room-client] sending frame: type={}", msg.event_name());
         if let Some(ref mut write_half) = self.stream {
-            write_frame_split(write_half, msg).await
+            match write_frame_split(write_half, msg).await {
+                Ok(()) => {
+                    eprintln!("[room-client] frame sent");
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("[room-client] send error: {}", e);
+                    Err(e)
+                }
+            }
         } else {
+            eprintln!("[room-client] send error: 未连接到房间");
             Err("未连接到房间".to_string())
         }
     }
 
     pub async fn disconnect(&mut self) {
+        eprintln!("[room-client] disconnecting");
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;
         }
         if let Some(mut write_half) = self.stream.take() {
             let _ = write_half.shutdown().await;
         }
+        eprintln!("[room-client] disconnected");
     }
 }

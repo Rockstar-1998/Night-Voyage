@@ -3,6 +3,7 @@ import { MessageItem, ChatMessage } from './MessageItem';
 import { TokenIsland } from './TokenIsland';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
+import type { MemoryBackendErrorEvent } from '../lib/backend';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -13,12 +14,15 @@ interface ChatAreaProps {
   onDeleteMessage?: (id: string) => void;
   onRetryFailed?: (id: string, roundId?: number) => void;
   isRoomClient?: boolean;
+  isOnline?: boolean;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
   onChoiceSelect?: (key: string, value: string) => void;
   structuredOutputDisplay?: string;
+  /** Memory backend errors for the current conversation — displayed as a red banner. */
+  memoryErrors?: MemoryBackendErrorEvent[];
 }
 
 /** Threshold in pixels: if the user is within this distance from the bottom, consider them "at bottom". */
@@ -197,7 +201,19 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
 
   return (
     <div class="flex-1 overflow-hidden relative group/area flex flex-col">
-      <Show when={props.conversationId}>
+      <Show when={props.memoryErrors && props.memoryErrors.length > 0}>
+        <div class="flex-shrink-0 bg-red-500/10 border-b border-red-500/30 px-4 py-2 text-xs text-red-300">
+          <For each={props.memoryErrors!.filter(e => e.conversationId === props.conversationId)}>
+            {(err) => (
+              <div class="flex items-center gap-2">
+                <span class="font-semibold shrink-0">[{err.operation}{err.strategy ? `/${err.strategy}` : ''}]</span>
+                <span class="opacity-80 break-all">{err.error}</span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.conversationId && !props.isRoomClient}>
         <div class="flex-shrink-0">
           <TokenIsland conversationId={props.conversationId!} refreshKey={tokenIslandRefreshKey()} />
         </div>
@@ -218,6 +234,7 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 onDelete={props.onDeleteMessage}
                 onRetryFailed={props.onRetryFailed}
                 isRoomClient={props.isRoomClient}
+                isOnline={props.isOnline}
                 swipeInfo={props.swipeInfo?.(msg.id)}
                 onSwitchSwipe={props.onSwitchSwipe ? (direction) => props.onSwitchSwipe!(msg.id, direction) : undefined}
                 formatConfig={props.formatConfig}

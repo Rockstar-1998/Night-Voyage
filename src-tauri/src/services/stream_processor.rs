@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::time::{Duration, Instant};
 
 use crate::llm::{LlmBinarySource, LlmChatRequest, LlmContentPart, LlmRole, ProviderHttpRequest};
-use crate::models::{ChatAttachment, StreamErrorEvent};
+use crate::models::{ChatAttachment, StreamErrorEvent, StreamRetryEvent};
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::message_repository::{
     normalize_tool_use_input_json,
@@ -20,8 +20,9 @@ use crate::repositories::llm_retry_snapshot_repository::{
 };
 use crate::repositories::round_repository::RoundRepository;
 use crate::services::chat_service::{
-    emit_llm_stream_event, emit_round_state, emit_stream_message_stop, finalize_streamed_response,
-    flush_text_delta_event, save_llm_debug_log,
+    broadcast_stream_end, emit_llm_stream_event, emit_object_field_complete_event,
+    emit_round_state, emit_stream_message_stop, emit_structured_field_delta_event,
+    finalize_streamed_response, flush_text_delta_event, save_llm_debug_log,
 };
 use crate::services::prompt_compiler::{
     PromptBudget, PromptCompileInput, PromptCompileMode, PromptCompileResult,
@@ -134,73 +135,187 @@ pub fn spawn_stream_task(
             "[chat] spawn_stream_task: starting stream_llm_response, conversation_id={}, round_id={}, provider_id={}, assistant_message_id={}",
             conversation_id, round_id, provider_id, assistant_message_id
         );
-        let stream_result = stream_llm_response(
-            app.clone(),
-            db.clone(),
-            conversation_id,
-            round_id,
-            provider_id,
-            assistant_message_id,
-            attachments,
-        )
-        .await;
 
-        match stream_result {
-            Err(error) => {
-                eprintln!(
-                    "[chat] spawn_stream_task: stream_llm_response FAILED, conversation_id={}, round_id={}, error={}",
-                    conversation_id, round_id, error
-                );
-                crate::services::chat_service::chat_debug_log(
-                    &app,
-                    &format!(
-                        "stream FAILED: conv={}, round={}, error={}",
+        // Auto-retry loop: keep retrying until the model responds successfully
+        // or the user aborts. Each retry reuses the same assistant_message_id
+        // and round, clearing previous partial content.
+        loop {
+            // Mark the retry attempt in the snapshot (tracks attempt_count).
+            // Capture the snapshot to read attempt_count for retry notifications.
+            let attempt_count = RetrySnapshotRepository::mark_attempt_started(&db, round_id)
+                .await
+                .map(|s| s.attempt_count)
+                .unwrap_or(0);
+
+            let stream_result = stream_llm_response(
+                app.clone(),
+                db.clone(),
+                conversation_id,
+                round_id,
+                provider_id,
+                assistant_message_id,
+                attachments.clone(),
+            )
+            .await;
+
+            match stream_result {
+                Err(error) => {
+                    eprintln!(
+                        "[chat] spawn_stream_task: stream_llm_response FAILED (attempt), conversation_id={}, round_id={}, error={}",
                         conversation_id, round_id, error
-                    ),
-                );
-                let _ = RoundRepository::mark_failed(&db, round_id).await;
-                let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
-                if let Ok(round) =
-                    RoundRepository::load_state(&db, conversation_id, Some(round_id)).await
-                {
-                    let _ = emit_round_state(&app, round);
-                }
-                let _ = app.emit(
-                    "llm-stream-error",
-                    StreamErrorEvent {
-                        conversation_id,
-                        round_id,
-                        message_id: assistant_message_id,
-                        error,
-                    },
-                );
-            }
-            Ok(data) => {
-                let _ = RetrySnapshotRepository::mark_succeeded(&db, round_id).await;
-                if !data.full_content.is_empty() {
-                    spawn_post_round_tasks(
+                    );
+                    crate::services::chat_service::chat_debug_log(
                         &app,
-                        &db,
-                        conversation_id,
-                        round_id,
-                        provider_id,
-                        assistant_message_id,
+                        &format!(
+                            "stream FAILED (will retry): conv={}, round={}, error={}",
+                            conversation_id, round_id, error
+                        ),
+                    );
+
+                    // If the user aborted, stop the loop immediately.
+                    if error == STREAM_ABORTED_ERROR {
+                        let _ = RoundRepository::mark_failed(&db, round_id).await;
+                        let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
+                        let _ = app.emit(
+                            "llm-stream-error",
+                            StreamErrorEvent {
+                                conversation_id,
+                                round_id,
+                                message_id: assistant_message_id,
+                                error,
+                            },
+                        );
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        break;
+                    }
+
+                    // Prompt compilation errors (e.g. mem0 retrieval failure)
+                    // are deterministic — retrying will not fix them. Emit
+                    // the error to the UI and stop.
+                    if error.contains("mem0 retrieval failed")
+                        || error.contains("Prompt Compiler")
+                    {
+                        let _ = RoundRepository::mark_failed(&db, round_id).await;
+                        let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
+                        let _ = app.emit(
+                            "llm-stream-error",
+                            StreamErrorEvent {
+                                conversation_id,
+                                round_id,
+                                message_id: assistant_message_id,
+                                error,
+                            },
+                        );
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        break;
+                    }
+
+                    // Check if the user aborted during the stream (status = 'aborted').
+                    if let Ok(true) = is_round_aborted(&db, round_id, assistant_message_id).await {
+                        eprintln!(
+                            "[chat] spawn_stream_task: round aborted by user, stopping retry loop, round_id={}",
+                            round_id
+                        );
+                        let _ = RetrySnapshotRepository::mark_aborted(&db, round_id).await;
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        break;
+                    }
+
+                    // Mark the snapshot as failed (but keep the round in streaming
+                    // state so the next retry attempt can proceed).
+                    let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
+
+                    // Notify the frontend that a retry is being attempted.
+                    let _ = app.emit(
+                        "llm-stream-retry",
+                        StreamRetryEvent {
+                            conversation_id,
+                            round_id,
+                            message_id: assistant_message_id,
+                            error: error.clone(),
+                            attempt_count,
+                        },
+                    );
+
+                    tauri::async_runtime::spawn({
+                        let app = app.clone();
+                        let error = error.clone();
+                        async move {
+                            let state = app.state::<crate::AppState>();
+                            let host_server = state.host_server.lock().await;
+                            if let Some(server) = host_server.as_ref() {
+                                let server = server.lock().await;
+                                let msg = crate::network::RoomMessage::StreamRetry {
+                                    conversation_id,
+                                    round_id,
+                                    message_id: assistant_message_id,
+                                    error,
+                                    attempt_count,
+                                };
+                                server.broadcast_message(&msg).await;
+                            }
+                        }
+                    });
+
+                    // Reset the assistant message content for the next attempt.
+                    let now = crate::utils::now_ts();
+                    let _ = sqlx::query("UPDATE messages SET content = '' WHERE id = ?")
+                        .bind(assistant_message_id)
+                        .execute(&db)
+                        .await;
+                    let _ = sqlx::query(
+                        "DELETE FROM message_content_parts WHERE message_id = ?",
                     )
+                    .bind(assistant_message_id)
+                    .execute(&db)
                     .await;
+                    let _ = sqlx::query(
+                        "UPDATE message_rounds SET status = 'streaming', updated_at = ? WHERE id = ?",
+                    )
+                    .bind(now)
+                    .bind(round_id)
+                    .execute(&db)
+                    .await;
+
+                    // Brief delay before retrying to avoid hammering the API.
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                    eprintln!(
+                        "[chat] spawn_stream_task: retrying stream_llm_response, conversation_id={}, round_id={}",
+                        conversation_id, round_id
+                    );
+                    // Continue the loop to retry.
+                    continue;
                 }
-                if let Ok(round) =
-                    RoundRepository::load_state(&db, conversation_id, Some(round_id)).await
-                {
-                    let _ = emit_round_state(&app, round);
+                Ok(data) => {
+                    let _ = RetrySnapshotRepository::mark_succeeded(&db, round_id).await;
+                    if !data.full_content.is_empty() {
+                        spawn_post_round_tasks(
+                            &app,
+                            &db,
+                            conversation_id,
+                            round_id,
+                            provider_id,
+                            assistant_message_id,
+                        )
+                        .await;
+                    }
+                    if let Ok(round) =
+                        RoundRepository::load_state(&db, conversation_id, Some(round_id)).await
+                    {
+                        let _ = emit_round_state(&app, round);
+                    }
+                    break;
                 }
             }
         }
     });
 }
 
-/// Unified post-round task spawner. In mem0 mode, only spawns memory extraction.
-/// In non-mem0 mode, preserves the legacy plot_summary + character_state_overlay
-/// logic (gated by plot_summary_mode).
+/// Unified post-round task spawner with three-mode gating:
+/// - mem0: only memory extraction
+/// - legacy: plot_summary placeholder + batch processing + world variable generation
+/// - stateless: world variable generation only (preset-gated)
 async fn spawn_post_round_tasks(
     app: &AppHandle,
     db: &SqlitePool,
@@ -211,43 +326,52 @@ async fn spawn_post_round_tasks(
 ) {
     let memory_mode =
         crate::services::prompt_compiler::load_memory_mode(db, conversation_id).await;
-    if memory_mode == crate::services::prompt_compiler::MEMORY_MODE_MEM0 {
-        // Mem0 mode: only spawn memory extraction task.
-        crate::services::chat_service::spawn_memory_extraction_task(
-            app.clone(),
-            db.clone(),
-            conversation_id,
-            round_id,
-            assistant_message_id,
-        );
-    } else {
-        // Non-mem0 mode: preserve legacy plot_summary + character_state_overlay logic.
-        let plot_summary_enabled =
-            crate::services::plot_summaries::load_plot_summary_mode(db, conversation_id)
-                .await
-                .unwrap_or_else(|err| {
-                    eprintln!(
-                        "[stream] spawn_post_round_tasks: failed to load plot_summary_mode: {}, skipping overlay/summary",
-                        err
-                    );
-                    crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED.to_string()
-                })
-                != crate::services::plot_summaries::PLOT_SUMMARY_MODE_DISABLED;
 
-        if plot_summary_enabled {
-            crate::services::character_state_overlays::spawn_character_state_overlay_generation_task(
+    match memory_mode.as_str() {
+        m if m == crate::services::prompt_compiler::MEMORY_MODE_MEM0 => {
+            // Mem0: only spawn memory extraction task.
+            crate::services::chat_service::spawn_memory_extraction_task(
                 app.clone(),
                 db.clone(),
                 conversation_id,
                 round_id,
-                provider_id,
+                assistant_message_id,
             );
+        }
+        m if m == crate::services::prompt_compiler::MEMORY_MODE_LEGACY => {
+            // Legacy: PlotSummary placeholder + batch processing + world variable.
+            // Fetch round_index for the placeholder.
+            let round_index: Option<i64> = sqlx::query_scalar(
+                "SELECT round_index FROM message_rounds WHERE id = ? LIMIT 1",
+            )
+            .bind(round_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(ri) = round_index {
+                if let Err(err) = crate::services::plot_summaries::create_round_placeholder(
+                    db, conversation_id, round_id, ri,
+                ).await {
+                    eprintln!(
+                        "[stream] spawn_post_round_tasks: create_round_placeholder failed: {err}"
+                    );
+                }
+            }
+
             crate::services::plot_summaries::spawn_plot_summary_processing_task(
                 app.clone(),
                 db.clone(),
                 conversation_id,
                 provider_id,
             );
+
+            // TODO: spawn_world_variable_generation_task (preset-gated)
+        }
+        _ => {
+            // Stateless: only world variable generation (preset-gated).
+            // TODO: spawn_world_variable_generation_task (preset-gated)
         }
     }
 }
@@ -358,12 +482,26 @@ async fn stream_llm_response(
             max_world_book_tokens: None,
             max_retrieved_detail_tokens: None,
         },
+        log_dir: debug_log_dir.clone(),
     };
     eprintln!("[chat] stream_llm_response: calling compile_prompt...");
-    let memory_service = {
+    // Build the memory backend lazily for mem0-mode conversations only.
+    // Non-mem0 conversations pass None so compile_prompt skips retrieval.
+    // Build errors propagate rather than silently degrading.
+    let memory_mode =
+        crate::services::prompt_compiler::load_memory_mode(&db, conversation_id).await;
+    let memory_service = if memory_mode == crate::services::prompt_compiler::MEMORY_MODE_MEM0 {
         let state = app.state::<crate::AppState>();
-        let guard = state.memory_service.lock().await;
-        guard.clone()
+        Some(
+            crate::services::memory_providers::get_or_build_memory_service(
+                &state.db,
+                &state.memory_service,
+                conversation_id,
+            )
+            .await?,
+        )
+    } else {
+        None
     };
     let mut compiled_prompt =
         crate::services::prompt_compiler::compile_prompt(
@@ -754,36 +892,24 @@ async fn stream_openai_text_response(
                         for event in events {
                             match event {
                                 crate::services::structured_output_parser::StructuredOutputEvent::StringFieldDelta { key, delta } => {
-                                    if key == "content" {
-                                        full_content.push_str(&delta);
-                                        pending.push_str(&delta);
-                                    }
-                                    let next_index = content_parts.len() as i64;
-                                    let part_type = map_structured_field_part_type(&key);
-                                    let content_index = ensure_content_part_by_key(
-                                        &mut content_parts, &mut content_part_lookup,
-                                        &key, next_index, part_type,
-                                    );
-                                    if part_type == "structured_output" {
-                                        content_parts[content_index].tool_name = Some(key.clone());
-                                    }
-                                    append_content_part_text(&mut content_parts[content_index], &delta);
-                                    if key != "content" {
-                                        if delta.contains('\n') || delta.contains('\\') {
-                                            eprintln!(
-                                                "[structured_output] StringFieldDelta key={}, len={}, has_newline={}, has_backslash={}, preview={:?}",
-                                                key, delta.len(), delta.contains('\n'), delta.contains('\\'),
-                                                if delta.len() > 60 { &delta[..delta.ceil_char_boundary(60)] } else { &delta }
-                                            );
-                                        }
-                                        emit_llm_stream_event(
-                                            app, conversation_id, round_id, assistant_message_id,
-                                            "openai_compatible", "string_field_delta",
-                                            Some(content_index as i64), Some(&key),
-                                            Some(delta), None, None, None, None, None,
-                                        )?;
-                                    }
-                                }
+                    if key == "content" {
+                        full_content.push_str(&delta);
+                    }
+                    let next_index = content_parts.len() as i64;
+                    let part_type = map_structured_field_part_type(&key);
+                    let content_index = ensure_content_part_by_key(
+                        &mut content_parts, &mut content_part_lookup,
+                        &key, next_index, part_type,
+                    );
+                    if part_type == "structured_output" {
+                        content_parts[content_index].tool_name = Some(key.clone());
+                    }
+                    append_content_part_text(&mut content_parts[content_index], &delta);
+                    emit_structured_field_delta_event(
+                        app, conversation_id, round_id, assistant_message_id,
+                        "openai_compatible", &key, content_index as i64, &delta,
+                    )?;
+                }
                                 crate::services::structured_output_parser::StructuredOutputEvent::ObjectFieldComplete { key, value } => {
                                     let json_str = serde_json::Value::Object(value).to_string();
                                     let next_index = content_parts.len() as i64;
@@ -796,11 +922,9 @@ async fn stream_openai_text_response(
                                     if part_type == "structured_output" {
                                         content_parts[content_index].tool_name = Some(key.clone());
                                     }
-                                    emit_llm_stream_event(
+                                    emit_object_field_complete_event(
                                         app, conversation_id, round_id, assistant_message_id,
-                                        "openai_compatible", "object_field_complete",
-                                        Some(content_index as i64), Some(&key),
-                                        None, Some(json_str), None, None, None, None,
+                                        "openai_compatible", &key, content_index as i64, &json_str,
                                     )?;
                                 }
                                 crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
@@ -1175,7 +1299,6 @@ async fn stream_anthropic_text_response(
                                             crate::services::structured_output_parser::StructuredOutputEvent::StringFieldDelta { key, delta: field_delta } => {
                                                 if key == "content" || key == "text" {
                                                     full_content.push_str(&field_delta);
-                                                    pending.push_str(&field_delta);
                                                 }
                                                 let next_index = content_parts.len() as i64;
                                                 let part_type = map_structured_field_part_type(&key);
@@ -1187,14 +1310,10 @@ async fn stream_anthropic_text_response(
                                                     content_parts[content_index].tool_name = Some(key.clone());
                                                 }
                                                 append_content_part_text(&mut content_parts[content_index], &field_delta);
-                                                if key != "content" && key != "text" {
-                                                    emit_llm_stream_event(
-                                                        app, conversation_id, round_id, assistant_message_id,
-                                                        "anthropic", "string_field_delta",
-                                                        Some(content_index as i64), Some(&key),
-                                                        Some(field_delta), None, None, None, None, None,
-                                                    )?;
-                                                }
+                                                emit_structured_field_delta_event(
+                                                    app, conversation_id, round_id, assistant_message_id,
+                                                    "anthropic", &key, content_index as i64, &field_delta,
+                                                )?;
                                             }
                                             crate::services::structured_output_parser::StructuredOutputEvent::ObjectFieldComplete { key, value } => {
                                                 let json_str = serde_json::Value::Object(value).to_string();
@@ -1208,11 +1327,9 @@ async fn stream_anthropic_text_response(
                                                 if part_type == "structured_output" {
                                                     content_parts[content_index].tool_name = Some(key.clone());
                                                 }
-                                                emit_llm_stream_event(
+                                                emit_object_field_complete_event(
                                                     app, conversation_id, round_id, assistant_message_id,
-                                                    "anthropic", "object_field_complete",
-                                                    Some(content_index as i64), Some(&key),
-                                                    None, Some(json_str), None, None, None, None,
+                                                    "anthropic", &key, content_index as i64, &json_str,
                                                 )?;
                                             }
                                             crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
@@ -1239,7 +1356,6 @@ async fn stream_anthropic_text_response(
                                         crate::services::structured_output_parser::StructuredOutputEvent::StringFieldDelta { key, delta } => {
                                             if key == "content" {
                                                 full_content.push_str(&delta);
-                                                pending.push_str(&delta);
                                             }
                                             let next_index = content_parts.len() as i64;
                                             let part_type = map_structured_field_part_type(&key);
@@ -1251,14 +1367,10 @@ async fn stream_anthropic_text_response(
                                                 content_parts[content_index].tool_name = Some(key.clone());
                                             }
                                             append_content_part_text(&mut content_parts[content_index], &delta);
-                                            if key != "content" {
-                                                emit_llm_stream_event(
-                                                    app, conversation_id, round_id, assistant_message_id,
-                                                    "anthropic", "string_field_delta",
-                                                    Some(content_index as i64), Some(&key),
-                                                    Some(delta), None, None, None, None, None,
-                                                )?;
-                                            }
+                                            emit_structured_field_delta_event(
+                                                app, conversation_id, round_id, assistant_message_id,
+                                                "anthropic", &key, content_index as i64, &delta,
+                                            )?;
                                         }
                                         crate::services::structured_output_parser::StructuredOutputEvent::ObjectFieldComplete { key, value } => {
                                             let json_str = serde_json::Value::Object(value).to_string();
@@ -1272,11 +1384,9 @@ async fn stream_anthropic_text_response(
                                             if part_type == "structured_output" {
                                                 content_parts[content_index].tool_name = Some(key.clone());
                                             }
-                                            emit_llm_stream_event(
+                                            emit_object_field_complete_event(
                                                 app, conversation_id, round_id, assistant_message_id,
-                                                "anthropic", "object_field_complete",
-                                                Some(content_index as i64), Some(&key),
-                                                None, Some(json_str), None, None, None, None,
+                                                "anthropic", &key, content_index as i64, &json_str,
                                             )?;
                                         }
                                         crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
