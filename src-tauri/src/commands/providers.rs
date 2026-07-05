@@ -14,6 +14,8 @@ use crate::{
 const PROVIDER_KIND_OPENAI_COMPATIBLE: &str = "openai_compatible";
 const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 const PROVIDER_HTTP_TIMEOUT_SECS: u64 = 30;
+const PURPOSE_LLM: &str = "llm";
+const PURPOSE_EMBEDDING: &str = "embedding";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,14 +41,46 @@ pub struct ProviderClaudeNativeTestResult {
 #[tauri::command]
 pub async fn providers_list(
     state: tauri::State<'_, AppState>,
+    purpose_filter: Option<String>,
 ) -> Result<Vec<ApiProviderSummary>, String> {
-    let rows = sqlx::query(
-        "SELECT id, name, provider_kind, base_url, api_key, model_name, created_at, updated_at \
-         FROM api_providers ORDER BY updated_at DESC, id DESC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|err| err.to_string())?;
+    let normalized_filter = match purpose_filter.as_deref() {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else if trimmed == PURPOSE_LLM || trimmed == PURPOSE_EMBEDDING {
+                Some(trimmed.to_string())
+            } else {
+                return Err(format!(
+                    "purposeFilter 只支持 '{}' 或 '{}'，当前为 '{}'",
+                    PURPOSE_LLM, PURPOSE_EMBEDDING, trimmed
+                ));
+            }
+        }
+        None => None,
+    };
+
+    let rows = match normalized_filter {
+        Some(purpose) => {
+            sqlx::query(
+                "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, created_at, updated_at \
+                 FROM api_providers WHERE purpose = ? ORDER BY updated_at DESC, id DESC",
+            )
+            .bind(purpose)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|err| err.to_string())?
+        }
+        None => {
+            sqlx::query(
+                "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, created_at, updated_at \
+                 FROM api_providers ORDER BY updated_at DESC, id DESC",
+            )
+            .fetch_all(&state.db)
+            .await
+            .map_err(|err| err.to_string())?
+        }
+    };
 
     Ok(rows.into_iter().map(row_to_provider_summary).collect())
 }
@@ -59,17 +93,23 @@ pub async fn providers_create(
     api_key: String,
     model_name: String,
     provider_kind: Option<String>,
+    purpose: Option<String>,
 ) -> Result<ApiProviderSummary, String> {
     let name = normalize_required("name", &name)?;
     let provider_kind = normalize_provider_kind_for_create(provider_kind)?;
+    let purpose = match purpose {
+        Some(value) => normalize_purpose_value("purpose", &value)?,
+        None => PURPOSE_LLM.to_string(),
+    };
     let base_url = normalize_base_url(&base_url)?;
     let api_key = normalize_required("apiKey", &api_key)?;
     let model_name = normalize_model_name(&model_name);
     let now = now_ts();
 
     eprintln!(
-        "[provider-debug] providers_create:start provider_kind={} base_url={} model_name={} has_api_key={}",
+        "[provider-debug] providers_create:start provider_kind={} purpose={} base_url={} model_name={} has_api_key={}",
         provider_kind,
+        purpose,
         base_url,
         display_model_name(&model_name),
         !api_key.is_empty()
@@ -77,12 +117,13 @@ pub async fn providers_create(
 
     let result = sqlx::query(
         "INSERT INTO api_providers (
-            name, provider_kind, base_url, api_key, model_name,
+            name, provider_kind, purpose, base_url, api_key, model_name,
             created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&name)
     .bind(&provider_kind)
+    .bind(&purpose)
     .bind(&base_url)
     .bind(&api_key)
     .bind(&model_name)
@@ -92,8 +133,9 @@ pub async fn providers_create(
     .await
     .map_err(|err| {
         eprintln!(
-            "[provider-debug] providers_create:error provider_kind={} base_url={} model_name={} error={}",
+            "[provider-debug] providers_create:error provider_kind={} purpose={} base_url={} model_name={} error={}",
             provider_kind,
+            purpose,
             base_url,
             display_model_name(&model_name),
             err
@@ -102,8 +144,9 @@ pub async fn providers_create(
     })?;
 
     eprintln!(
-        "[provider-debug] providers_create:success provider_kind={} provider_id={} model_name={}",
+        "[provider-debug] providers_create:success provider_kind={} purpose={} provider_id={} model_name={}",
         provider_kind,
+        purpose,
         result.last_insert_rowid(),
         display_model_name(&model_name)
     );
@@ -120,18 +163,31 @@ pub async fn providers_update(
     model_name: String,
     api_key: Option<String>,
     provider_kind: Option<String>,
+    purpose: Option<String>,
 ) -> Result<ApiProviderSummary, String> {
     let name = normalize_required("name", &name)?;
     let provider_kind = normalize_optional_provider_kind(provider_kind)?;
+    let purpose = match purpose {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(normalize_purpose_value("purpose", trimmed)?)
+            }
+        }
+        None => None,
+    };
     let base_url = normalize_base_url(&base_url)?;
     let model_name = normalize_model_name(&model_name);
     let api_key = normalize_optional_secret(api_key)?;
     let now = now_ts();
 
     eprintln!(
-        "[provider-debug] providers_update:start provider_id={} provider_kind={:?} base_url={} model_name={} has_api_key_update={}",
+        "[provider-debug] providers_update:start provider_id={} provider_kind={:?} purpose={:?} base_url={} model_name={} has_api_key_update={}",
         id,
         provider_kind,
+        purpose,
         base_url,
         display_model_name(&model_name),
         api_key.is_some()
@@ -141,6 +197,7 @@ pub async fn providers_update(
         "UPDATE api_providers SET
             name = ?,
             provider_kind = COALESCE(?, provider_kind),
+            purpose = COALESCE(?, purpose),
             base_url = ?,
             api_key = COALESCE(?, api_key),
             model_name = ?,
@@ -149,6 +206,7 @@ pub async fn providers_update(
     )
     .bind(&name)
     .bind(&provider_kind)
+    .bind(&purpose)
     .bind(&base_url)
     .bind(api_key)
     .bind(&model_name)
@@ -158,9 +216,10 @@ pub async fn providers_update(
     .await
     .map_err(|err| {
         eprintln!(
-            "[provider-debug] providers_update:error provider_id={} provider_kind={:?} base_url={} model_name={} error={}",
+            "[provider-debug] providers_update:error provider_id={} provider_kind={:?} purpose={:?} base_url={} model_name={} error={}",
             id,
             provider_kind,
+            purpose,
             base_url,
             display_model_name(&model_name),
             err
@@ -169,9 +228,10 @@ pub async fn providers_update(
     })?;
 
     eprintln!(
-        "[provider-debug] providers_update:success provider_id={} provider_kind={:?} model_name={}",
+        "[provider-debug] providers_update:success provider_id={} provider_kind={:?} purpose={:?} model_name={}",
         id,
         provider_kind,
+        purpose,
         display_model_name(&model_name)
     );
 
@@ -525,7 +585,7 @@ async fn providers_get_summary(
     id: i64,
 ) -> Result<ApiProviderSummary, String> {
     let row = sqlx::query(
-        "SELECT id, name, provider_kind, base_url, api_key, model_name, created_at, updated_at \
+        "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, created_at, updated_at \
          FROM api_providers WHERE id = ?",
     )
     .bind(id)
@@ -624,7 +684,7 @@ pub async fn providers_count_tokens(
 
 async fn load_provider_secret(db: &sqlx::SqlitePool, id: i64) -> Result<ApiProvider, String> {
     let row = sqlx::query(
-        "SELECT id, name, provider_kind, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
+        "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
          FROM api_providers WHERE id = ?",
     )
     .bind(id)
@@ -638,6 +698,9 @@ async fn load_provider_secret(db: &sqlx::SqlitePool, id: i64) -> Result<ApiProvi
         provider_kind: row
             .try_get("provider_kind")
             .unwrap_or_else(|_| PROVIDER_KIND_OPENAI_COMPATIBLE.to_string()),
+        purpose: row
+            .try_get("purpose")
+            .unwrap_or_else(|_| PURPOSE_LLM.to_string()),
         base_url: row.try_get("base_url").unwrap_or_default(),
         api_key: row.try_get("api_key").unwrap_or_default(),
         model_name: row.try_get("model_name").unwrap_or_default(),
@@ -655,6 +718,9 @@ fn row_to_provider_summary(row: sqlx::sqlite::SqliteRow) -> ApiProviderSummary {
         provider_kind: row
             .try_get("provider_kind")
             .unwrap_or_else(|_| PROVIDER_KIND_OPENAI_COMPATIBLE.to_string()),
+        purpose: row
+            .try_get("purpose")
+            .unwrap_or_else(|_| PURPOSE_LLM.to_string()),
         base_url: row.try_get("base_url").unwrap_or_default(),
         model_name: row.try_get("model_name").unwrap_or_default(),
         has_api_key: !api_key.is_empty(),
@@ -709,6 +775,17 @@ fn normalize_provider_kind_value(field_name: &str, value: &str) -> Result<String
         _ => Err(format!(
             "{} 只支持 {} 或 {}",
             field_name, PROVIDER_KIND_OPENAI_COMPATIBLE, PROVIDER_KIND_ANTHROPIC
+        )),
+    }
+}
+
+fn normalize_purpose_value(field_name: &str, value: &str) -> Result<String, String> {
+    let normalized = normalize_required(field_name, value)?;
+    match normalized.as_str() {
+        PURPOSE_LLM | PURPOSE_EMBEDDING => Ok(normalized),
+        _ => Err(format!(
+            "{} 只支持 {} 或 {}",
+            field_name, PURPOSE_LLM, PURPOSE_EMBEDDING
         )),
     }
 }

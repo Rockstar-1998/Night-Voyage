@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     models::{
@@ -405,20 +405,23 @@ async fn run_plot_summary_processing_task(
                 }
             };
 
-        let summary_text = match request_ai_plot_summary(&provider, &generation_context).await {
-            Ok(summary_text) => summary_text,
-            Err(error) => {
-                finalize_plot_summary_failed(db, summary_id, &error).await?;
-                emit_plot_summary_error(
-                    app,
-                    conversation_id,
-                    summary_id,
-                    batch.batch_index,
-                    &error,
-                )?;
-                return Ok(());
-            }
-        };
+        let log_dir = app.path().app_data_dir().ok();
+
+        let summary_text =
+            match request_ai_plot_summary(&provider, &generation_context, conversation_id, log_dir.as_deref()).await {
+                Ok(summary_text) => summary_text,
+                Err(error) => {
+                    finalize_plot_summary_failed(db, summary_id, &error).await?;
+                    emit_plot_summary_error(
+                        app,
+                        conversation_id,
+                        summary_id,
+                        batch.batch_index,
+                        &error,
+                    )?;
+                    return Ok(());
+                }
+            };
 
         finalize_plot_summary_completed(db, summary_id, &summary_text).await?;
         emit_plot_summary_updated(
@@ -436,10 +439,10 @@ async fn run_plot_summary_processing_task(
 }
 
 pub async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Result<String, String> {
-    // After the memory_mode unification, plot_summary_mode column is dropped.
-    // Derive the legacy mode from memory_mode for backward compatibility:
-    // - "mem0" -> "ai" (dynamic memory active)
-    // - "stateless" / anything else -> "disabled"
+    // After the three-mode memory unification, plot_summary_mode column is dropped.
+    // Derive the legacy mode from memory_mode:
+    // - "legacy" -> "ai" (PlotSummary enabled with batch + placeholder)
+    // - "mem0" / "stateless" / anything else -> "disabled"
     let value: Option<String> =
         sqlx::query_scalar("SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1")
             .bind(conversation_id)
@@ -448,7 +451,7 @@ pub async fn load_plot_summary_mode(db: &SqlitePool, conversation_id: i64) -> Re
             .map_err(|err| err.to_string())?;
 
     let mode = match value.as_deref() {
-        Some("mem0") => PLOT_SUMMARY_MODE_AI,
+        Some("legacy") => PLOT_SUMMARY_MODE_AI,
         _ => PLOT_SUMMARY_MODE_DISABLED,
     };
     normalize_plot_summary_mode(mode)
@@ -761,6 +764,8 @@ async fn load_plot_summary_generation_context(
 async fn request_ai_plot_summary(
     provider: &ApiProvider,
     context: &PlotSummaryGenerationContext,
+    conversation_id: i64,
+    log_dir: Option<&std::path::Path>,
 ) -> Result<String, String> {
     if provider.provider_kind != "openai_compatible" {
         return Err(format!(
@@ -796,6 +801,19 @@ async fn request_ai_plot_summary(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+
+        // Log the failed plot summary request.
+        crate::services::chat_service::save_intermediate_llm_log(
+            conversation_id,
+            context.batch.end_round_id,
+            "plot_summary",
+            &provider.provider_kind,
+            &provider.model_name,
+            &body,
+            &format!("HTTP {}: {}", status, text),
+            log_dir,
+        );
+
         return Err(format!("剧情总结请求失败: {} {}", status, text));
     }
 
@@ -810,7 +828,21 @@ async fn request_ai_plot_summary(
         .trim()
         .to_string();
 
-    normalize_summary_text(&summary_text)
+    let normalized = normalize_summary_text(&summary_text)?;
+
+    // Log the successful plot summary request.
+    crate::services::chat_service::save_intermediate_llm_log(
+        conversation_id,
+        context.batch.end_round_id,
+        "plot_summary",
+        &provider.provider_kind,
+        &provider.model_name,
+        &body,
+        &serde_json::json!({ "summary": normalized }).to_string(),
+        log_dir,
+    );
+
+    Ok(normalized)
 }
 
 fn build_plot_summary_messages(context: &PlotSummaryGenerationContext) -> Vec<(String, String)> {
@@ -856,7 +888,7 @@ async fn load_plot_summary_provider(
     provider_id: i64,
 ) -> Result<ApiProvider, String> {
     let row = sqlx::query(
-        "SELECT id, name, provider_kind, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
+        "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
          FROM api_providers WHERE id = ? LIMIT 1",
     )
     .bind(provider_id)
@@ -870,6 +902,9 @@ async fn load_plot_summary_provider(
         provider_kind: row
             .try_get("provider_kind")
             .unwrap_or_else(|_| "openai_compatible".to_string()),
+        purpose: row
+            .try_get("purpose")
+            .unwrap_or_else(|_| "llm".to_string()),
         base_url: row.try_get("base_url").unwrap_or_default(),
         api_key: row.try_get("api_key").unwrap_or_default(),
         model_name: row.try_get("model_name").unwrap_or_default(),
@@ -1122,4 +1157,57 @@ fn build_openai_url(base_url: &str) -> String {
     } else {
         format!("{}/v1/chat/completions", trimmed)
     }
+}
+
+/// Create a per-round placeholder row in `plot_summaries` for legacy mode.
+/// The row has `status='pending'` and will be filled by the batch processing task
+/// when the batch window triggers. If a placeholder already exists for this
+/// round, this is a no-op.
+pub async fn create_round_placeholder(
+    db: &SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    round_index: i64,
+) -> Result<(), String> {
+    // Check if a placeholder already exists for this round
+    let existing: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM plot_summaries \
+         WHERE conversation_id = ? AND round_id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .bind(round_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    if existing.is_some() {
+        return Ok(());
+    }
+
+    let now = crate::utils::now_ts();
+    // Use round_index as batch_index for placeholder ordering
+    sqlx::query(
+        "INSERT INTO plot_summaries (
+            conversation_id, batch_index, start_round_id, end_round_id,
+            start_round_index, end_round_index, covered_round_count, covered_round_ids_json,
+            source_kind, status, summary_text,
+            provider_kind, model_name, error_message,
+            created_at, updated_at, completed_at, round_id
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'ai', 'pending', NULL, NULL, NULL, NULL, ?, ?, NULL, ?)",
+    )
+    .bind(conversation_id)
+    .bind(round_index)
+    .bind(round_id)
+    .bind(round_id)
+    .bind(round_index)
+    .bind(round_index)
+    .bind(format!("[{round_id}]"))
+    .bind(now)
+    .bind(now)
+    .bind(round_id)
+    .execute(db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    Ok(())
 }

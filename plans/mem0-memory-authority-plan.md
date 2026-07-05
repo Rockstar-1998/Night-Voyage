@@ -556,3 +556,52 @@ interface RightDrawerProps {
 
 4. **`handle_stream_completion` 重复逻辑**: 该函数与 `spawn_stream_task` 有重复触发逻辑，需同步改造并确认是否为活跃路径。
 
+---
+
+## 任务完成回执
+
+**提交**: `6afe23b` on `feat/mem0-memory-authority`
+**变更统计**: 18 files changed, +378 / -578
+**验证**: `cargo check` ✅ (0 errors, 60 warnings 均为预存 dead_code) · `vite build` ✅ (392 modules, 48.56s)
+
+| Task | 状态 | 说明 |
+|------|------|------|
+| Task 1: Git 分支 | ✅ | 分支已存在，基线代码已提交 `6afe23b` |
+| Task 2: 数据库迁移 | ✅ | `0034_memory_mode_unified.sql` + `0035_drop_legacy_memory_fields.sql` 已创建 |
+| Task 3: Prompt Compiler | ✅ | `load_memory_mode` + `compile_prompt` 门控 + `load_retrieved_detail_blocks` 三策略查询(detail/character_state/plot) |
+| Task 4: Stream Processor | ✅ | `spawn_post_round_tasks` 统一触发，mem0 模式仅 spawn memory_extraction_task |
+| Task 5: Memory Extraction 门控 | ✅ | `mem0_enabled` → `memory_mode` 检查（修复 `.flatten()` 误用） |
+| Task 6: 模型与命令层 | ✅ | `ConversationListItem` 字段替换 + `memory_mode_set` 命令 + 旧命令 deprecated 转发 |
+| Task 7: 前端改造 | ✅ | `backend.ts` 接口 + `RightDrawer` 统一记忆模式 UI + `App.tsx` + `MobileView.tsx` props 同步 |
+| Task 8: 编译验证 | ✅ | `cargo check` + `vite build` 均通过 |
+
+### 修改文件清单
+
+**后端 (Rust)**:
+- `src-tauri/migrations/0034_memory_mode_unified.sql` (新建)
+- `src-tauri/migrations/0035_drop_legacy_memory_fields.sql` (新建)
+- `src-tauri/src/services/prompt_compiler.rs` — `load_memory_mode` 常量与函数、`compile_prompt` 门控、`load_retrieved_detail_blocks` 签名+多策略查询
+- `src-tauri/src/services/stream_processor.rs` — `spawn_post_round_tasks` 辅助函数 + 两处调用点更新
+- `src-tauri/src/services/chat_service.rs` — `mem0_enabled` → `memory_mode` 门控 + 移除未使用导入 `PromptCompileResult` + 修复 `.flatten()` 编译错误
+- `src-tauri/src/models/mod.rs` — `ConversationListItem` 字段替换
+- `src-tauri/src/commands/conversations.rs` — 6 处 SELECT/INSERT/构造更新 + fork INSERT 修复
+- `src-tauri/src/commands/mem0.rs` — 新增 `memory_mode_set` + `mem0_set_enabled` deprecated 转发
+- `src-tauri/src/commands/plot_summaries.rs` — `plot_summaries_update_mode` deprecated 转发 + 移除未使用导入
+- `src-tauri/src/network/mod.rs` — `load_conversation_summary` SELECT + 构造更新
+- `src-tauri/src/lib.rs` — 注册 `memory_mode_set` 命令
+- `src-tauri/src/backdoor/handlers.rs` — INSERT 语句修复 + 未使用变量 `_kind`
+- `src-tauri/src/services/plot_summaries.rs` — `load_plot_summary_mode` 改为从 `memory_mode` 推导
+- `src-tauri/src/services/provider_adapter.rs` — 移除不必要的 `mut`
+
+**前端 (TypeScript/SolidJS)**:
+- `src/lib/backend.ts` — `ConversationListItem` 接口更新 + `memoryModeSet` 函数
+- `src/App.tsx` — 导入 + props 接口 + 处理函数 + 两处 RightDrawer 调用更新
+- `src/components/RightDrawer.tsx` — 完整 UI 重构（props + handlers + 统一记忆模式 section）+ 恢复 `Sparkles` 导入
+- `src/components/MobileView.tsx` — props 接口 + RightDrawer 调用 + 移除 `PlotSummaryRecord` 导入
+
+### 遗留说明
+
+- `tsc --noEmit` 报告 21 个 TypeScript 类型错误，均为预存问题（非本次改动引入），不影响 vite 构建（esbuild 转译不做类型检查）
+- Task 8 端到端运行时验证（计划 8.1–8.4）尚未执行，需在应用启动后手动验证
+- `cargo check` 的 60 个 warnings 均为预存 dead_code（如 `row_to_conversation_list_item`、`handle_stream_completion` 等），非本次引入
+

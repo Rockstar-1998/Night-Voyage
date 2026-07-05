@@ -147,26 +147,33 @@ pub async fn messages_update_content(
 #[tauri::command]
 pub async fn messages_switch_swipe(
     state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    member_id: i64,
     round_id: i64,
     target_message_id: i64,
 ) -> Result<UiMessage, String> {
-    ChatService::switch_swipe(&state.db, round_id, target_message_id).await
+    ChatService::switch_swipe(&state.db, conversation_id, member_id, round_id, target_message_id)
+        .await
 }
 
 #[tauri::command]
 pub async fn messages_delete(
     state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    member_id: i64,
     message_id: i64,
 ) -> Result<(), String> {
-    ChatService::delete_message(&state.db, message_id).await
+    ChatService::delete_message(&state.db, conversation_id, member_id, message_id).await
 }
 
 #[tauri::command]
 pub async fn abort_round_stream(
     state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    member_id: i64,
     round_id: i64,
 ) -> Result<(), String> {
-    ChatService::abort_round_stream(&state.db, round_id).await
+    ChatService::abort_round_stream(&state.db, conversation_id, member_id, round_id).await
 }
 
 #[tauri::command]

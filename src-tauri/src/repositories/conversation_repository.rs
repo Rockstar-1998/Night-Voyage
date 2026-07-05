@@ -135,7 +135,7 @@ impl ConversationRepository {
 
     pub async fn load_provider(db: &SqlitePool, id: i64) -> Result<ApiProvider, String> {
         let row = sqlx::query(
-            "SELECT id, name, provider_kind, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
+            "SELECT id, name, provider_kind, purpose, base_url, api_key, model_name, max_tokens, max_context_tokens, temperature \
              FROM api_providers WHERE id = ?",
         )
         .bind(id)
@@ -149,6 +149,9 @@ impl ConversationRepository {
             provider_kind: row
                 .try_get("provider_kind")
                 .unwrap_or_else(|_| "openai_compatible".to_string()),
+            purpose: row
+                .try_get("purpose")
+                .unwrap_or_else(|_| "llm".to_string()),
             base_url: row.try_get("base_url").unwrap_or_default(),
             api_key: row.try_get("api_key").unwrap_or_default(),
             model_name: row.try_get("model_name").unwrap_or_default(),

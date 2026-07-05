@@ -3,7 +3,7 @@ import { MessageItem, ChatMessage } from './MessageItem';
 import { TokenIsland } from './TokenIsland';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
-import type { MemoryBackendErrorEvent } from '../lib/backend';
+import type { MemoryBackendErrorEvent, TokenUsageReport } from '../lib/backend';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -20,9 +20,14 @@ interface ChatAreaProps {
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   structuredOutputDisplay?: string;
   /** Memory backend errors for the current conversation — displayed as a red banner. */
   memoryErrors?: MemoryBackendErrorEvent[];
+  /** Room guest token usage report (host-side data). When present, TokenIsland renders host data. */
+  roomTokenUsageReport?: TokenUsageReport | null;
+  /** Room guest context window size (host-side data). */
+  roomContextWindowSize?: number | null;
 }
 
 /** Threshold in pixels: if the user is within this distance from the bottom, consider them "at bottom". */
@@ -213,9 +218,14 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
           </For>
         </div>
       </Show>
-      <Show when={props.conversationId && !props.isRoomClient}>
+      <Show when={props.conversationId && (!props.isRoomClient || props.roomTokenUsageReport)}>
         <div class="flex-shrink-0">
-          <TokenIsland conversationId={props.conversationId!} refreshKey={tokenIslandRefreshKey()} />
+          <TokenIsland
+            conversationId={props.conversationId!}
+            refreshKey={tokenIslandRefreshKey()}
+            roomTokenUsageReport={props.roomTokenUsageReport}
+            roomContextWindowSize={props.roomContextWindowSize}
+          />
         </div>
       </Show>
       <div
@@ -240,6 +250,7 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 formatConfig={props.formatConfig}
                 worldBookKeywords={props.worldBookKeywords}
                 onChoiceSelect={props.onChoiceSelect}
+                onSchemaToggle={props.onSchemaToggle}
                 structuredOutputDisplay={props.structuredOutputDisplay}
               />
             )}

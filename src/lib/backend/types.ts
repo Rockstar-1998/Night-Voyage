@@ -779,6 +779,14 @@ export interface RoomJoinResult {
   hostCharacterName?: string | null;
   hostCharacterDescription?: string | null;
   fullMessages?: UiMessage[];
+  schemaToggleState?: Record<string, boolean>;
+  contextWindowSize?: number;
+  tokenUsageReport?: TokenUsageReport;
+  hostBaseSections?: string | null;
+  hostPresetName?: string | null;
+  hostWorldBookName?: string | null;
+  hostProviderName?: string | null;
+  plotSummaries?: PlotSummaryRecord[];
 }
 
 export interface RoomHostCharacter {
@@ -786,6 +794,10 @@ export interface RoomHostCharacter {
   description: string;
   imagePath?: string | null;
   imageBase64?: string | null;
+  baseSections?: CharacterBaseSection[] | null;
+  presetName?: string | null;
+  worldBookName?: string | null;
+  providerName?: string | null;
 }
 
 export interface RoomContextSnapshotEvent {
@@ -796,11 +808,35 @@ export interface RoomContextSnapshotEvent {
   hostCharacterImageBase64?: string | null;
   hostCharacterName?: string | null;
   hostCharacterDescription?: string | null;
+  schemaToggleState?: Record<string, boolean>;
+  contextWindowSize?: number;
+  tokenUsageReport?: TokenUsageReport;
+  hostBaseSections?: string | null;
+  hostPresetName?: string | null;
+  hostWorldBookName?: string | null;
+  hostProviderName?: string | null;
+  plotSummaries?: PlotSummaryRecord[];
 }
 
 export interface RoomMemberJoinedEvent {
   memberId: number;
   displayName: string;
+}
+
+export interface RoomSchemaToggleEvent {
+  conversationId: number;
+  toggleKey: string;
+  expanded: boolean;
+}
+
+export interface RoomTokenUsageEvent {
+  conversationId: number;
+  tokenUsageReport: TokenUsageReport;
+}
+
+export interface RoomPlotSummaryUpdateEvent {
+  conversationId: number;
+  summaries: PlotSummaryRecord[];
 }
 
 export interface RoomMemberLeftEvent {

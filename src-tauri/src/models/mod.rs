@@ -6,6 +6,7 @@ pub struct ApiProvider {
     pub id: i64,
     pub name: String,
     pub provider_kind: String,
+    pub purpose: String,
     pub base_url: String,
     pub api_key: String,
     pub model_name: String,
@@ -60,6 +61,7 @@ pub struct ApiProviderSummary {
     pub id: i64,
     pub name: String,
     pub provider_kind: String,
+    pub purpose: String,
     pub base_url: String,
     pub model_name: String,
     pub has_api_key: bool,
@@ -85,11 +87,14 @@ pub struct ConversationListItem {
     pub world_book_id: Option<i64>,
     pub preset_id: Option<i64>,
     pub provider_id: Option<i64>,
+    pub embedding_provider_id: Option<i64>,
     pub chat_mode: String,
     pub agent_provider_policy: String,
     pub memory_mode: String,
+    pub mem0_snapshot_window: i64,
     pub member_count: i64,
     pub pending_member_count: i64,
+    pub room_status: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -443,6 +448,16 @@ pub struct StreamErrorEvent {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct StreamRetryEvent {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+    pub error: String,
+    pub attempt_count: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct MessageContentPartRecord {
     pub id: i64,
     pub message_id: i64,
@@ -503,49 +518,10 @@ pub struct CharacterCard {
     pub updated_at: i64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CharacterStateOverlayRecord {
-    pub id: i64,
-    pub conversation_id: i64,
-    pub character_id: i64,
-    pub round_id: i64,
-    pub source_kind: String,
-    pub status: String,
-    pub summary_text: Option<String>,
-    pub input_user_content: Option<String>,
-    pub input_assistant_content: Option<String>,
-    pub provider_kind: Option<String>,
-    pub model_name: Option<String>,
-    pub error_message: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub completed_at: Option<i64>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CharacterStateOverlayUpdatedEvent {
-    pub conversation_id: i64,
-    pub character_id: i64,
-    pub round_id: i64,
-    pub overlay_id: i64,
-    pub source_kind: String,
-    pub status: String,
-    pub summary_text: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CharacterStateOverlayErrorEvent {
-    pub conversation_id: i64,
-    pub character_id: i64,
-    pub round_id: i64,
-    pub overlay_id: i64,
-    pub source_kind: String,
-    pub status: String,
-    pub error: String,
-}
+// CharacterStateOverlayRecord, CharacterStateOverlayUpdatedEvent, and
+// CharacterStateOverlayErrorEvent removed: character_state_overlays table
+// dropped in migration 0036. WorldVariable is now stored per-round in
+// message_rounds.world_variables.
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -688,4 +664,25 @@ pub struct AgentDraft {
     pub draft_intent: Option<String>,
     pub status: String,
     pub created_at: i64,
+}
+
+/// Emitted via `llm-memory-error` when a memory backend operation fails.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBackendErrorEvent {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    /// "search" | "add" | "health" etc.
+    pub operation: String,
+    /// Which retrieval strategy failed (detail, character_state, plot) — None for non-search ops.
+    pub strategy: Option<String>,
+    pub error: String,
+}
+
+/// Response payload for the `mem0_init_status` command.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Mem0InitStatusResponse {
+    pub available: bool,
+    pub error: Option<String>,
 }

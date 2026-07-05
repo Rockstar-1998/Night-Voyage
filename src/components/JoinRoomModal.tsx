@@ -1,6 +1,7 @@
-import { Component, Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { Component, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { X, Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
+import { Select } from './ui/Select';
 import {
   roomJoin,
   roomLeave,
@@ -11,6 +12,8 @@ import {
   listenRoomStreamChunk,
   listenRoomStreamEnd,
   listenRoomRoundStateUpdate,
+  type CharacterCard,
+  type GuestCharacterCardPayload,
   type RoomMemberJoinedEvent,
   type RoomStreamChunkEvent,
   type RoomStreamEndEvent,
@@ -22,6 +25,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 interface JoinRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
+  playerCharacters: CharacterCard[];
   onJoined?: (
     result: RoomJoinResult,
     connection: { hostAddress: string; port: number; displayName: string },
@@ -35,10 +39,39 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
   const [hostAddress, setHostAddress] = createSignal('');
   const [port, setPort] = createSignal('');
   const [displayName, setDisplayName] = createSignal('');
+  const [selectedCharacterId, setSelectedCharacterId] = createSignal<number | undefined>();
   const [status, setStatus] = createSignal<ConnectionStatus>('idle');
   const [statusMessage, setStatusMessage] = createSignal('');
   const [members, setMembers] = createSignal<RoomMemberJoinedEvent[]>([]);
   const [copied, setCopied] = createSignal(false);
+
+  const selectedCharacter = createMemo(() =>
+    props.playerCharacters.find((character) => character.id === selectedCharacterId()),
+  );
+
+  const characterSelectOptions = createMemo(() => [
+    { label: '不携带角色卡', value: '' },
+    ...props.playerCharacters.map((character) => ({
+      label: character.name,
+      value: String(character.id),
+    })),
+  ]);
+
+  const handleCharacterChange = (value: string) => {
+    if (!value) {
+      setSelectedCharacterId(undefined);
+      return;
+    }
+    const id = Number(value);
+    const character = props.playerCharacters.find((c) => c.id === id);
+    if (!character) {
+      setSelectedCharacterId(undefined);
+      return;
+    }
+    setSelectedCharacterId(id);
+    // 选择角色卡后立即覆盖显示名称，用户仍可手动修改。
+    setDisplayName(character.name);
+  };
 
   let unlistens: UnlistenFn[] = [];
 
@@ -46,6 +79,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
     setHostAddress('');
     setPort('');
     setDisplayName('');
+    setSelectedCharacterId(undefined);
     setStatus('idle');
     setStatusMessage('');
     setMembers([]);
@@ -72,13 +106,13 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
       setStatusMessage(msg);
     });
     const u5 = await listenRoomStreamChunk((payload: RoomStreamChunkEvent) => {
-      console.debug('[room:stream_chunk]', payload);
+      console.debug('[room-stream_chunk]', payload);
     });
     const u6 = await listenRoomStreamEnd((payload: RoomStreamEndEvent) => {
-      console.debug('[room:stream_end]', payload);
+      console.debug('[room-stream_end]', payload);
     });
     const u7 = await listenRoomRoundStateUpdate((payload: RoomRoundStateUpdateEvent) => {
-      console.debug('[room:round_state_update]', payload);
+      console.debug('[room-round_state_update]', payload);
     });
 
     unlistens = [u1, u2, u3, u4, u5, u6, u7];
@@ -103,10 +137,29 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
       return;
     }
 
+    const character = selectedCharacter();
+    const characterPayload: GuestCharacterCardPayload | undefined = character
+      ? {
+          name: character.name,
+          description: character.description,
+          tags: character.tags,
+          baseSections: character.baseSections.map((section) => ({
+            sectionKey: section.sectionKey,
+            title: section.title,
+            content: section.content,
+          })),
+        }
+      : undefined;
+
     setStatus('connecting');
     setStatusMessage('正在连接房间...');
     try {
-      const result = await roomJoin({ hostAddress: addr, port: p, displayName: name });
+      const result = await roomJoin({
+        hostAddress: addr,
+        port: p,
+        displayName: name,
+        character: characterPayload,
+      });
       if (result.success) {
         setStatus('connected');
         setStatusMessage('连接成功');
@@ -274,6 +327,21 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                       placeholder="在房间中显示的昵称"
                       class="w-full bg-transparent border-b border-white/20 rounded-none py-3 px-1 text-sm focus:outline-none focus:border-accent transition-all text-white placeholder-mist-solid/30"
                     />
+                  </div>
+
+                  <div class="space-y-2">
+                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">玩家角色卡（可选）</label>
+                    <Select
+                      options={characterSelectOptions()}
+                      value={selectedCharacterId() !== undefined ? String(selectedCharacterId()) : ''}
+                      onChange={handleCharacterChange}
+                      placeholder="选择角色卡"
+                    />
+                    <Show when={selectedCharacter()}>
+                      <p class="text-[11px] text-mist-solid/40 leading-relaxed">
+                        携带角色卡后，房主生成的 prompt 将包含该角色的 name / description / tags / baseSections。
+                      </p>
+                    </Show>
                   </div>
 
                   <Show when={status() === 'failed'}>

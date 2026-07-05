@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    models::{ConversationListItem, ConversationMember, RoundState, UiMessage},
+    models::{ConversationListItem, ConversationMember, RoundState, TokenUsageReport, UiMessage},
     network::{GuestCharacterCardPayload, RoomClient, RoomMessage, RoomServer},
     utils::now_ts,
     AppState,
@@ -49,6 +50,15 @@ pub struct RoomJoinResult {
     #[serde(alias = "recentMessages")]
     pub full_messages: Vec<UiMessage>,
     pub round_state: Option<RoundState>,
+    #[serde(alias = "schemaToggleState")]
+    pub schema_toggle_state: Option<HashMap<String, bool>>,
+    pub context_window_size: Option<i64>,
+    pub token_usage_report: Option<TokenUsageReport>,
+    pub host_base_sections: Option<String>,
+    pub host_preset_name: Option<String>,
+    pub host_world_book_name: Option<String>,
+    pub host_provider_name: Option<String>,
+    pub plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
 }
 
 #[tauri::command]
@@ -224,6 +234,14 @@ pub async fn room_join(
                 members: session.members,
                 full_messages: session.full_messages,
                 round_state: Some(session.round_state),
+                schema_toggle_state: session.schema_toggle_state,
+                context_window_size: session.context_window_size,
+                token_usage_report: session.token_usage_report,
+                host_base_sections: session.host_base_sections,
+                host_preset_name: session.host_preset_name,
+                host_world_book_name: session.host_world_book_name,
+                host_provider_name: session.host_provider_name,
+                plot_summaries: session.plot_summaries,
             })
         }
         Err(e) => Ok(RoomJoinResult {
@@ -235,6 +253,14 @@ pub async fn room_join(
             members: Vec::new(),
             full_messages: Vec::new(),
             round_state: None,
+            schema_toggle_state: None,
+            context_window_size: None,
+            token_usage_report: None,
+            host_base_sections: None,
+            host_preset_name: None,
+            host_world_book_name: None,
+            host_provider_name: None,
+            plot_summaries: None,
         }),
     }
 }
@@ -392,6 +418,110 @@ pub async fn room_broadcast_round_state(
     }
 }
 
+/// Host-side command: persist the schema toggle state in the room server's
+/// in-memory map and broadcast a `SchemaToggle` event to all connected
+/// guests. Single-player mode never invokes this (no room server running).
+///
+/// IPC error strings use forward slashes to stay JSON-safe across Windows
+/// paths, per the project Rust style rules.
+#[tauri::command]
+pub async fn room_broadcast_schema_toggle(
+    state: tauri::State<'_, AppState>,
+    toggle_key: String,
+    expanded: bool,
+) -> Result<(), String> {
+    let host_server = state.host_server.lock().await;
+    let Some(server_arc) = host_server.as_ref() else {
+        return Err("房主服务器未启动".to_string());
+    };
+    let server = server_arc.lock().await;
+    let room_id = server.room_id;
+    let conversation_id: i64 = sqlx::query_scalar(
+        "SELECT conversation_id FROM rooms WHERE id = ? LIMIT 1",
+    )
+    .bind(room_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| err.to_string().replace('\\', "/"))?
+    .ok_or_else(|| "房主房间不存在或已关闭".to_string())?;
+    server
+        .update_schema_toggle(conversation_id, toggle_key, expanded)
+        .await;
+    Ok(())
+}
+
+/// Host-side command: compile a fresh `TokenUsageReport` for the given
+/// conversation and broadcast it to all connected room guests as a
+/// `RoomMessage::TokenUsage`. Called by the host after a stream round
+/// finishes so guests can refresh their token-usage island.
+///
+/// Single-player mode never has a room server running, so this command
+/// returns `Err("房主服务器未启动")` there — it is only invoked from the
+/// host-side stream-end path and has no single-player call site.
+///
+/// IPC error strings use forward slashes to stay JSON-safe across Windows
+/// paths, per the project Rust style rules.
+#[tauri::command]
+pub async fn room_broadcast_token_usage(
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+) -> Result<(), String> {
+    let report = crate::services::prompt_compiler::compile_token_usage_report(
+        &state.db,
+        conversation_id,
+    )
+    .await
+    .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    let host_server = state.host_server.lock().await;
+    let Some(server_arc) = host_server.as_ref() else {
+        return Err("房主服务器未启动".to_string());
+    };
+    let server = server_arc.lock().await;
+    let msg = RoomMessage::TokenUsage {
+        conversation_id,
+        report,
+    };
+    server.broadcast_message(&msg).await;
+    Ok(())
+}
+
+/// Host-side command: load the current `PlotSummaryRecord` list for the
+/// given conversation and broadcast it to all connected room guests as a
+/// `RoomMessage::PlotSummaryUpdate`. Called by the host after plot summary
+/// upsert/delete so guests can refresh their sidebar.
+///
+/// Single-player mode never has a room server running, so this command
+/// returns `Err("房主服务器未启动")` there — it is only invoked from the
+/// host-side plot summary mutation paths and has no single-player call site.
+///
+/// IPC error strings use forward slashes to stay JSON-safe across Windows
+/// paths, per the project Rust style rules.
+#[tauri::command]
+pub async fn room_broadcast_plot_summary(
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+) -> Result<(), String> {
+    let summaries = crate::services::plot_summaries::list_plot_summaries(
+        &state.db,
+        conversation_id,
+    )
+    .await
+    .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    let host_server = state.host_server.lock().await;
+    let Some(server_arc) = host_server.as_ref() else {
+        return Err("房主服务器未启动".to_string());
+    };
+    let server = server_arc.lock().await;
+    let msg = RoomMessage::PlotSummaryUpdate {
+        conversation_id,
+        summaries,
+    };
+    server.broadcast_message(&msg).await;
+    Ok(())
+}
+
 /// Asks the host (when the local app is the guest) for a fresh
 /// `ContextSnapshot` covering the full message history, member list, and
 /// round state of the conversation we are connected to. Returns
@@ -424,6 +554,7 @@ pub async fn room_request_context(
         &state.db,
         conversation_id,
         &app,
+        None,
     )
     .await?;
 

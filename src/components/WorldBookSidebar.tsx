@@ -1,5 +1,5 @@
 import { Component, For, Show, createSignal } from 'solid-js';
-import { BookOpen, Plus, Pencil, Save, Search, Trash2, Upload, X } from '../lib/icons';
+import { BookOpen, Download, Plus, Pencil, Save, Search, Trash2, Upload, X } from '../lib/icons';
 import {
   importManagedImageFile,
   resolveImageSrc,
@@ -22,6 +22,8 @@ interface WorldBookSidebarProps {
   onDeleteWorldBook: (id: number) => Promise<void> | void;
   onUpsertEntry: (payload: UpsertWorldBookEntryPayload) => Promise<void> | void;
   onDeleteEntry: (entryId: number) => Promise<void> | void;
+  onImportExchange: (file: File) => Promise<void> | void;
+  onExportWorldBook: (book: WorldBookSummary) => Promise<void> | void;
 }
 
 interface WorldBookFormState {
@@ -44,6 +46,15 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
   const [formData, setFormData] = createSignal<WorldBookFormState>(EMPTY_FORM);
   const [uploadingImage, setUploadingImage] = createSignal(false);
   let fileInputRef: HTMLInputElement | undefined;
+  let importInputRef: HTMLInputElement | undefined;
+
+  const handleImportFile = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    await props.onImportExchange(file);
+  };
 
   const activeBook = () => props.worldBooks.find((book) => book.id === selectedBookId());
   const filteredBooks = () => {
@@ -125,9 +136,21 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
           <div class="p-8 flex flex-col gap-6">
             <div class="flex items-center justify-between">
               <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">世界书</h1>
-              <IconButton onClick={() => openModal()} label="新建世界书" tone="accent" size="lg">
-                <Plus size={18} />
-              </IconButton>
+              <div class="flex items-center gap-2">
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  class="hidden"
+                  onChange={(e) => void handleImportFile(e)}
+                />
+                <IconButton onClick={() => importInputRef?.click()} label="导入世界书" tone="neutral" size="lg">
+                  <Upload size={18} />
+                </IconButton>
+                <IconButton onClick={() => openModal()} label="新建世界书" tone="accent" size="lg">
+                  <Plus size={18} />
+                </IconButton>
+              </div>
             </div>
 
             <div class="relative group">
@@ -186,6 +209,17 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                         class="bg-white/10 text-white"
                       >
                         <Pencil size={14} />
+                      </IconButton>
+                      <IconButton
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void props.onExportWorldBook(book);
+                        }}
+                        label={`导出世界书 ${book.title}`}
+                        size="sm"
+                        class="bg-white/10 text-white"
+                      >
+                        <Download size={14} />
                       </IconButton>
                       <IconButton
                         onClick={(event) => {

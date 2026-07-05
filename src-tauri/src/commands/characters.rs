@@ -223,7 +223,51 @@ pub async fn character_cards_delete(
     Ok(())
 }
 
-async fn character_card_get(db: &sqlx::SqlitePool, id: i64) -> Result<CharacterCard, String> {
+#[tauri::command]
+pub async fn character_card_export_image(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+
+    let card = character_card_get(&state.db, id).await?;
+    let Some(image_path) = card.image_path else {
+        return Ok(None);
+    };
+
+    let trimmed = image_path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let bytes = std::fs::read(trimmed).map_err(|e| e.to_string())?;
+    const MAX_BYTES: usize = 2 * 1024 * 1024;
+    if bytes.len() > MAX_BYTES {
+        eprintln!(
+            "[character_card_export_image] image too large for id={}, skipping",
+            id
+        );
+        return Ok(None);
+    }
+
+    let lower = trimmed.to_lowercase();
+    let mime = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "application/octet-stream"
+    };
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(Some(format!("data:{};base64,{}", mime, b64)))
+}
+
+pub async fn character_card_get(db: &sqlx::SqlitePool, id: i64) -> Result<CharacterCard, String> {
     let row = sqlx::query(
         "SELECT id, card_type, name, avatar_path, description, first_message, tags,
                 default_world_book_id, default_preset_id, default_provider_id,

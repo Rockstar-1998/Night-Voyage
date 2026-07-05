@@ -4,8 +4,9 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::{
+    models::Mem0InitStatusResponse,
     services::{
-        memory_providers::MEM0_STORAGE_DIR,
+        memory_providers::resolve_mem0_storage_dir,
         memory_service::{MemoryRecord, MemoryService},
     },
     utils::now_ts,
@@ -15,38 +16,56 @@ use crate::{
 /// Global mem0 capability status surfaced to the UI.
 #[derive(Debug, Serialize)]
 pub struct Mem0Status {
-    /// A memory backend is registered in AppState (initialized at startup).
+    /// At least one embedding-purpose provider exists, so mem0 can be
+    /// configured per-conversation.
     pub enabled: bool,
-    /// The registered backend reports itself healthy via `health()`.
+    /// Mirrors `enabled`: actual per-conversation health is checked when a
+    /// memory service is lazily constructed.
     pub provider_ready: bool,
     /// Fixed on-disk persistence path (guardrails: never C:\).
     pub vector_store_path: String,
 }
 
-/// Acquire a clone of the optional memory backend registered in AppState.
-async fn clone_memory_service(
+/// Acquire the memory backend for a specific conversation, constructing it
+/// lazily from the conversation's `embedding_provider_id` and caching the
+/// result in `AppState.memory_service`. Build errors propagate to the caller.
+async fn get_memory_service_for_conversation(
     state: &State<'_, AppState>,
-) -> Option<Arc<dyn MemoryService>> {
-    let guard = state.memory_service.lock().await;
-    guard.clone()
+    conversation_id: i64,
+) -> Result<Arc<dyn MemoryService>, String> {
+    crate::services::memory_providers::get_or_build_memory_service(
+        &state.db,
+        &state.memory_service,
+        conversation_id,
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn mem0_status(state: State<'_, AppState>) -> Result<Mem0Status, String> {
-    let service = clone_memory_service(&state).await;
-    let enabled = service.is_some();
-    let provider_ready = match service {
-        Some(service) => service.health().await.unwrap_or(false),
-        None => false,
-    };
+    let has_emb = crate::services::memory_providers::has_embedding_provider(&state.db).await?;
     Ok(Mem0Status {
-        enabled,
-        provider_ready,
-        vector_store_path: MEM0_STORAGE_DIR.to_string(),
+        enabled: has_emb,
+        provider_ready: has_emb,
+        vector_store_path: resolve_mem0_storage_dir().unwrap_or_else(|_| "unknown".to_string()),
     })
 }
 
-/// Set the per-conversation memory mode ('stateless' or 'mem0').
+/// Expose the startup init result so the UI can display why mem0 is unavailable.
+#[tauri::command]
+pub async fn mem0_init_status(
+    state: State<'_, AppState>,
+) -> Result<Mem0InitStatusResponse, String> {
+    // Under lazy construction, mem0 is "available" whenever an embedding-purpose
+    // provider exists. Per-conversation build errors surface at use time.
+    let available = crate::services::memory_providers::has_embedding_provider(&state.db).await?;
+    let error = state.mem0_init_error.clone();
+    Ok(Mem0InitStatusResponse { available, error })
+}
+
+/// Set the per-conversation memory mode ('stateless', 'legacy', or 'mem0').
+/// Note: UI does not expose mode switching after creation; this command is
+/// retained for debugging and initial creation flows.
 #[tauri::command]
 pub async fn memory_mode_set(
     state: State<'_, AppState>,
@@ -54,8 +73,8 @@ pub async fn memory_mode_set(
     mode: String,
 ) -> Result<String, String> {
     let normalized = match mode.as_str() {
-        "stateless" | "mem0" => mode,
-        _ => return Err("memory_mode 必须是 'stateless' 或 'mem0'".to_string()),
+        "stateless" | "legacy" | "mem0" => mode,
+        _ => return Err("memory_mode 必须是 'stateless', 'legacy' 或 'mem0'".to_string()),
     };
     sqlx::query("UPDATE conversations SET memory_mode = ?, updated_at = ? WHERE id = ?")
         .bind(&normalized)
@@ -86,9 +105,7 @@ pub async fn mem0_search_test(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<MemoryRecord>, String> {
-    let Some(service) = clone_memory_service(&state).await else {
-        return Err("mem0 未启用：未配置 memory service".to_string());
-    };
+    let service = get_memory_service_for_conversation(&state, conversation_id).await?;
     let limit = limit.unwrap_or(5).max(1);
     let user_id = conversation_id.to_string();
     service
@@ -103,9 +120,7 @@ pub async fn mem0_list_memories(
     conversation_id: i64,
     limit: Option<usize>,
 ) -> Result<Vec<MemoryRecord>, String> {
-    let Some(service) = clone_memory_service(&state).await else {
-        return Err("mem0 未启用：未配置 memory service".to_string());
-    };
+    let service = get_memory_service_for_conversation(&state, conversation_id).await?;
     let limit = limit.unwrap_or(50).max(1);
     let user_id = conversation_id.to_string();
     service
@@ -117,11 +132,10 @@ pub async fn mem0_list_memories(
 #[tauri::command]
 pub async fn mem0_delete_memory(
     state: State<'_, AppState>,
+    conversation_id: i64,
     memory_id: String,
 ) -> Result<(), String> {
-    let Some(service) = clone_memory_service(&state).await else {
-        return Err("mem0 未启用：未配置 memory service".to_string());
-    };
+    let service = get_memory_service_for_conversation(&state, conversation_id).await?;
     service
         .delete(&memory_id)
         .await
@@ -133,9 +147,7 @@ pub async fn mem0_delete_all(
     state: State<'_, AppState>,
     conversation_id: i64,
 ) -> Result<usize, String> {
-    let Some(service) = clone_memory_service(&state).await else {
-        return Err("mem0 未启用：未配置 memory service".to_string());
-    };
+    let service = get_memory_service_for_conversation(&state, conversation_id).await?;
     let user_id = conversation_id.to_string();
     service
         .delete_all(&user_id)

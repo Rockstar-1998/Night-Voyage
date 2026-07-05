@@ -14,9 +14,13 @@ pub async fn conversations_list(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ConversationListItem>, String> {
     let rows = sqlx::query(
-        "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at \
-         FROM conversations ORDER BY updated_at DESC",
+        "SELECT c.id, c.conversation_type, c.title, c.host_character_id, c.world_book_id, c.preset_id, \
+         c.provider_id, c.embedding_provider_id, c.chat_mode, c.agent_provider_policy, c.memory_mode, \
+         c.mem0_snapshot_window, c.created_at, c.updated_at, \
+         r.status as room_status \
+         FROM conversations c \
+         LEFT JOIN rooms r ON r.conversation_id = c.id \
+         ORDER BY c.updated_at DESC",
     )
     .fetch_all(&state.db)
     .await
@@ -25,6 +29,20 @@ pub async fn conversations_list(
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         let conversation_id: i64 = row.try_get("id").unwrap_or_default();
+        let conversation_type: String = row
+            .try_get("conversation_type")
+            .unwrap_or_else(|_| "single".to_string());
+        let room_status_raw: Option<String> = row.try_get("room_status").ok().flatten();
+        let room_status = if conversation_type == "online" {
+            match room_status_raw.as_deref() {
+                Some("waiting") => Some("open".to_string()),
+                Some("closed") => Some("closed".to_string()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         let member_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM conversation_members WHERE conversation_id = ? AND is_active = 1",
         )
@@ -37,14 +55,13 @@ pub async fn conversations_list(
 
         items.push(ConversationListItem {
             id: conversation_id,
-            conversation_type: row
-                .try_get("conversation_type")
-                .unwrap_or_else(|_| "single".to_string()),
+            conversation_type,
             title: row.try_get("title").ok(),
             host_character_id: row.try_get("host_character_id").ok(),
             world_book_id: row.try_get("world_book_id").ok(),
             preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
             provider_id: row.try_get("provider_id").ok(),
+            embedding_provider_id: row.try_get("embedding_provider_id").ok(),
             chat_mode: row
                 .try_get("chat_mode")
                 .unwrap_or_else(|_| "classic".to_string()),
@@ -54,8 +71,12 @@ pub async fn conversations_list(
             memory_mode: row
                 .try_get("memory_mode")
                 .unwrap_or_else(|_| "stateless".to_string()),
+            mem0_snapshot_window: row
+                .try_get("mem0_snapshot_window")
+                .unwrap_or(20),
             member_count,
             pending_member_count,
+            room_status,
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         });
@@ -73,17 +94,20 @@ pub async fn conversations_create(
     world_book_id: Option<i64>,
     preset_id: Option<i64>,
     provider_id: Option<i64>,
+    embedding_provider_id: Option<i64>,
     host_display_name: Option<String>,
     host_player_character_id: i64,
     chat_mode: Option<String>,
     agent_provider_policy: Option<String>,
     opening_message_index: Option<i64>,
+    memory_mode: Option<String>,
 ) -> Result<ConversationCreateResult, String> {
     validate_conversation_type(&conversation_type)?;
     let host_character_id =
         host_character_id.ok_or_else(|| "创建会话必须绑定角色卡".to_string())?;
     let chat_mode = normalize_chat_mode(chat_mode.as_deref())?;
     let agent_provider_policy = normalize_agent_provider_policy(agent_provider_policy.as_deref())?;
+    let memory_mode = normalize_memory_mode(memory_mode.as_deref())?;
     let now = now_ts();
     let title = normalize_title(title);
     let mut tx = state.db.begin().await.map_err(|err| err.to_string())?;
@@ -107,11 +131,25 @@ pub async fn conversations_create(
     )
     .await?;
 
+    if let Some(embed_id) = embedding_provider_id {
+        let purpose: String =
+            sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
+                .bind(embed_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?
+                .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
+        if purpose != "embedding" {
+            return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+        }
+    }
+
     let result = sqlx::query(
         "INSERT INTO conversations (
             conversation_type, title, host_character_id, world_book_id, preset_id,
-            provider_id, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stateless', ?, ?)",
+            provider_id, embedding_provider_id, chat_mode, agent_provider_policy, \
+            memory_mode, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&conversation_type)
     .bind(&title)
@@ -119,8 +157,10 @@ pub async fn conversations_create(
     .bind(world_book_id)
     .bind(preset_id)
     .bind(provider_id)
+    .bind(embedding_provider_id)
     .bind(&chat_mode)
     .bind(&agent_provider_policy)
+    .bind(&memory_mode)
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
@@ -251,18 +291,20 @@ pub async fn conversations_update_bindings(
     world_book_id: Option<i64>,
     preset_id: Option<i64>,
     provider_id: Option<i64>,
+    embedding_provider_id: Option<Option<i64>>,
     chat_mode: Option<String>,
     agent_provider_policy: Option<String>,
 ) -> Result<ConversationListItem, String> {
     let now = now_ts();
     eprintln!(
-        "[conversation-debug] update_bindings:start conversation_id={} title_present={} host_character_id={:?} world_book_id={:?} preset_id={:?} provider_id={:?} chat_mode={:?} agent_provider_policy={:?}",
+        "[conversation-debug] update_bindings:start conversation_id={} title_present={} host_character_id={:?} world_book_id={:?} preset_id={:?} provider_id={:?} embedding_provider_id={:?} chat_mode={:?} agent_provider_policy={:?}",
         conversation_id,
         title.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
         host_character_id,
         world_book_id,
         preset_id,
         provider_id,
+        embedding_provider_id,
         chat_mode,
         agent_provider_policy
     );
@@ -282,7 +324,25 @@ pub async fn conversations_update_bindings(
         None => None,
     };
 
-    let update_sql = "UPDATE conversations SET
+    if let Some(Some(embed_id)) = embedding_provider_id {
+        let purpose: String =
+            sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
+                .bind(embed_id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|err| err.to_string())?
+                .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
+        if purpose != "embedding" {
+            return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+        }
+    }
+
+    let embedding_clause = match &embedding_provider_id {
+        None => "",
+        Some(_) => "embedding_provider_id = ?,",
+    };
+    let update_sql = format!(
+        "UPDATE conversations SET
             title = COALESCE(?, title),
             host_character_id = COALESCE(?, host_character_id),
             world_book_id = COALESCE(?, world_book_id),
@@ -290,21 +350,28 @@ pub async fn conversations_update_bindings(
             provider_id = COALESCE(?, provider_id),
             chat_mode = COALESCE(?, chat_mode),
             agent_provider_policy = COALESCE(?, agent_provider_policy),
+            {}
             updated_at = ?
-         WHERE id = ?";
+         WHERE id = ?",
+        embedding_clause
+    );
     eprintln!(
         "[conversation-debug] update_bindings:sql={}",
         update_sql.replace('\n', " ")
     );
 
-    sqlx::query(update_sql)
+    let mut query = sqlx::query(&update_sql)
         .bind(next_title)
         .bind(host_character_id)
         .bind(world_book_id)
         .bind(normalize_optional_positive_id(preset_id))
         .bind(provider_id)
         .bind(next_chat_mode)
-        .bind(next_policy)
+        .bind(next_policy);
+    if embedding_provider_id.is_some() {
+        query = query.bind(embedding_provider_id.flatten());
+    }
+    query
         .bind(now)
         .bind(conversation_id)
         .execute(&state.db)
@@ -333,7 +400,7 @@ pub async fn conversations_rename(
     id: i64,
     title: String,
 ) -> Result<ConversationListItem, String> {
-    conversations_update_bindings(state, id, Some(title), None, None, None, None, None, None).await
+    conversations_update_bindings(state, id, Some(title), None, None, None, None, None, None, None).await
 }
 
 #[tauri::command]
@@ -596,11 +663,7 @@ pub async fn conversations_delete(
         .await
         .map_err(|err| err.to_string())?;
 
-    sqlx::query("DELETE FROM character_state_overlays WHERE conversation_id = ?")
-        .bind(id)
-        .execute(&state.db)
-        .await
-        .map_err(|err| err.to_string())?;
+    // character_state_overlays table dropped in migration 0036
 
     sqlx::query("DELETE FROM plot_summaries WHERE conversation_id = ?")
         .bind(id)
@@ -660,6 +723,7 @@ fn row_to_conversation_list_item(row: sqlx::sqlite::SqliteRow) -> ConversationLi
         world_book_id: row.try_get("world_book_id").ok(),
         preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
         provider_id: row.try_get("provider_id").ok(),
+        embedding_provider_id: row.try_get("embedding_provider_id").ok(),
         chat_mode: row
             .try_get("chat_mode")
             .unwrap_or_else(|_| "classic".to_string()),
@@ -669,8 +733,10 @@ fn row_to_conversation_list_item(row: sqlx::sqlite::SqliteRow) -> ConversationLi
         memory_mode: row
             .try_get("memory_mode")
             .unwrap_or_else(|_| "stateless".to_string()),
+        mem0_snapshot_window: row.try_get("mem0_snapshot_window").unwrap_or(20),
         member_count: row.try_get("member_count").unwrap_or_default(),
         pending_member_count: row.try_get("pending_member_count").unwrap_or_default(),
+        room_status: row.try_get("room_status").ok().flatten(),
         created_at: row.try_get("created_at").unwrap_or_default(),
         updated_at: row.try_get("updated_at").unwrap_or_default(),
     }
@@ -698,9 +764,13 @@ async fn conversations_get_by_id(
     id: i64,
 ) -> Result<ConversationListItem, String> {
     let base_sql =
-        "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
-         provider_id, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at \
-         FROM conversations WHERE id = ? LIMIT 1";
+        "SELECT c.id, c.conversation_type, c.title, c.host_character_id, c.world_book_id, c.preset_id, \
+         c.provider_id, c.embedding_provider_id, c.chat_mode, c.agent_provider_policy, c.memory_mode, \
+         c.mem0_snapshot_window, c.created_at, c.updated_at, \
+         r.status as room_status \
+         FROM conversations c \
+         LEFT JOIN rooms r ON r.conversation_id = c.id \
+         WHERE c.id = ? LIMIT 1";
     eprintln!("[conversation-debug] get_by_id:base_sql={}", base_sql);
     let row = sqlx::query(base_sql)
         .bind(id)
@@ -713,6 +783,20 @@ async fn conversations_get_by_id(
             );
             err.to_string()
         })?;
+
+    let conversation_type: String = row
+        .try_get("conversation_type")
+        .unwrap_or_else(|_| "single".to_string());
+    let room_status_raw: Option<String> = row.try_get("room_status").ok().flatten();
+    let room_status = if conversation_type == "online" {
+        match room_status_raw.as_deref() {
+            Some("waiting") => Some("open".to_string()),
+            Some("closed") => Some("closed".to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     let member_count_sql =
         "SELECT COUNT(*) FROM conversation_members WHERE conversation_id = ? AND is_active = 1";
@@ -742,14 +826,13 @@ async fn conversations_get_by_id(
 
     Ok(ConversationListItem {
         id: row.try_get("id").unwrap_or_default(),
-        conversation_type: row
-            .try_get("conversation_type")
-            .unwrap_or_else(|_| "single".to_string()),
+        conversation_type,
         title: row.try_get("title").ok(),
         host_character_id: row.try_get("host_character_id").ok(),
         world_book_id: row.try_get("world_book_id").ok(),
         preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
         provider_id: row.try_get("provider_id").ok(),
+        embedding_provider_id: row.try_get("embedding_provider_id").ok(),
         chat_mode: row
             .try_get("chat_mode")
             .unwrap_or_else(|_| "classic".to_string()),
@@ -759,8 +842,12 @@ async fn conversations_get_by_id(
         memory_mode: row
             .try_get("memory_mode")
             .unwrap_or_else(|_| "stateless".to_string()),
+        mem0_snapshot_window: row
+            .try_get("mem0_snapshot_window")
+            .unwrap_or(20),
         member_count,
         pending_member_count,
+        room_status,
         created_at: row.try_get("created_at").unwrap_or_default(),
         updated_at: row.try_get("updated_at").unwrap_or_default(),
     })
@@ -930,6 +1017,13 @@ fn normalize_agent_provider_policy(value: Option<&str>) -> Result<String, String
     }
 }
 
+fn normalize_memory_mode(value: Option<&str>) -> Result<String, String> {
+    match value.unwrap_or("stateless") {
+        "stateless" | "legacy" | "mem0" => Ok(value.unwrap_or("stateless").to_string()),
+        _ => Err("memoryMode 必须是 'stateless', 'legacy' 或 'mem0'".to_string()),
+    }
+}
+
 async fn resolve_conversation_preset_id(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     host_character_id: i64,
@@ -964,8 +1058,8 @@ pub async fn conversations_fork(
         "[conversation-debug] fork:start conversation_id={} up_to_message_id={}",
         conversation_id, up_to_message_id
     );
-    let original: (Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, String, String, Option<String>) = sqlx::query_as(
-        "SELECT title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy FROM conversations WHERE id = ?"
+    let original: (Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, String, String, Option<String>, String) = sqlx::query_as(
+        "SELECT title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, memory_mode FROM conversations WHERE id = ?"
     )
     .bind(conversation_id)
     .fetch_one(&state.db)
@@ -989,12 +1083,16 @@ pub async fn conversations_fork(
         conversation_type,
         chat_mode,
         agent_provider_policy,
+        memory_mode,
     ) = original;
+    if conversation_type == "online" {
+        return Err("不支持对多人房间会话执行分支操作".to_string());
+    }
     let forked_title = format!("{} (分支)", title.unwrap_or_default());
     let now = now_ts();
 
     let fork_id: i64 = sqlx::query_scalar(
-        "INSERT INTO conversations (title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stateless', ?, ?) RETURNING id"
+        "INSERT INTO conversations (title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, memory_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
     )
     .bind(&forked_title)
     .bind(host_character_id)
@@ -1004,6 +1102,7 @@ pub async fn conversations_fork(
     .bind(&conversation_type)
     .bind(&chat_mode)
     .bind(&agent_provider_policy)
+    .bind(&memory_mode)
     .bind(now)
     .bind(now)
     .fetch_one(&state.db)

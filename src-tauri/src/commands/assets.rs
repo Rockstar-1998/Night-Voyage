@@ -43,14 +43,18 @@ pub async fn assets_import_image_bytes(
     store_bytes(&assets_dir, &file_name, &bytes)
 }
 
-fn resolve_assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn resolve_assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
     let assets_dir = app_data_dir.join("assets").join("images");
     std::fs::create_dir_all(&assets_dir).map_err(|err| err.to_string())?;
     Ok(assets_dir)
 }
 
-fn store_bytes(assets_dir: &Path, file_name: &str, bytes: &[u8]) -> Result<ImportedAsset, String> {
+pub(crate) fn store_bytes(
+    assets_dir: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAsset, String> {
     let extension = extract_extension(file_name)?;
     validate_extension(&extension)?;
 

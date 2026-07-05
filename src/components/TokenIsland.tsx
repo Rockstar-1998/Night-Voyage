@@ -7,6 +7,8 @@ interface TokenIslandProps {
   conversationId: number;
   refreshKey?: number;
   onRefresh?: () => void;
+  roomTokenUsageReport?: TokenUsageReport | null;
+  roomContextWindowSize?: number | null;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -34,6 +36,10 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
+const COLLAPSED_HEIGHT = 28;
+const ANIM_DURATION_EXPAND = 0.28;
+const ANIM_DURATION_COLLAPSE = 0.2;
+
 export const TokenIsland: Component<TokenIslandProps> = (props) => {
   const [report, setReport] = createSignal<TokenUsageReport | null>(null);
   const [expanded, setExpanded] = createSignal(false);
@@ -42,11 +48,21 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
 
   let containerRef: HTMLDivElement | undefined;
-  let contentRef: HTMLDivElement | undefined;
-  let currentAnimation: Animation | null = null;
+  let detailRef: HTMLDivElement | undefined;
+  let detailContentRef: HTMLDivElement | undefined;
+  let heightAnimation: Animation | null = null;
+  let opacityAnimation: Animation | null = null;
 
-  const totalEstimated = createMemo(() => report()?.totalEstimatedTokens ?? 0);
-  const contextWindow = createMemo(() => report()?.contextWindowSize ?? null);
+  const isRoomGuest = createMemo(() => props.roomTokenUsageReport != null);
+  const currentReport = createMemo<TokenUsageReport | null>(() => {
+    if (props.roomTokenUsageReport) return props.roomTokenUsageReport;
+    return report();
+  });
+  const totalEstimated = createMemo(() => currentReport()?.totalEstimatedTokens ?? 0);
+  const contextWindow = createMemo(() => {
+    if (props.roomContextWindowSize != null) return props.roomContextWindowSize;
+    return currentReport()?.contextWindowSize ?? null;
+  });
   const usageRatio = createMemo(() => {
     const cw = contextWindow();
     if (!cw) return 0;
@@ -56,6 +72,7 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
   const isOverflow = createMemo(() => usageRatio() > 1);
 
   const fetchUsage = async () => {
+    if (props.roomTokenUsageReport) return;
     setError(null);
     try {
       const data = await getConversationTokenUsage(props.conversationId);
@@ -72,41 +89,70 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
   createEffect(() => {
     const id = props.conversationId;
     props.refreshKey;
-    if (id) void fetchUsage();
+    if (id && !props.roomTokenUsageReport) void fetchUsage();
+  });
+
+  createEffect(() => {
+    if (props.roomTokenUsageReport?.contextWindowSize) {
+      setContextInput(String(props.roomTokenUsageReport.contextWindowSize));
+    }
   });
 
   const handleToggle = () => {
     const nextExpanded = !expanded();
     setExpanded(nextExpanded);
 
-    if (containerRef && contentRef) {
-      if (currentAnimation) {
-        currentAnimation.cancel();
-        currentAnimation = null;
-      }
+    if (!containerRef || !detailRef || !detailContentRef) return;
 
-      const collapsedHeight = 28;
-      const expandedHeight = contentRef.scrollHeight;
+    if (heightAnimation) {
+      heightAnimation.cancel();
+      heightAnimation = null;
+    }
+    if (opacityAnimation) {
+      opacityAnimation.cancel();
+      opacityAnimation = null;
+    }
 
-      if (nextExpanded) {
-        currentAnimation = animate(
-          containerRef,
-          {
-            height: [`${collapsedHeight}px`, `${expandedHeight}px`],
-            borderRadius: ['9999px', '1rem'],
-          },
-          { duration: 0.3, ease: 'easeInOut' },
+    if (nextExpanded) {
+      const detailHeight = detailContentRef.scrollHeight;
+      const targetHeight = COLLAPSED_HEIGHT + detailHeight;
+
+      detailRef.style.pointerEvents = 'auto';
+
+      heightAnimation = animate(
+        containerRef,
+        { height: [`${COLLAPSED_HEIGHT}px`, `${targetHeight}px`] },
+        { duration: ANIM_DURATION_EXPAND, ease: 'easeOut' },
+      );
+      heightAnimation.onfinish = () => {
+        containerRef!.style.height = 'auto';
+      };
+
+      opacityAnimation = animate(
+        detailRef,
+        { opacity: [0, 1] },
+        { duration: ANIM_DURATION_EXPAND * 0.7, ease: 'easeOut', delay: 0.03 },
+      );
+    } else {
+      const currentHeight = containerRef.offsetHeight;
+
+      detailRef.style.pointerEvents = 'none';
+
+      containerRef.style.height = `${currentHeight}px`;
+
+      requestAnimationFrame(() => {
+        heightAnimation = animate(
+          containerRef!,
+          { height: [`${currentHeight}px`, `${COLLAPSED_HEIGHT}px`] },
+          { duration: ANIM_DURATION_COLLAPSE, ease: 'easeIn' },
         );
-      } else {
-        currentAnimation = animate(
-          containerRef,
-          {
-            height: [`${expandedHeight}px`, `${collapsedHeight}px`],
-            borderRadius: ['1rem', '9999px'],
-          },
-          { duration: 0.3, ease: 'easeInOut' },
+
+        opacityAnimation = animate(
+          detailRef!,
+          { opacity: [1, 0] },
+          { duration: ANIM_DURATION_COLLAPSE * 0.6, ease: 'easeIn' },
         );
-      }
+      });
     }
   };
 
@@ -116,7 +162,9 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
     setSaving(true);
     try {
       await updateConversationContextWindow(props.conversationId, val);
-      await fetchUsage();
+      if (!props.roomTokenUsageReport) {
+        await fetchUsage();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -134,90 +182,94 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
     <div class="flex justify-center px-4 pt-2 relative z-30">
       <div
         ref={containerRef}
-        class="w-full max-w-4xl backdrop-blur-md bg-white/5 border border-white/10 rounded-full overflow-hidden cursor-pointer select-none"
-        style={{ height: '28px' }}
+        class="w-full max-w-4xl backdrop-blur-md bg-white/5 border border-white/10 rounded-2xl overflow-hidden cursor-pointer select-none"
+        style={{ height: `${COLLAPSED_HEIGHT}px` }}
         onClick={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('[data-no-toggle]')) return;
           handleToggle();
         }}
       >
-        <div ref={contentRef}>
-          <div class="flex items-center justify-between h-7 px-3 gap-3">
-            <Show
-              when={contextWindow()}
-              fallback={
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="text-xs text-mist-solid/40 whitespace-nowrap">点击设定上下文窗口</span>
-                  <Show when={totalEstimated() > 0}>
-                    <span class={`text-xs font-mono ${numberColor()}`}>
-                      {formatTokenCount(totalEstimated())}
-                    </span>
-                  </Show>
-                </div>
-              }
-            >
+        <div class="flex items-center justify-between h-7 px-3 gap-3">
+          <Show
+            when={contextWindow()}
+            fallback={
               <div class="flex items-center gap-2 min-w-0">
-                <span class={`text-xs font-mono whitespace-nowrap ${numberColor()}`}>
-                  {formatTokenCount(totalEstimated())} / {formatTokenCount(contextWindow()!)}
-                </span>
+                <span class="text-xs text-mist-solid/40 whitespace-nowrap">点击设定上下文窗口</span>
+                <Show when={totalEstimated() > 0}>
+                  <span class={`text-xs font-mono ${numberColor()}`}>
+                    {formatTokenCount(totalEstimated())}
+                  </span>
+                </Show>
+              </div>
+            }
+          >
+            <div class="flex items-center gap-2 min-w-0">
+              <span class={`text-xs font-mono whitespace-nowrap ${numberColor()}`}>
+                {formatTokenCount(totalEstimated())} / {formatTokenCount(contextWindow()!)}
+              </span>
+            </div>
+          </Show>
+          <div class="flex items-center gap-2 min-w-0 flex-1 justify-end">
+            <Show when={contextWindow() && (currentReport()?.layers ?? []).length > 0}>
+              <div class="flex h-2.5 rounded-full overflow-hidden bg-white/5 flex-1 min-w-0 max-w-[200px] relative">
+                <For each={currentReport()?.layers ?? []}>
+                  {(layer: TokenLayerUsage) => {
+                    const cw = contextWindow()!;
+                    const pct = Math.min((layer.estimatedTokens / cw) * 100, 100);
+                    return (
+                      <Show when={pct > 0}>
+                        <div
+                          class="h-full"
+                          style={{
+                            width: `${pct}%`,
+                            'background-color': layer.color,
+                          }}
+                        />
+                      </Show>
+                    );
+                  }}
+                </For>
+                <Show when={isOverflow()}>
+                  <div
+                    class="h-full overflow-stripes"
+                    style={{
+                      width: `${Math.min((usageRatio() - 1) * 100, 100)}%`,
+                      'background-color': 'rgba(239, 68, 68, 0.7)',
+                    }}
+                  />
+                </Show>
+                <Show when={isWarning() && !isOverflow()}>
+                  <div
+                    class="absolute right-0 top-0 bottom-0 w-6 pointer-events-none"
+                    style={{
+                      background: 'linear-gradient(to left, rgba(239, 68, 68, 0.4), transparent)',
+                    }}
+                  />
+                </Show>
               </div>
             </Show>
-            <div class="flex items-center gap-2 min-w-0 flex-1 justify-end">
-              <Show when={contextWindow() && (report()?.layers ?? []).length > 0}>
-                <div class="flex h-2.5 rounded-full overflow-hidden bg-white/5 flex-1 min-w-0 max-w-[200px] relative">
-                  <For each={report()?.layers ?? []}>
-                    {(layer: TokenLayerUsage) => {
-                      const cw = contextWindow()!;
-                      const pct = Math.min((layer.estimatedTokens / cw) * 100, 100);
-                      return (
-                        <Show when={pct > 0}>
-                          <div
-                            class="h-full"
-                            style={{
-                              width: `${pct}%`,
-                              'background-color': layer.color,
-                            }}
-                          />
-                        </Show>
-                      );
-                    }}
-                  </For>
-                  <Show when={isOverflow()}>
-                    <div
-                      class="h-full overflow-stripes"
-                      style={{
-                        width: `${Math.min((usageRatio() - 1) * 100, 100)}%`,
-                        'background-color': 'rgba(239, 68, 68, 0.7)',
-                      }}
-                    />
-                  </Show>
-                  <Show when={isWarning() && !isOverflow()}>
-                    <div
-                      class="absolute right-0 top-0 bottom-0 w-6 pointer-events-none"
-                      style={{
-                        background: 'linear-gradient(to left, rgba(239, 68, 68, 0.4), transparent)',
-                      }}
-                    />
-                  </Show>
-                </div>
-              </Show>
-              <svg
-                class={`w-3 h-3 text-mist-solid/30 transition-transform duration-300 ${expanded() ? 'rotate-180' : ''}`}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </div>
+            <svg
+              class={`w-3 h-3 text-mist-solid/30 transition-transform duration-200 ${expanded() ? 'rotate-180' : ''}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
           </div>
+        </div>
 
-          <Show when={expanded()}>
-            <div class="px-4 pb-4 pt-2 border-t border-white/5" data-no-toggle>
+        <div
+          ref={detailRef}
+          class="opacity-0"
+          style={{ 'pointer-events': 'none' }}
+        >
+          <div ref={detailContentRef} class="px-4 pb-4 pt-2 border-t border-white/5" data-no-toggle>
+            <Show when={!isRoomGuest()}>
               <div class="flex items-center gap-2 mb-3">
                 <input
                   type="number"
@@ -240,53 +292,53 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
                   {saving() ? '...' : '确认'}
                 </button>
               </div>
+            </Show>
 
-              <div class="flex flex-col gap-1.5 mb-3">
-                <For each={report()?.layers ?? []}>
-                  {(layer: TokenLayerUsage) => {
-                    const cw = contextWindow();
-                    const pct = cw ? ((layer.estimatedTokens / cw) * 100).toFixed(1) : '—';
-                    return (
-                      <div class="flex items-center gap-2 text-xs min-h-[24px]">
-                        <div
-                          class="w-2 h-2 rounded-full shrink-0"
-                          style={{ 'background-color': layer.color }}
-                        />
-                        <span class="text-mist-solid/60 flex-1 truncate">{kindToLabel(layer.kind)}</span>
-                        <Show when={layer.title}>
-                          <span class="text-mist-solid/30 truncate max-w-[120px]">{layer.title}</span>
-                        </Show>
-                        <span class="text-mist-solid/50 font-mono tabular-nums">{formatTokenCount(layer.estimatedTokens)}</span>
-                        <span class="text-mist-solid/30 font-mono tabular-nums w-12 text-right">{pct}%</span>
-                      </div>
-                    );
-                  }}
-                </For>
-              </div>
+            <div class="flex flex-col gap-1.5 mb-3">
+              <For each={currentReport()?.layers ?? []}>
+                {(layer: TokenLayerUsage) => {
+                  const cw = contextWindow();
+                  const pct = cw ? ((layer.estimatedTokens / cw) * 100).toFixed(1) : '—';
+                  return (
+                    <div class="flex items-center gap-2 text-xs min-h-[24px]">
+                      <div
+                        class="w-2 h-2 rounded-full shrink-0"
+                        style={{ 'background-color': layer.color }}
+                      />
+                      <span class="text-mist-solid/60 flex-1 truncate">{kindToLabel(layer.kind)}</span>
+                      <Show when={layer.title}>
+                        <span class="text-mist-solid/30 truncate max-w-[120px]">{layer.title}</span>
+                      </Show>
+                      <span class="text-mist-solid/50 font-mono tabular-nums">{formatTokenCount(layer.estimatedTokens)}</span>
+                      <span class="text-mist-solid/30 font-mono tabular-nums w-12 text-right">{pct}%</span>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
 
-              <div class="flex items-center justify-between text-xs border-t border-white/5 pt-2">
-                <div class="flex items-center gap-3">
-                  <span class="text-mist-solid/50">
-                    总计: <span class={`font-mono ${numberColor()}`}>{formatTokenCount(totalEstimated())}</span>
-                  </span>
-                  <Show when={contextWindow()}>
-                    <span class="text-mist-solid/30">
-                      剩余: <span class="font-mono text-mist-solid/50">{formatTokenCount(Math.max(0, contextWindow()! - totalEstimated()))}</span>
-                    </span>
-                  </Show>
-                </div>
-                <Show when={report()?.totalActualTokens != null}>
+            <div class="flex items-center justify-between text-xs border-t border-white/5 pt-2">
+              <div class="flex items-center gap-3">
+                <span class="text-mist-solid/50">
+                  总计: <span class={`font-mono ${numberColor()}`}>{formatTokenCount(totalEstimated())}</span>
+                </span>
+                <Show when={contextWindow()}>
                   <span class="text-mist-solid/30">
-                    实际: <span class="font-mono">{formatTokenCount(report()!.totalActualTokens!)}</span>
+                    剩余: <span class="font-mono text-mist-solid/50">{formatTokenCount(Math.max(0, contextWindow()! - totalEstimated()))}</span>
                   </span>
                 </Show>
               </div>
-
-              <Show when={error()}>
-                <div class="mt-2 text-[10px] text-red-400/80">{error()}</div>
+              <Show when={currentReport()?.totalActualTokens != null}>
+                <span class="text-mist-solid/30">
+                  实际: <span class="font-mono">{formatTokenCount(currentReport()!.totalActualTokens!)}</span>
+                </span>
               </Show>
             </div>
-          </Show>
+
+            <Show when={error()}>
+              <div class="mt-2 text-[10px] text-red-400/80">{error()}</div>
+            </Show>
+          </div>
         </div>
       </div>
     </div>

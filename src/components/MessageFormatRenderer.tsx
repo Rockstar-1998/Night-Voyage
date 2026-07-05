@@ -19,6 +19,7 @@ interface MessageFormatRendererProps {
   nodes: FormatNode[];
   defaultExpanded?: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   isStreaming?: boolean;
   toggleScope?: string;
   streamKey?: string;
@@ -32,6 +33,7 @@ interface CollapsibleTagProps {
   children: FormatNode[];
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   isStreaming?: boolean;
   toggleScope?: string;
   streamKey?: string;
@@ -42,6 +44,7 @@ interface CollapsibleTagProps {
 interface RenderContext {
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   isStreaming?: boolean;
   toggleScope?: string;
   streamKey?: string;
@@ -60,6 +63,25 @@ interface StreamingTextProps {
 
 // Preserve user choices without leaking a toggle from one message/field into another.
 const userToggleState = new Map<string, boolean>();
+
+export function getSchemaToggleState(key: string): boolean | undefined {
+  return userToggleState.get(key);
+}
+
+export function setSchemaToggleState(key: string, value: boolean): void {
+  userToggleState.set(key, value);
+}
+
+export function clearSchemaToggleState(): void {
+  userToggleState.clear();
+}
+
+export function setAllSchemaToggleState(map: Record<string, boolean>): void {
+  userToggleState.clear();
+  for (const [k, v] of Object.entries(map)) {
+    userToggleState.set(k, v);
+  }
+}
 
 // Cache previous text by stable stream path so only newly appended suffixes animate.
 const streamingTextCache = new Map<string, string>();
@@ -113,10 +135,12 @@ const StreamingText: Component<StreamingTextProps> = (props) => {
 export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
   const toggleKey = () => getScopedKey(props.toggleScope, props.tagPath, props.tagName);
 
-  const [isExpanded, setIsExpanded] = createSignal(() => {
+  const computeInitialExpanded = () => {
     const persisted = userToggleState.get(toggleKey());
     return persisted !== undefined ? persisted : props.defaultExpanded;
-  });
+  };
+
+  const [isExpanded, setIsExpanded] = createSignal(computeInitialExpanded());
 
   let contentRef: HTMLDivElement | undefined;
 
@@ -156,6 +180,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
     const next = !isExpanded();
     userToggleState.set(toggleKey(), next);
     setIsExpanded(next);
+    props.onSchemaToggle?.(toggleKey(), next);
   };
 
   return (
@@ -181,6 +206,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
               nodes={props.children}
               defaultExpanded={props.defaultExpanded}
               onChoiceSelect={props.onChoiceSelect}
+              onSchemaToggle={props.onSchemaToggle}
               isStreaming={props.isStreaming}
               toggleScope={props.toggleScope}
               streamKey={childStreamKey(props.streamKey, `tag:${props.tagPath}:${props.tagName}`)}
@@ -199,6 +225,7 @@ const StructuredResponseRenderer: Component<{
   displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }>;
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   isStreaming?: boolean;
   toggleScope?: string;
   streamKey?: string;
@@ -226,6 +253,7 @@ const StructuredResponseRenderer: Component<{
                       nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
                       defaultExpanded={props.defaultExpanded}
                       onChoiceSelect={props.onChoiceSelect}
+                      onSchemaToggle={props.onSchemaToggle}
                       isStreaming={props.isStreaming}
                       toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
                       streamKey={childStreamKey(props.streamKey, `${fieldPath()}:main`)}
@@ -246,6 +274,7 @@ const StructuredResponseRenderer: Component<{
                 ]}
                 defaultExpanded={!isCollapsed()}
                 onChoiceSelect={props.onChoiceSelect}
+                onSchemaToggle={props.onSchemaToggle}
                 isStreaming={props.isStreaming}
                 toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
                 streamKey={childStreamKey(props.streamKey, `${fieldPath()}:tag`)}
@@ -305,6 +334,7 @@ const renderNode = (node: FormatNode, path: string, context: RenderContext) => {
           children={tag.children}
           defaultExpanded={context.defaultExpanded}
           onChoiceSelect={context.onChoiceSelect}
+          onSchemaToggle={context.onSchemaToggle}
           isStreaming={context.isStreaming}
           toggleScope={context.toggleScope}
           streamKey={context.streamKey}
@@ -384,6 +414,7 @@ const renderNode = (node: FormatNode, path: string, context: RenderContext) => {
           displayConfig={sr.displayConfig}
           defaultExpanded={context.defaultExpanded}
           onChoiceSelect={context.onChoiceSelect}
+          onSchemaToggle={context.onSchemaToggle}
           isStreaming={context.isStreaming}
           toggleScope={context.toggleScope}
           streamKey={context.streamKey}
@@ -407,6 +438,7 @@ export const MessageFormatRenderer: Component<MessageFormatRendererProps> = (pro
         renderNode(node, `${i()}`, {
           defaultExpanded: props.defaultExpanded ?? true,
           onChoiceSelect: props.onChoiceSelect,
+          onSchemaToggle: props.onSchemaToggle,
           isStreaming: props.isStreaming,
           toggleScope: props.toggleScope,
           streamKey: props.streamKey,

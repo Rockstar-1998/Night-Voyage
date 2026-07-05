@@ -31,11 +31,13 @@ interface MessageItemProps {
   onDelete?: (id: string) => void;
   onRetryFailed?: (id: string, roundId?: number) => void;
   isRoomClient?: boolean;
+  isOnline?: boolean;
   swipeInfo?: { current: number; total: number };
   onSwitchSwipe?: (direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
   worldBookKeywords?: string[];
   onChoiceSelect?: (key: string, value: string) => void;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   structuredOutputDisplay?: string;
 }
 
@@ -161,6 +163,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
                       )}
                       defaultExpanded={defaultExpanded()}
                       onChoiceSelect={props.onChoiceSelect}
+                      onSchemaToggle={props.onSchemaToggle}
                       toggleScope={`${props.message.id}:content`}
                       streamKey={`${props.message.id}:content`}
                       formatConfig={props.formatConfig}
@@ -173,6 +176,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
                       nodes={[sr()]}
                       defaultExpanded={defaultExpanded()}
                       onChoiceSelect={props.onChoiceSelect}
+                      onSchemaToggle={props.onSchemaToggle}
                       isStreaming={props.message.isStreaming}
                       toggleScope={`${props.message.id}:structured`}
                       streamKey={`${props.message.id}:structured`}
@@ -230,7 +234,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             </button>
           </Show>
 
-          <Show when={props.message.sender === 'ai' && props.swipeInfo && props.swipeInfo!.total > 1}>
+          <Show when={props.message.sender === 'ai' && props.swipeInfo && props.swipeInfo!.total > 1 && !props.isRoomClient}>
             <div class="flex items-center gap-2 mt-1 text-xs text-mist-solid/40">
               <button
                 onClick={() => props.onSwitchSwipe?.('prev')}
@@ -256,7 +260,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
         <div
           class={`absolute top-2 ${isUser() ? 'left-2' : 'right-2'} flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}
         >
-          <Show when={isUser()}>
+          <Show when={isUser() && !props.isRoomClient}>
             <button
               onClick={() => {
                 setEditContent(props.message.content);
@@ -267,13 +271,15 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             >
               <Pencil size={14} />
             </button>
-            <button
-              onClick={() => props.onFork(props.message.id)}
-              class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-              title="分支"
-            >
-              <GitFork size={14} />
-            </button>
+            {!props.isOnline && (
+              <button
+                onClick={() => props.onFork(props.message.id)}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title="分支"
+              >
+                <GitFork size={14} />
+              </button>
+            )}
             <button
               onClick={() => {
                 if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
@@ -286,7 +292,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
               <Trash2 size={14} />
             </button>
           </Show>
-          <Show when={!isUser()}>
+          <Show when={!isUser() && !props.isRoomClient}>
             <button
               onClick={() => {
                 setEditContent(props.message.content);
@@ -304,13 +310,15 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             >
               <RefreshCw size={14} />
             </button>
-            <button
-              onClick={() => props.onFork(props.message.id)}
-              class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-              title="分支"
-            >
-              <GitFork size={14} />
-            </button>
+            {!props.isOnline && (
+              <button
+                onClick={() => props.onFork(props.message.id)}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title="分支"
+              >
+                <GitFork size={14} />
+              </button>
+            )}
             <button
               onClick={() => {
                 if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {

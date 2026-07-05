@@ -9,10 +9,13 @@ interface SessionSidebarProps {
   selectedConversationId?: number | null;
   selectedConversationMembers?: ConversationMember[];
   loading?: boolean;
+  roomActionLoading?: boolean;
   onSelect?: (conversationId: number) => void;
   onNewChat?: () => void;
   onJoinRoom?: () => void;
   onDeleteConversation?: (id: number) => void;
+  onOpenRoom?: (conversationId: number) => void;
+  onCloseRoom?: (conversationId: number) => void;
 }
 
 const formatTime = (timestamp: number) =>
@@ -152,6 +155,42 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                         <div class="overflow-hidden">
                           <div class="px-5 py-4 rounded-[1.5rem] bg-xuanqing border border-white/10 shadow-2xl">
                             <div class="flex flex-col gap-3">
+                              <div class="flex items-center justify-between">
+                                <span class="text-[10px] font-black uppercase tracking-tighter text-mist-solid/40">房间状态</span>
+                                <span class={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${session.roomStatus === 'open' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-mist-solid/40 bg-white/5 border-white/10'}`}>
+                                  {session.roomStatus === 'open' ? '房间已开启' : '房间已关闭'}
+                                </span>
+                              </div>
+                              <Show
+                                when={session.roomStatus === 'open'}
+                                fallback={
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onOpenRoom?.(session.id);
+                                    }}
+                                    disabled={props.roomActionLoading}
+                                    class="w-full py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-500/20"
+                                  >
+                                    {props.roomActionLoading ? '开启中...' : '开启房间'}
+                                  </button>
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm('确定要关闭房间吗？其他玩家将断开连接。')) {
+                                      props.onCloseRoom?.(session.id);
+                                    }
+                                  }}
+                                  disabled={props.roomActionLoading}
+                                  class="w-full py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-red-500/20"
+                                >
+                                  {props.roomActionLoading ? '关闭中...' : '关闭房间'}
+                                </button>
+                              </Show>
                               <div class="flex items-center justify-between">
                                 <span class="text-[10px] font-black uppercase tracking-tighter text-mist-solid/40">房间成员</span>
                                 <span class="text-[9px] font-bold text-accent px-2 py-0.5 bg-accent/10 rounded-full border border-accent/20">

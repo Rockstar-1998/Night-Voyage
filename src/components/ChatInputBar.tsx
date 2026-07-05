@@ -11,6 +11,7 @@ interface ChatInputBarProps {
   allowEmptySend?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  isRoomClient?: boolean;
 }
 
 const BouncingDots = () => (
@@ -52,6 +53,7 @@ export const ChatInputBar: Component<ChatInputBarProps> = (props) => {
 
   const handleSend = async () => {
     if (isActive()) {
+      if (props.isRoomClient) return;
       await props.onAbort?.();
       return;
     }
@@ -100,11 +102,11 @@ export const ChatInputBar: Component<ChatInputBarProps> = (props) => {
 
         <IconButton
           onClick={() => void handleSend()}
-          disabled={!isActive() && props.disabled}
-          label={sendLabel()}
+          disabled={(!isActive() && props.disabled) || (!!props.isRoomClient && isActive())}
+          label={!!props.isRoomClient && isActive() ? '房客不能停止房主的流式传输' : sendLabel()}
           tone={buttonTone()}
           size="lg"
-          class="mx-1"
+          class="mx-1 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {statusIcon()}
         </IconButton>

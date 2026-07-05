@@ -39,6 +39,7 @@ pub struct TriggeredWorldBookEntry {
     pub content: String,
     pub sort_order: i64,
     pub trigger_source_kind: WorldBookTriggerSourceKind,
+    pub is_constant: bool,
 }
 
 pub async fn load_triggered_world_book_entries(
@@ -57,10 +58,6 @@ pub async fn load_triggered_world_book_entries(
             }
         })
         .collect::<Vec<_>>();
-
-    if normalized_sources.is_empty() {
-        return Ok(Vec::new());
-    }
 
     let rows = sqlx::query(
         "SELECT id, title, content, trigger_mode, sort_order \
@@ -84,17 +81,29 @@ pub async fn load_triggered_world_book_entries(
             .try_get("trigger_mode")
             .unwrap_or_else(|_| "any".to_string());
 
-        let keywords = load_keywords(db, entry_id).await?;
-        let matched_source_kind = normalized_sources
-            .iter()
-            .filter_map(|(kind, normalized_text)| {
-                if world_book_entry_matches(normalized_text, &keywords, &trigger_mode) {
-                    Some(*kind)
-                } else {
-                    None
-                }
-            })
-            .min_by_key(|kind| kind.priority());
+        let is_constant = trigger_mode == "always";
+
+        // Always entries are unconditionally included regardless of trigger sources.
+        let matched_source_kind = if is_constant {
+            let best = normalized_sources
+                .iter()
+                .filter_map(|(kind, _)| Some(*kind))
+                .min_by_key(|kind| kind.priority())
+                .unwrap_or(WorldBookTriggerSourceKind::CurrentUser);
+            Some(best)
+        } else {
+            let keywords = load_keywords(db, entry_id).await?;
+            normalized_sources
+                .iter()
+                .filter_map(|(kind, normalized_text)| {
+                    if world_book_entry_matches(normalized_text, &keywords, &trigger_mode) {
+                        Some(*kind)
+                    } else {
+                        None
+                    }
+                })
+                .min_by_key(|kind| kind.priority())
+        };
 
         if let Some(trigger_source_kind) = matched_source_kind {
             results.push(TriggeredWorldBookEntry {
@@ -104,16 +113,19 @@ pub async fn load_triggered_world_book_entries(
                 content,
                 sort_order,
                 trigger_source_kind,
+                is_constant,
             });
         }
     }
 
-    results.sort_by_key(|entry| {
-        (
-            entry.trigger_source_kind.priority(),
-            entry.sort_order,
-            entry.entry_id,
-        )
+    // Sort: constant entries first (they are foundational context),
+    // then by trigger source priority, then by sort_order and entry_id.
+    results.sort_by(|a, b| {
+        b.is_constant
+            .cmp(&a.is_constant)
+            .then(a.trigger_source_kind.priority().cmp(&b.trigger_source_kind.priority()))
+            .then(a.sort_order.cmp(&b.sort_order))
+            .then(a.entry_id.cmp(&b.entry_id))
     });
 
     Ok(results)
@@ -352,6 +364,122 @@ mod tests {
             assert_eq!(entries[0].entry_id, 2);
             assert_eq!(entries[1].entry_id, 1);
             assert_eq!(entries[2].entry_id, 3);
+        });
+    }
+
+    #[test]
+    fn matcher_loads_always_entries_even_with_empty_trigger_sources() {
+        run_async_test(async {
+            let pool = setup_test_db().await;
+
+            sqlx::query(
+                "INSERT INTO world_book_entries (
+                    id, world_book_id, title, content, trigger_mode, is_enabled, sort_order
+                 ) VALUES
+                    (1, 10, '世界设定', '世界设定内容', 'always', 1, 0),
+                    (2, 10, '酒馆', '酒馆设定', 'any', 1, 1)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO world_book_entry_keywords (id, entry_id, keyword, sort_order) VALUES
+                    (1, 2, '酒馆', 0)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            // No trigger sources at all — always entry should still be loaded
+            let entries = load_triggered_world_book_entries(&pool, 10, &[]).await.unwrap();
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].entry_id, 1);
+            assert!(entries[0].is_constant);
+        });
+    }
+
+    #[test]
+    fn matcher_loads_always_entries_with_empty_source_text() {
+        run_async_test(async {
+            let pool = setup_test_db().await;
+
+            sqlx::query(
+                "INSERT INTO world_book_entries (
+                    id, world_book_id, title, content, trigger_mode, is_enabled, sort_order
+                 ) VALUES
+                    (1, 10, '常驻', '常驻内容', 'always', 1, 0),
+                    (2, 10, '酒馆', '酒馆设定', 'any', 1, 1)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO world_book_entry_keywords (id, entry_id, keyword, sort_order) VALUES
+                    (1, 2, '酒馆', 0)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            // Trigger source with empty text — always entry should still be loaded
+            let entries = load_triggered_world_book_entries(
+                &pool,
+                10,
+                &[WorldBookTriggerSource {
+                    kind: WorldBookTriggerSourceKind::CurrentUser,
+                    text: "   ".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].entry_id, 1);
+            assert!(entries[0].is_constant);
+        });
+    }
+
+    #[test]
+    fn matcher_sorts_constant_entries_first() {
+        run_async_test(async {
+            let pool = setup_test_db().await;
+
+            sqlx::query(
+                "INSERT INTO world_book_entries (
+                    id, world_book_id, title, content, trigger_mode, is_enabled, sort_order
+                 ) VALUES
+                    (1, 10, '关键词命中', '关键词内容', 'any', 1, 0),
+                    (2, 10, '常驻设定', '常驻内容', 'always', 1, 5)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO world_book_entry_keywords (id, entry_id, keyword, sort_order) VALUES
+                    (1, 1, '命中', 0)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            let entries = load_triggered_world_book_entries(
+                &pool,
+                10,
+                &[WorldBookTriggerSource {
+                    kind: WorldBookTriggerSourceKind::CurrentUser,
+                    text: "命中".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(entries.len(), 2);
+            // Constant entry first despite higher sort_order
+            assert_eq!(entries[0].entry_id, 2);
+            assert!(entries[0].is_constant);
+            assert_eq!(entries[1].entry_id, 1);
+            assert!(!entries[1].is_constant);
         });
     }
 }

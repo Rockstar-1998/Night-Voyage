@@ -1,7 +1,8 @@
-import { Component, For, Show, Switch, Match, createEffect, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, Switch, Match, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import { Select } from './ui/Select';
 import { Save, RefreshCw, CheckCircle2, ChevronDown, Plus, Trash2, Pencil } from '../lib/icons';
 import type { ApiProviderSummary, RemoteModel } from '../lib/backend';
+import { settingsGetAll, settingsSet } from '../lib/backend';
 import { type MessageFormatConfig, type CustomFormatRule } from '../lib/messageFormatter';
 import { IconButton } from './ui/IconButton';
 import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
@@ -10,6 +11,7 @@ interface ProviderFormState {
   id?: number;
   name: string;
   providerKind: 'openai_compatible' | 'anthropic';
+  purpose: 'llm' | 'embedding';
   baseUrl: string;
   apiKey: string;
   modelName: string;
@@ -45,6 +47,7 @@ interface SettingsAreaProps {
     id?: number;
     name: string;
     providerKind: 'openai_compatible' | 'anthropic';
+    purpose?: 'llm' | 'embedding';
     baseUrl: string;
     apiKey?: string;
     modelName: string;
@@ -62,11 +65,14 @@ interface SettingsAreaProps {
   onSetEnableDynamicEffects: (enabled: boolean) => void;
   formatConfig: MessageFormatConfig;
   onSetFormatConfig: (config: MessageFormatConfig) => void;
+  /** mem0 startup error — displayed as a warning banner in the API section. */
+  mem0InitError?: string | null;
 }
 
 const EMPTY_FORM: ProviderFormState = {
   name: '',
   providerKind: 'openai_compatible',
+  purpose: 'llm',
   baseUrl: 'https://api.openai.com/v1',
   apiKey: '',
   modelName: '',
@@ -199,6 +205,39 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
     setPatternError(validateCustomRulePattern(next.pattern, next.groupIndex));
   };
 
+  // ---- MEM0 embedding dims (global) ----
+  const [embeddingDims, setEmbeddingDims] = createSignal('1536');
+  const [embeddingDimsError, setEmbeddingDimsError] = createSignal<string | null>(null);
+  const [embeddingDimsSaving, setEmbeddingDimsSaving] = createSignal(false);
+
+  const handleSaveEmbeddingDims = async () => {
+    const dims = Number(embeddingDims().trim());
+    if (!Number.isInteger(dims) || dims <= 0) {
+      setEmbeddingDimsError('embedding 维度必须是正整数');
+      return;
+    }
+    setEmbeddingDimsError(null);
+    setEmbeddingDimsSaving(true);
+    try {
+      await settingsSet('mem0_embedding_dims', String(dims));
+    } catch (err) {
+      setEmbeddingDimsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEmbeddingDimsSaving(false);
+    }
+  };
+
+  onMount(async () => {
+    // 加载 embedding 维度
+    try {
+      const all = await settingsGetAll();
+      const dims = all.find((s) => s.key === 'mem0_embedding_dims');
+      if (dims?.value) setEmbeddingDims(dims.value);
+    } catch (err) {
+      setEmbeddingDimsError(err instanceof Error ? err.message : String(err));
+    }
+  });
+
   createEffect(() => {
     const providers = props.providers;
     const currentSelected = selectedProviderId();
@@ -225,6 +264,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
       id: provider.id,
       name: provider.name,
       providerKind: provider.providerKind === 'anthropic' ? 'anthropic' : 'openai_compatible',
+      purpose: provider.purpose === 'embedding' ? 'embedding' : 'llm',
       baseUrl: provider.baseUrl,
       apiKey: '',
       modelName: provider.modelName,
@@ -290,6 +330,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
       id: value.id,
       name: value.name,
       providerKind: value.providerKind,
+      purpose: value.purpose,
       baseUrl: value.baseUrl,
       apiKey: value.apiKey.trim() ? value.apiKey : undefined,
       modelName: value.modelName,
@@ -407,6 +448,12 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
               </div>
             </div>
 
+            <Show when={props.mem0InitError}>
+              <div class="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                <span class="opacity-90">MEM0 记忆现在按会话配置 embedding provider，请在会话右侧抽屉的会话绑定中设置。</span>
+              </div>
+            </Show>
+
             <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-8">
               <div class="space-y-3">
                 <Show when={!props.loading} fallback={<div class="text-sm text-mist-solid/35">正在加载档案...</div>}>
@@ -456,7 +503,7 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   <div class="relative group">
                     <Select
   value={form().providerKind}
-  onChange={(val) => setForm({ ...form(), providerKind: val })}
+  onChange={(val) => setForm({ ...form(), providerKind: val as 'openai_compatible' | 'anthropic' })}
   options={[
   { label: "openai_compatible", value: "openai_compatible" },
   { label: "anthropic", value: "anthropic" },
@@ -464,6 +511,23 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
   ]}
 />
                   </div>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-[10px] font-bold text-mist-solid/30 uppercase tracking-wider">
+                    用途
+                  </label>
+                  <Select
+                    value={form().purpose}
+                    onChange={(val) => setForm({ ...form(), purpose: val as 'llm' | 'embedding' })}
+                    options={[
+                      { label: 'LLM（聊天/补全）', value: 'llm' },
+                      { label: 'Embedding（向量嵌入）', value: 'embedding' },
+                    ]}
+                  />
+                  <p class="text-[10px] text-mist-solid/30">
+                    LLM 档案用于聊天；Embedding 档案用于 MEM0 记忆检索，必须是 OpenAI 兼容端点。
+                  </p>
                 </div>
 
                 <div class="space-y-2">
@@ -792,6 +856,35 @@ export const SettingsArea: Component<SettingsAreaProps> = (props) => {
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div class="space-y-2 mt-4">
+              <label class="text-[10px] font-bold text-mist-solid/30 uppercase tracking-wider">
+                MEM0 Embedding 维度（全局）
+              </label>
+              <div class="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={embeddingDims()}
+                  onInput={(e) => setEmbeddingDims(e.currentTarget.value)}
+                  class="flex-1 bg-transparent border-b border-white/20 rounded-none px-0 py-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
+                />
+                <IconButton
+                  onClick={() => void handleSaveEmbeddingDims()}
+                  disabled={embeddingDimsSaving()}
+                  label={embeddingDimsSaving() ? '保存中...' : '保存维度'}
+                  tone="accent"
+                  size="sm"
+                >
+                  <Save size={14} />
+                </IconButton>
+              </div>
+              <p class="text-[10px] text-mist-solid/30">
+                必须与 embedding 模型实际维度一致（如 text-embedding-3-small=1536, BAAI/bge-m3=1024）。
+              </p>
+              <Show when={embeddingDimsError()}>
+                <div class="text-[11px] text-red-300 break-all">{embeddingDimsError()}</div>
+              </Show>
             </div>
           </div>
           </div>

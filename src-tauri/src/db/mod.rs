@@ -102,6 +102,68 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
     eprintln!("[startup] cleanup_stale_rounds: cleaned {} stale rounds", stale_rounds.len());
 }
 
+pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
+    let stale_rooms: Vec<(i64, i64)> = match sqlx::query_as::<_, (i64, i64)>(
+        "SELECT id, conversation_id FROM rooms WHERE status = 'waiting'",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(rooms) => rooms,
+        Err(err) => {
+            eprintln!("[startup] cleanup_stale_rooms: query failed: {}", err);
+            return;
+        }
+    };
+
+    if stale_rooms.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "[startup] cleanup_stale_rooms: found {} waiting rooms to close",
+        stale_rooms.len()
+    );
+
+    for (room_id, conversation_id) in &stale_rooms {
+        eprintln!(
+            "[startup] cleanup_stale_rooms: cleaning room_id={}, conversation_id={}",
+            room_id, conversation_id
+        );
+
+        if let Err(err) = sqlx::query(
+            "DELETE FROM conversation_members WHERE conversation_id = ? AND join_order > 0",
+        )
+        .bind(conversation_id)
+        .execute(db)
+        .await
+        {
+            eprintln!(
+                "[startup] cleanup_stale_rooms: failed to clean members for room {}: {}",
+                room_id, err
+            );
+        }
+
+        if let Err(err) = sqlx::query(
+            "UPDATE rooms SET status = 'closed', current_player_count = 1 WHERE id = ?",
+        )
+        .bind(room_id)
+        .execute(db)
+        .await
+        {
+            eprintln!(
+                "[startup] cleanup_stale_rooms: failed to close room {}: {}",
+                room_id, err
+            );
+        }
+    }
+
+    eprintln!(
+        "[startup] cleanup_stale_rooms: cleaned {} stale rooms",
+        stale_rooms.len()
+    );
+}
+
 pub fn resolve_db_path(app: &AppHandle) -> DbResult<PathBuf> {
     if let Some(dev_db_path) = env::var_os("NIGHT_VOYAGE_DB_PATH") {
         let dev_db_path = PathBuf::from(&dev_db_path);

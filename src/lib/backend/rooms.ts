@@ -11,13 +11,16 @@ import type {
   RoomMessageResetEvent,
   RoomOpenResult,
   RoomPlayerMessageEvent,
+  RoomPlotSummaryUpdateEvent,
   RoomRoundStateUpdateEvent,
+  RoomSchemaToggleEvent,
   RoomStatusResult,
   RoomStreamChunkEvent,
   RoomStreamEndEvent,
   RoomStreamObjectFieldCompleteEvent,
   RoomStreamRetryEvent,
   RoomStreamStructuredFieldDeltaEvent,
+  RoomTokenUsageEvent,
 } from './types';
 
 // ─── Room Commands ───
@@ -71,6 +74,18 @@ export async function roomSendMessage(payload: {
 
 export async function roomRequestContext() {
   return invokeCommand<void>('room_request_context');
+}
+
+export async function roomBroadcastSchemaToggle(toggleKey: string, expanded: boolean) {
+  return invokeCommand<void>('room_broadcast_schema_toggle', toInvokeArgs({ toggleKey, expanded }));
+}
+
+export async function roomBroadcastTokenUsage(conversationId: number) {
+  return invokeCommand<void>('room_broadcast_token_usage', toInvokeArgs({ conversationId }));
+}
+
+export async function roomBroadcastPlotSummary(conversationId: number) {
+  return invokeCommand<void>('room_broadcast_plot_summary', toInvokeArgs({ conversationId }));
 }
 
 // Stream lifecycle broadcasts are now emitted by the backend (stream_processor.rs +
@@ -239,6 +254,43 @@ export async function listenRoomContextSnapshot(
       messageCount: event.payload.messages?.length ?? 0,
       memberCount: event.payload.members?.length ?? 0,
       hostCharacterName: event.payload.hostCharacterName ?? null,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomSchemaToggle(
+  handler: (payload: RoomSchemaToggleEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomSchemaToggleEvent>('room:schema_toggle', (event) => {
+    console.debug('[room-schema_toggle]', {
+      conversationId: event.payload.conversationId,
+      toggleKey: event.payload.toggleKey,
+      expanded: event.payload.expanded,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomTokenUsage(
+  handler: (payload: RoomTokenUsageEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomTokenUsageEvent>('room:token_usage', (event) => {
+    console.debug('[room-token_usage] received', {
+      conversationId: event.payload.conversationId,
+      totalEstimatedTokens: event.payload.tokenUsageReport?.totalEstimatedTokens,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomPlotSummaryUpdate(
+  handler: (payload: RoomPlotSummaryUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomPlotSummaryUpdateEvent>('room:plot_summary_update', (event) => {
+    console.debug('[room-plot_summary_update] received', {
+      conversationId: event.payload.conversationId,
+      summaryCount: event.payload.summaries?.length ?? 0,
     });
     handler(event.payload);
   });

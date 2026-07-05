@@ -1,6 +1,8 @@
-pub mod character_state_overlays;
+// character_state_overlays removed (migration 0036): table dropped,
+// WorldVariable merged into message_rounds.world_variables.
 pub mod chat_service;
 pub mod http_client;
+pub mod mem0_snapshot;
 pub mod memory_providers;
 pub mod memory_service;
 pub mod plot_summaries;

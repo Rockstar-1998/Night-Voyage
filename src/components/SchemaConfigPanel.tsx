@@ -18,6 +18,7 @@ interface SchemaKeyConfig {
   contextIncluded: boolean;
   defaultExpanded: boolean;
   hideLabel: boolean;
+  isEnabled?: boolean;
   linkedBySemanticOption: string | null;
   additionalPropertiesType?: string;
   itemsType?: string;
@@ -94,6 +95,7 @@ const parseJsonSchema = (
         contextIncluded,
         defaultExpanded: !(display[name]?.defaultCollapsed ?? false),
         hideLabel: display[name]?.hideLabel ?? false,
+        isEnabled: true,
         linkedBySemanticOption: linkedKeyMap.get(name) ?? null,
         additionalPropertiesType: prop.additionalProperties?.type,
         itemsType: prop.items?.type,
@@ -111,6 +113,7 @@ const serializeToJsonSchema = (keys: SchemaKeyConfig[]): string => {
   const properties: Record<string, any> = {};
   const required: string[] = [];
   for (const key of keys) {
+    if (key.isEnabled === false) continue;
     const prop: any = { type: key.type, description: key.description };
     if (key.type === 'object') {
       if (key.objectKind === 'fixed_properties' && key.properties) {
@@ -181,6 +184,7 @@ const EMPTY_KEY: SchemaKeyConfig = {
   contextIncluded: true,
   defaultExpanded: true,
   hideLabel: false,
+  isEnabled: true,
   linkedBySemanticOption: null,
   required: false,
   objectKind: 'additional_properties',
@@ -266,7 +270,7 @@ export const SchemaConfigPanel: Component<{
 
             <For each={keys()}>
               {(key, index) => (
-                <div class="border-b border-white/10 pb-6 space-y-4">
+                <div class={`border-b border-white/10 pb-6 space-y-4 ${key.isEnabled === false ? 'opacity-50' : ''}`}>
                   <div class="flex items-center justify-between gap-3">
                     <input
                       type="text"
@@ -454,6 +458,15 @@ export const SchemaConfigPanel: Component<{
                   </Show>
 
                   <div class="flex items-center gap-4">
+                    <label class={`flex items-center gap-2 text-xs cursor-pointer ${key.isEnabled === false ? 'text-mist-solid/30' : 'text-mist-solid/60'}`}>
+                      <input
+                        type="checkbox"
+                        checked={key.isEnabled !== false}
+                        onChange={(e) => updateKey(index(), { isEnabled: e.currentTarget.checked })}
+                        class="accent-accent"
+                      />
+                      启用
+                    </label>
                     <label class="flex items-center gap-2 text-xs text-mist-solid/60 cursor-pointer">
                       <input
                         type="checkbox"

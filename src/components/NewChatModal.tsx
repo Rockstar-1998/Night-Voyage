@@ -26,6 +26,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | undefined>();
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
+  const [memoryMode, setMemoryMode] = createSignal<'stateless' | 'legacy' | 'mem0'>('stateless');
 
   const [roomPort, setRoomPort] = createSignal('');
   const [roomPassphrase, setRoomPassphrase] = createSignal('');
@@ -38,9 +39,14 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     props.npcCharacters.find((character) => character.id === selectedCharacterId()),
   );
 
+  // 只允许在创建会话时选择 LLM 档案；embedding 档案由 MEM0 会话在右侧抽屉中绑定。
+  const llmProviders = createMemo(() =>
+    props.providers.filter((provider) => provider.purpose === 'llm'),
+  );
+
   createEffect(() => {
-    if (props.isOpen && !selectedProviderId() && props.providers.length > 0) {
-      setSelectedProviderId(props.providers[0].id);
+    if (props.isOpen && !selectedProviderId() && llmProviders().length > 0) {
+      setSelectedProviderId(llmProviders()[0].id);
     }
   });
 
@@ -51,7 +57,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setSelectedPlayerCharacterId(undefined);
     setSelectedCharacterId(undefined);
     setSelectedWorldBookId(undefined);
-    setSelectedProviderId(props.providers[0]?.id);
+    setSelectedProviderId(llmProviders()[0]?.id);
     setRoomPort('');
     setRoomPassphrase('');
     setRoomResult(null);
@@ -59,6 +65,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setCopied(false);
     setSelectedOpeningIndex(0);
     setSelectedPresetId(undefined);
+    setMemoryMode('stateless');
   };
 
   const canGoNext = createMemo(() => Boolean(selectedCharacterId()));
@@ -66,8 +73,8 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     if (!selectedCharacterId()) return '请先选择角色卡';
     if (!conversationType()) return '请选择会话模式';
     if (!selectedProviderId()) {
-      if (props.providers.length === 0) {
-        return '请先在设置中创建 API 档案；联机会话需要房主的 API 档案用于自动生成回复。';
+      if (llmProviders().length === 0) {
+        return '请先在设置中创建用途为 LLM 的 API 档案；联机会话需要房主的 API 档案用于自动生成回复。';
       }
       return '请选择 API 档案；联机会话需要房主的 API 档案用于自动生成回复。';
     }
@@ -93,6 +100,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       chatMode: 'classic',
       agentProviderPolicy: 'shared_host_provider',
       openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
+      memoryMode: memoryMode(),
     };
     try {
       const conversationId = await props.onCreateConversation(payload);
@@ -133,6 +141,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
         chatMode: 'classic',
         agentProviderPolicy: 'shared_host_provider',
         openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
+        memoryMode: memoryMode(),
       };
       try {
         const result = await props.onCreateConversation(payload);
@@ -410,6 +419,46 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                   </div>
 
                   <div class="space-y-2">
+                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">记忆模式</label>
+                    <p class="text-[11px] text-mist-solid/40">记忆模式在创建后锁定，不可切换。</p>
+                    <div class="grid grid-cols-3 gap-3">
+                      <button
+                        onClick={() => setMemoryMode('stateless')}
+                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
+                          memoryMode() === 'stateless'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold">无状态</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">纯多轮对话</div>
+                      </button>
+                      <button
+                        onClick={() => setMemoryMode('legacy')}
+                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
+                          memoryMode() === 'legacy'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold">传统</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">剧情总结+世界变量</div>
+                      </button>
+                      <button
+                        onClick={() => setMemoryMode('mem0')}
+                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
+                          memoryMode() === 'mem0'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold">Mem0</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">AI 记忆托管</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">世界书</label>
                     <Select
   value={selectedWorldBookId()?.toString() ?? ''}
@@ -428,7 +477,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   onChange={(val) => setSelectedProviderId(val ? Number(val) : undefined)}
   options={[
   { label: "请选择 API 档案", value: "" },
-  ...(props.providers).map(provider => ({ label: provider.name, value: (provider.id)?.toString() }))
+  ...(llmProviders()).map(provider => ({ label: provider.name, value: (provider.id)?.toString() }))
   ]}
 />
                     <Show when={conversationType() === 'online' && !selectedProviderId()}>

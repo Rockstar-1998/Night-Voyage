@@ -10,6 +10,7 @@ import { ChatArea } from './components/ChatArea';
 import { ChatInputBar } from './components/ChatInputBar';
 import { RightDrawer } from './components/RightDrawer';
 import { ChatMessage } from './components/MessageItem';
+import { setSchemaToggleState, clearSchemaToggleState, setAllSchemaToggleState } from './components/MessageFormatRenderer';
 import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
 import { BackdoorTestPanel } from './components/BackdoorTestPanel';
@@ -22,6 +23,7 @@ import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, mes
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
 import {
   type ApiProviderSummary,
+  type CharacterBaseSection,
   type CharacterBaseSectionInput,
   type CharacterCard,
   type ConversationListItem,
@@ -94,9 +96,13 @@ import {
   listenRoomMemberLeft,
   listenRoomPlayerMessage,
   listenRoomContextSnapshot,
+  listenRoomSchemaToggle,
+  listenRoomTokenUsage,
+  listenRoomPlotSummaryUpdate,
   roomRequestContext,
   roomOpen,
   roomClose,
+  roomBroadcastSchemaToggle,
   type RoomStreamChunkEvent,
   type RoomStreamEndEvent,
   type RoomStreamRetryEvent,
@@ -106,8 +112,12 @@ import {
   type RoomRoundStateUpdateEvent,
   type RoomPlayerMessageEvent,
   type RoomContextSnapshotEvent,
+  type RoomSchemaToggleEvent,
+  type RoomTokenUsageEvent,
+  type RoomPlotSummaryUpdateEvent,
   type RoomHostCharacter,
   type RoomJoinResult,
+  type TokenUsageReport,
   roomLeave,
   listenMemoryError,
   mem0InitStatus,
@@ -167,6 +177,9 @@ type RoomClientSession = {
   hostAddress: string;
   port: number;
   hostCharacter?: RoomHostCharacter | null;
+  contextWindowSize?: number;
+  tokenUsageReport?: TokenUsageReport;
+  plotSummaries?: PlotSummaryRecord[];
 };
 
 const DESKTOP_WORKSPACE_IDS = ['chat', 'settings', 'character', 'kb', 'workspace'] as const;
@@ -298,11 +311,24 @@ const DesktopView = (props: {
   onSetFormatConfig: (config: MessageFormatConfig) => void;
   isRoomClient?: boolean;
   isOnline?: boolean;
+  onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   onPresetsChanged?: () => void;
   /** mem0 startup error — forwarded to SettingsArea for display. */
   mem0InitError?: string | null;
   /** Runtime memory backend errors — forwarded to ChatArea for display. */
   memoryErrors?: import('./lib/backend').MemoryBackendErrorEvent[];
+  /** Room guest token usage report (host-side data) — forwarded to ChatArea. */
+  roomTokenUsageReport?: import('./lib/backend').TokenUsageReport | null;
+  /** Room guest context window size (host-side data) — forwarded to ChatArea. */
+  roomContextWindowSize?: number | null;
+  /** Room guest host preset name (host-side data) — forwarded to RightDrawer. */
+  hostPresetName?: string | null;
+  /** Room guest host world book name (host-side data) — forwarded to RightDrawer. */
+  hostWorldBookName?: string | null;
+  /** Room guest host provider name (host-side data) — forwarded to RightDrawer. */
+  hostProviderName?: string | null;
+  /** Room guest plot summaries (host-side data) — forwarded to RightDrawer. */
+  plotSummaries?: PlotSummaryRecord[];
 }) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
@@ -421,7 +447,7 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} />
+                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
@@ -469,6 +495,11 @@ const DesktopView = (props: {
               providers={props.providers}
               selectedProviderId={props.selectedProviderId ?? null}
               selectedEmbeddingProviderId={props.selectedEmbeddingProviderId ?? null}
+              isRoomClient={props.isRoomClient}
+              hostPresetName={props.hostPresetName}
+              hostWorldBookName={props.hostWorldBookName}
+              hostProviderName={props.hostProviderName}
+              plotSummaries={props.plotSummaries}
             />
           </div>
         </Show>
@@ -553,7 +584,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                                   </Show>
                                 </div>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">
@@ -602,6 +633,11 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                           providers={props.providers}
                           selectedProviderId={props.selectedProviderId ?? null}
                           selectedEmbeddingProviderId={props.selectedEmbeddingProviderId ?? null}
+                          isRoomClient={props.isRoomClient}
+                          hostPresetName={props.hostPresetName}
+                          hostWorldBookName={props.hostWorldBookName}
+                          hostProviderName={props.hostProviderName}
+                          plotSummaries={props.plotSummaries}
                         />
                       </div>
                     </>
@@ -851,6 +887,11 @@ function App() {
   };
 
   const refreshConversationContext = async (conversationId: number) => {
+    // 房客模式下不查询本地 DB（房客本地无该 conversation 记录），
+    // 房客的消息/成员/轮次状态/剧情总结全部由 room:* 事件与 ContextSnapshot 填充。
+    if (activeRoomClientSession()) {
+      return;
+    }
     try {
       const [messageList, members, roundState, summaryList] = await Promise.all([
         messagesList(conversationId),
@@ -1523,6 +1564,19 @@ function App() {
             description: result.hostCharacterDescription ?? '',
             imagePath: null,
             imageBase64: result.hostCharacterImageBase64 ?? null,
+            baseSections: result.hostBaseSections
+              ? (() => {
+                  try {
+                    const parsed = JSON.parse(result.hostBaseSections);
+                    return Array.isArray(parsed) ? (parsed as CharacterBaseSection[]) : null;
+                  } catch {
+                    return null;
+                  }
+                })()
+              : null,
+            presetName: result.hostPresetName ?? null,
+            worldBookName: result.hostWorldBookName ?? null,
+            providerName: result.hostProviderName ?? null,
           }
         : null;
 
@@ -1534,13 +1588,23 @@ function App() {
       hostAddress: connection.hostAddress,
       port: connection.port,
       hostCharacter,
+      contextWindowSize: result.contextWindowSize,
+      tokenUsageReport: result.tokenUsageReport,
+      plotSummaries: result.plotSummaries ?? [],
     });
+    setPlotSummaries(result.plotSummaries ?? []);
+    if (result.schemaToggleState) {
+      clearSchemaToggleState();
+      setAllSchemaToggleState(result.schemaToggleState);
+    }
     console.debug('[room-joined]', {
       conversationId: result.conversation.id,
       memberId: result.memberId,
       messageCount: result.fullMessages?.length ?? result.recentMessages?.length ?? 0,
       memberCount: result.members?.length ?? 0,
       hasHostCharacter: !!(result.hostCharacterImageBase64 || result.hostCharacterName),
+      contextWindowSize: result.contextWindowSize,
+      totalEstimatedTokens: result.tokenUsageReport?.totalEstimatedTokens,
     });
     setActiveWorkspace('chat');
     setSelectedConversationId(result.conversation.id);
@@ -1768,6 +1832,8 @@ function App() {
       updateMessageContent(payload.messageId, () => ({
         isStreaming: false,
       }));
+      setReplyStatus('idle');
+      setAbortingRoundId(null);
     });
 
     const roomStructuredDeltaUnlisten = await listenRoomStreamStructuredFieldDelta((payload: RoomStreamStructuredFieldDeltaEvent) => {
@@ -1823,6 +1889,7 @@ function App() {
         content: '',
         isStreaming: true,
       }));
+      setReplyStatus('connecting');
     });
 
     const roomMessageResetUnlisten = await listenRoomMessageReset((payload: RoomMessageResetEvent) => {
@@ -1839,6 +1906,8 @@ function App() {
         content: '',
         isStreaming: true,
       }));
+      setReplyStatus('connecting');
+      setAbortingRoundId(payload.roundId);
     });
 
     const roomContextSnapshotUnlisten = await listenRoomContextSnapshot((payload: RoomContextSnapshotEvent) => {
@@ -1855,20 +1924,86 @@ function App() {
       setMessages(payload.messages.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
       setSelectedConversationMembers(payload.members ?? []);
       setCurrentRoundState(payload.roundState ?? null);
+      if (payload.schemaToggleState) {
+        setAllSchemaToggleState(payload.schemaToggleState);
+      }
       // 同时更新 remoteHostCharacter（如果房主后发来了带图片的 ContextSnapshot）
-      if (payload.hostCharacterImageBase64 || payload.hostCharacterName) {
+      if (payload.hostCharacterImageBase64 || payload.hostCharacterName || payload.tokenUsageReport || payload.contextWindowSize != null || payload.hostBaseSections || payload.hostPresetName || payload.hostWorldBookName || payload.hostProviderName || payload.plotSummaries) {
         const remote = activeRoomClientSession();
         if (remote) {
-          setRoomClientSession({
-            ...remote,
-            hostCharacter: {
-              name: payload.hostCharacterName ?? '',
-              description: payload.hostCharacterDescription ?? '',
+          const nextSession: RoomClientSession = { ...remote };
+          if (payload.hostCharacterImageBase64 || payload.hostCharacterName || payload.hostBaseSections || payload.hostPresetName || payload.hostWorldBookName || payload.hostProviderName) {
+            const prevChar = remote.hostCharacter ?? {
+              name: '',
+              description: '',
               imagePath: null,
-              imageBase64: payload.hostCharacterImageBase64 ?? null,
-            },
-          });
+              imageBase64: null,
+            };
+            nextSession.hostCharacter = {
+              ...prevChar,
+              name: payload.hostCharacterName ?? prevChar.name,
+              description: payload.hostCharacterDescription ?? prevChar.description,
+              imageBase64: payload.hostCharacterImageBase64 ?? prevChar.imageBase64 ?? null,
+              baseSections: payload.hostBaseSections
+                ? (() => {
+                    try {
+                      const parsed = JSON.parse(payload.hostBaseSections);
+                      return Array.isArray(parsed) ? (parsed as CharacterBaseSection[]) : prevChar.baseSections ?? null;
+                    } catch {
+                      return prevChar.baseSections ?? null;
+                    }
+                  })()
+                : prevChar.baseSections ?? null,
+              presetName: payload.hostPresetName ?? prevChar.presetName ?? null,
+              worldBookName: payload.hostWorldBookName ?? prevChar.worldBookName ?? null,
+              providerName: payload.hostProviderName ?? prevChar.providerName ?? null,
+            };
+          }
+          if (payload.tokenUsageReport) {
+            nextSession.tokenUsageReport = payload.tokenUsageReport;
+          }
+          if (payload.contextWindowSize != null) {
+            nextSession.contextWindowSize = payload.contextWindowSize;
+          }
+          if (payload.plotSummaries) {
+            nextSession.plotSummaries = payload.plotSummaries;
+            setPlotSummaries(payload.plotSummaries);
+          }
+          setRoomClientSession(nextSession);
         }
+      }
+    });
+
+    const roomSchemaToggleUnlisten = await listenRoomSchemaToggle((payload: RoomSchemaToggleEvent) => {
+      console.debug('[room-schema_toggle] received', {
+        conversationId: payload.conversationId,
+        toggleKey: payload.toggleKey,
+        expanded: payload.expanded,
+      });
+      setSchemaToggleState(payload.toggleKey, payload.expanded);
+    });
+
+    const roomTokenUsageUnlisten = await listenRoomTokenUsage((payload: RoomTokenUsageEvent) => {
+      const remote = activeRoomClientSession();
+      if (!remote) return;
+      const reportContextWindow = payload.tokenUsageReport?.contextWindowSize ?? null;
+      const nextContextWindow = reportContextWindow != null ? reportContextWindow : remote.contextWindowSize;
+      setRoomClientSession({
+        ...remote,
+        contextWindowSize: nextContextWindow,
+        tokenUsageReport: payload.tokenUsageReport,
+      });
+    });
+
+    const roomPlotSummaryUnlisten = await listenRoomPlotSummaryUpdate((payload: RoomPlotSummaryUpdateEvent) => {
+      console.debug('[room-plot_summary_update] received', {
+        conversationId: payload.conversationId,
+        summaryCount: payload.summaries?.length ?? 0,
+      });
+      setPlotSummaries(payload.summaries ?? []);
+      const remote = activeRoomClientSession();
+      if (remote && remote.conversation.id === payload.conversationId) {
+        setRoomClientSession({ ...remote, plotSummaries: payload.summaries ?? [] });
       }
     });
 
@@ -1926,7 +2061,8 @@ function App() {
       setSelectedConversationMembers([]);
       setCurrentRoundState(null);
       setMessages([]);
-      console.debug('[room-disconnected] cleared signals: messages, members, roundState');
+      clearSchemaToggleState();
+      console.debug('[room-disconnected] cleared signals: messages, members, roundState, schemaToggleState');
     });
 
     // Refresh member list when a remote member joins or leaves the room
@@ -2016,6 +2152,9 @@ function App() {
       roomStreamRetryUnlisten();
       roomMessageResetUnlisten();
       roomContextSnapshotUnlisten();
+      roomSchemaToggleUnlisten();
+      roomTokenUsageUnlisten();
+      roomPlotSummaryUnlisten();
       roomRoundStateUnlisten();
       roomPlayerMessageUnlisten();
       if (retryNoticeTimer) clearTimeout(retryNoticeTimer);
@@ -2161,9 +2300,19 @@ function App() {
         onSetFormatConfig={handleSetFormatConfig}
         isRoomClient={activeRoomClientSession() !== null}
         isOnline={selectedConversation()?.conversationType === 'online'}
+        onSchemaToggle={(toggleKey, expanded) => {
+          if (activeRoomClientSession() !== null) return;
+          void roomBroadcastSchemaToggle(toggleKey, expanded);
+        }}
         onPresetsChanged={refreshPresets}
         mem0InitError={mem0InitError()}
         memoryErrors={memoryBackendErrors}
+        roomTokenUsageReport={activeRoomClientSession()?.tokenUsageReport ?? null}
+        roomContextWindowSize={activeRoomClientSession()?.contextWindowSize ?? null}
+        hostPresetName={remoteHostCharacter()?.presetName ?? null}
+        hostWorldBookName={remoteHostCharacter()?.worldBookName ?? null}
+        hostProviderName={remoteHostCharacter()?.providerName ?? null}
+        plotSummaries={activeRoomClientSession()?.plotSummaries ?? _plotSummaries}
       />
 
       <NewChatModal

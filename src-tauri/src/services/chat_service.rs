@@ -1,4 +1,5 @@
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -1294,6 +1295,38 @@ pub fn emit_stream_message_stop(
             } else {
                 eprintln!("[room-broadcast] StreamEnd skipped: host_server is None");
             }
+            drop(host_server);
+
+            // After the host-side stream end has been broadcast to guests,
+            // compile a fresh token-usage report and broadcast it so guests
+            // can refresh their token-usage island. Only runs when a room
+            // server is active (host side); single-player mode has no room
+            // server and therefore no call path. Compilation failures are
+            // logged loudly rather than silently swallowed (C2).
+            match crate::services::prompt_compiler::compile_token_usage_report(
+                &state.db,
+                chunk_event.conversation_id,
+            )
+            .await
+            {
+                Ok(report) => {
+                    let host_server = state.host_server.lock().await;
+                    if let Some(server) = host_server.as_ref() {
+                        let server = server.lock().await;
+                        let msg = crate::network::RoomMessage::TokenUsage {
+                            conversation_id: chunk_event.conversation_id,
+                            report,
+                        };
+                        server.broadcast_message(&msg).await;
+                    }
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[room-broadcast] TokenUsage skipped: failed to compile report for conv={}: {}",
+                        chunk_event.conversation_id, error
+                    );
+                }
+            }
         }
     });
 
@@ -1798,10 +1831,16 @@ pub fn build_openai_url(base_url: &str) -> String {
 /// joined guest can render the room without any local drift. Used by the room
 /// host during the join handshake and by the `room_request_context` command
 /// when a guest manually asks for a resync.
+///
+/// `schema_toggle_state` is the host-side in-memory toggle map; pass `None`
+/// when the caller cannot supply host toggle state (e.g. a guest issuing a
+/// local resync) so the snapshot carries no toggle field and the guest keeps
+/// its existing state.
 pub async fn build_context_snapshot(
     db: &SqlitePool,
     conversation_id: i64,
     app_handle: &AppHandle,
+    schema_toggle_state: Option<HashMap<String, bool>>,
 ) -> Result<crate::network::RoomMessage, String> {
     let messages = ChatService::list_messages(db, conversation_id, None).await?;
     let members = crate::network::load_active_conversation_members(db, conversation_id).await?;
@@ -1837,6 +1876,81 @@ pub async fn build_context_snapshot(
             None => (None, None, None),
         };
 
+    let (context_window_size, token_usage_report) =
+        match crate::services::prompt_compiler::compile_token_usage_report(db, conversation_id)
+            .await
+        {
+            Ok(report) => (
+                report.context_window_size.map(|v| v as i64),
+                Some(report),
+            ),
+            Err(error) => {
+                eprintln!(
+                    "[room-server] failed to compile token usage report for conversation {} in context snapshot: {}",
+                    conversation_id, error
+                );
+                (None, None)
+            }
+        };
+
+    let (host_base_sections, _host_preset_placeholder, _host_world_book_placeholder, _host_provider_placeholder): (Option<String>, Option<String>, Option<String>, Option<String>) =
+        match host_character_id {
+            Some(card_id) => {
+                let card = crate::commands::characters::character_card_get(db, card_id)
+                    .await
+                    .ok();
+                let host_base_sections = card
+                    .as_ref()
+                    .map(|c| serde_json::to_string(&c.base_sections).unwrap_or_default())
+                    .filter(|s| !s.is_empty() && s != "[]");
+                (host_base_sections, None, None, None)
+            }
+            None => (None, None, None, None),
+        };
+
+    let host_preset_name = sqlx::query_scalar::<_, String>(
+        "SELECT p.name FROM conversations c LEFT JOIN presets p ON p.id = c.preset_id WHERE c.id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .filter(|n: &String| !n.is_empty());
+
+    let host_world_book_name = sqlx::query_scalar::<_, String>(
+        "SELECT wb.name FROM conversations c LEFT JOIN world_books wb ON wb.id = c.world_book_id WHERE c.id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .filter(|n: &String| !n.is_empty());
+
+    let host_provider_name = sqlx::query_scalar::<_, String>(
+        "SELECT ap.name FROM conversations c LEFT JOIN api_providers ap ON ap.id = c.provider_id WHERE c.id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .filter(|n: &String| !n.is_empty());
+
+    let plot_summaries = match crate::services::plot_summaries::list_plot_summaries(
+        db,
+        conversation_id,
+    )
+    .await
+    {
+        Ok(records) => Some(records),
+        Err(error) => {
+            eprintln!(
+                "[room-server] failed to load plot summaries for conversation {} in context snapshot: {}",
+                conversation_id, error
+            );
+            None
+        }
+    };
+
     Ok(crate::network::RoomMessage::ContextSnapshot {
         conversation_id,
         messages,
@@ -1845,5 +1959,13 @@ pub async fn build_context_snapshot(
         host_character_image_base64,
         host_character_name,
         host_character_description,
+        schema_toggle_state,
+        context_window_size,
+        token_usage_report,
+        host_base_sections,
+        host_preset_name,
+        host_world_book_name,
+        host_provider_name,
+        plot_summaries,
     })
 }

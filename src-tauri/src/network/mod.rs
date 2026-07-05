@@ -8,7 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{timeout, Duration};
 
-use crate::models::{ConversationListItem, ConversationMember, RoundState, UiMessage};
+use crate::models::{ConversationListItem, ConversationMember, RoundState, TokenUsageReport, UiMessage};
 use crate::repositories::round_repository::RoundRepository;
 use crate::services::chat_service::ChatService;
 
@@ -51,6 +51,22 @@ pub enum RoomMessage {
         host_character_image_base64: Option<String>,
         host_character_name: Option<String>,
         host_character_description: Option<String>,
+        #[serde(default)]
+        schema_toggle_state: Option<HashMap<String, bool>>,
+        #[serde(default)]
+        context_window_size: Option<i64>,
+        #[serde(default)]
+        token_usage_report: Option<TokenUsageReport>,
+        #[serde(default)]
+        host_base_sections: Option<String>,
+        #[serde(default)]
+        host_preset_name: Option<String>,
+        #[serde(default)]
+        host_world_book_name: Option<String>,
+        #[serde(default)]
+        host_provider_name: Option<String>,
+        #[serde(default)]
+        plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
     },
     ContextSnapshot {
         conversation_id: i64,
@@ -60,6 +76,22 @@ pub enum RoomMessage {
         host_character_image_base64: Option<String>,
         host_character_name: Option<String>,
         host_character_description: Option<String>,
+        #[serde(default)]
+        schema_toggle_state: Option<HashMap<String, bool>>,
+        #[serde(default)]
+        context_window_size: Option<i64>,
+        #[serde(default)]
+        token_usage_report: Option<TokenUsageReport>,
+        #[serde(default)]
+        host_base_sections: Option<String>,
+        #[serde(default)]
+        host_preset_name: Option<String>,
+        #[serde(default)]
+        host_world_book_name: Option<String>,
+        #[serde(default)]
+        host_provider_name: Option<String>,
+        #[serde(default)]
+        plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
     },
     MemberJoined {
         member_id: i64,
@@ -121,6 +153,19 @@ pub enum RoomMessage {
     },
     RoomClosed {
         reason: String,
+    },
+    SchemaToggle {
+        conversation_id: i64,
+        toggle_key: String,
+        expanded: bool,
+    },
+    TokenUsage {
+        conversation_id: i64,
+        report: TokenUsageReport,
+    },
+    PlotSummaryUpdate {
+        conversation_id: i64,
+        summaries: Vec<crate::models::PlotSummaryRecord>,
     },
     Error {
         code: String,
@@ -243,6 +288,36 @@ pub struct ContextSnapshotPayload {
     pub host_character_image_base64: Option<String>,
     pub host_character_name: Option<String>,
     pub host_character_description: Option<String>,
+    pub schema_toggle_state: Option<HashMap<String, bool>>,
+    pub context_window_size: Option<i64>,
+    pub token_usage_report: Option<TokenUsageReport>,
+    pub host_base_sections: Option<String>,
+    pub host_preset_name: Option<String>,
+    pub host_world_book_name: Option<String>,
+    pub host_provider_name: Option<String>,
+    pub plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomSchemaToggleEvent {
+    pub conversation_id: i64,
+    pub toggle_key: String,
+    pub expanded: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomTokenUsageEvent {
+    pub conversation_id: i64,
+    pub report: TokenUsageReport,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomPlotSummaryUpdateEvent {
+    pub conversation_id: i64,
+    pub summaries: Vec<crate::models::PlotSummaryRecord>,
 }
 
 impl RoomMessage {
@@ -262,6 +337,9 @@ impl RoomMessage {
             RoomMessage::RoomClosed { .. } => "room:room_closed",
             RoomMessage::Error { .. } => "room:error",
             RoomMessage::ContextSnapshot { .. } => "room:context_snapshot",
+            RoomMessage::SchemaToggle { .. } => "room:schema_toggle",
+            RoomMessage::TokenUsage { .. } => "room:token_usage",
+            RoomMessage::PlotSummaryUpdate { .. } => "room:plot_summary_update",
             _ => "room:message",
         }
     }
@@ -403,6 +481,14 @@ impl RoomMessage {
                 host_character_image_base64,
                 host_character_name,
                 host_character_description,
+                schema_toggle_state,
+                context_window_size,
+                token_usage_report,
+                host_base_sections,
+                host_preset_name,
+                host_world_book_name,
+                host_provider_name,
+                plot_summaries,
             } => serde_json::to_value(ContextSnapshotPayload {
                 conversation_id: *conversation_id,
                 messages: messages.clone(),
@@ -411,6 +497,40 @@ impl RoomMessage {
                 host_character_image_base64: host_character_image_base64.clone(),
                 host_character_name: host_character_name.clone(),
                 host_character_description: host_character_description.clone(),
+                schema_toggle_state: schema_toggle_state.clone(),
+                context_window_size: *context_window_size,
+                token_usage_report: token_usage_report.clone(),
+                host_base_sections: host_base_sections.clone(),
+                host_preset_name: host_preset_name.clone(),
+                host_world_book_name: host_world_book_name.clone(),
+                host_provider_name: host_provider_name.clone(),
+                plot_summaries: plot_summaries.clone(),
+            })
+            .ok(),
+            RoomMessage::SchemaToggle {
+                conversation_id,
+                toggle_key,
+                expanded,
+            } => serde_json::to_value(RoomSchemaToggleEvent {
+                conversation_id: *conversation_id,
+                toggle_key: toggle_key.clone(),
+                expanded: *expanded,
+            })
+            .ok(),
+            RoomMessage::TokenUsage {
+                conversation_id,
+                report,
+            } => serde_json::to_value(RoomTokenUsageEvent {
+                conversation_id: *conversation_id,
+                report: report.clone(),
+            })
+            .ok(),
+            RoomMessage::PlotSummaryUpdate {
+                conversation_id,
+                summaries,
+            } => serde_json::to_value(RoomPlotSummaryUpdateEvent {
+                conversation_id: *conversation_id,
+                summaries: summaries.clone(),
             })
             .ok(),
             _ => None,
@@ -533,6 +653,14 @@ pub struct RoomJoinSession {
     pub host_character_image_base64: Option<String>,
     pub host_character_name: Option<String>,
     pub host_character_description: Option<String>,
+    pub schema_toggle_state: Option<HashMap<String, bool>>,
+    pub context_window_size: Option<i64>,
+    pub token_usage_report: Option<TokenUsageReport>,
+    pub host_base_sections: Option<String>,
+    pub host_preset_name: Option<String>,
+    pub host_world_book_name: Option<String>,
+    pub host_provider_name: Option<String>,
+    pub plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
 }
 
 fn normalize_optional_positive_id(value: Option<i64>) -> Option<i64> {
@@ -675,6 +803,7 @@ pub struct RoomServer {
     next_client_id: Arc<Mutex<i64>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     db: SqlitePool,
+    schema_toggle_state: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 impl RoomServer {
@@ -699,6 +828,8 @@ impl RoomServer {
         let clients: Arc<RwLock<HashMap<i64, ClientHandle>>> =
             Arc::new(RwLock::new(HashMap::new()));
         let next_client_id = Arc::new(Mutex::new(1i64));
+        let schema_toggle_state: Arc<Mutex<HashMap<String, bool>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
         let server = Arc::new(Mutex::new(RoomServer {
@@ -708,6 +839,7 @@ impl RoomServer {
             next_client_id: next_client_id.clone(),
             shutdown_tx: Some(shutdown_tx),
             db: db.clone(),
+            schema_toggle_state: schema_toggle_state.clone(),
         }));
 
         let db_for_accept_loop = db.clone();
@@ -719,6 +851,7 @@ impl RoomServer {
                         let clients = clients.clone();
                         let next_client_id = next_client_id.clone();
                         let app_handle = app_handle.clone();
+                        let schema_toggle_state = schema_toggle_state.clone();
 
                         let db_inner = db_for_accept_loop.clone();
                         let room_id_inner = room_id_for_accept_loop;
@@ -956,6 +1089,98 @@ impl RoomServer {
                                     None => (None, None, None),
                                 };
 
+                            let schema_toggle_snapshot: Option<HashMap<String, bool>> = {
+                                let map = schema_toggle_state.lock().await;
+                                if map.is_empty() {
+                                    None
+                                } else {
+                                    Some(map.clone())
+                                }
+                            };
+
+                            let (context_window_size, token_usage_report) =
+                                match crate::services::prompt_compiler::compile_token_usage_report(
+                                    &db_inner,
+                                    conversation_id,
+                                )
+                                .await
+                                {
+                                    Ok(report) => (
+                                        report.context_window_size.map(|v| v as i64),
+                                        Some(report),
+                                    ),
+                                    Err(error) => {
+                                        eprintln!(
+                                            "[room-server] failed to compile token usage report for conversation {} during join: {}",
+                                            conversation_id, error
+                                        );
+                                        (None, None)
+                                    }
+                                };
+
+                            let host_base_sections: Option<String> =
+                                match conversation.host_character_id {
+                                    Some(card_id) => {
+                                        let card = crate::commands::characters::character_card_get(
+                                            &db_inner, card_id,
+                                        )
+                                        .await
+                                        .ok();
+                                        card
+                                            .as_ref()
+                                            .map(|c| serde_json::to_string(&c.base_sections).unwrap_or_default())
+                                            .filter(|s| !s.is_empty() && s != "[]")
+                                    }
+                                    None => None,
+                                };
+
+                            let host_preset_name: Option<String> = sqlx::query_scalar::<_, String>(
+                                "SELECT p.name FROM conversations c LEFT JOIN presets p ON p.id = c.preset_id WHERE c.id = ? LIMIT 1",
+                            )
+                            .bind(conversation_id)
+                            .fetch_optional(&db_inner)
+                            .await
+                            .ok()
+                            .flatten()
+                            .filter(|n| !n.is_empty());
+
+                            let host_world_book_name: Option<String> = sqlx::query_scalar::<_, String>(
+                                "SELECT wb.name FROM conversations c LEFT JOIN world_books wb ON wb.id = c.world_book_id WHERE c.id = ? LIMIT 1",
+                            )
+                            .bind(conversation_id)
+                            .fetch_optional(&db_inner)
+                            .await
+                            .ok()
+                            .flatten()
+                            .filter(|n| !n.is_empty());
+
+                            let host_provider_name: Option<String> = sqlx::query_scalar::<_, String>(
+                                "SELECT ap.name FROM conversations c LEFT JOIN api_providers ap ON ap.id = c.provider_id WHERE c.id = ? LIMIT 1",
+                            )
+                            .bind(conversation_id)
+                            .fetch_optional(&db_inner)
+                            .await
+                            .ok()
+                            .flatten()
+                            .filter(|n| !n.is_empty());
+
+                            let plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>> =
+                                match crate::services::plot_summaries::list_plot_summaries(
+                                    &db_inner,
+                                    conversation_id,
+                                )
+                                .await
+                                {
+                                    Ok(records) => Some(records),
+                                    Err(error) => {
+                                        eprintln!(
+                                            "[room-server] failed to load plot summaries for conversation {} during join: {}",
+                                            conversation_id, error
+                                        );
+                                        None
+                                    }
+                                };
+
                             let success_msg = RoomMessage::JoinSuccess {
                                 room_id: room_id_inner,
                                 member_id: db_member_id,
@@ -966,6 +1191,14 @@ impl RoomServer {
                                 host_character_image_base64,
                                 host_character_name,
                                 host_character_description,
+                                schema_toggle_state: schema_toggle_snapshot.clone(),
+                                context_window_size,
+                                token_usage_report: token_usage_report.clone(),
+                                host_base_sections,
+                                host_preset_name,
+                                host_world_book_name,
+                                host_provider_name,
+                                plot_summaries,
                             };
                             if let Err(error) = write_frame(&mut stream, &success_msg).await {
                                 eprintln!(
@@ -990,6 +1223,7 @@ impl RoomServer {
                                 &db_inner,
                                 conversation_id,
                                 &app_handle,
+                                schema_toggle_snapshot,
                             )
                             .await
                             {
@@ -1150,6 +1384,27 @@ impl RoomServer {
     pub async fn client_count(&self) -> usize {
         self.clients.read().await.len()
     }
+
+    /// Update the host-side schema toggle map and broadcast a `SchemaToggle`
+    /// message to all connected room clients. Called only on the host side
+    /// (single-player mode has no room server and therefore no call path).
+    pub async fn update_schema_toggle(
+        &self,
+        conversation_id: i64,
+        toggle_key: String,
+        expanded: bool,
+    ) {
+        {
+            let mut map = self.schema_toggle_state.lock().await;
+            map.insert(toggle_key.clone(), expanded);
+        }
+        let msg = RoomMessage::SchemaToggle {
+            conversation_id,
+            toggle_key,
+            expanded,
+        };
+        self.broadcast_message(&msg).await;
+    }
 }
 
 // ─── RoomClient ───
@@ -1227,6 +1482,14 @@ impl RoomClient {
                 host_character_image_base64,
                 host_character_name,
                 host_character_description,
+                schema_toggle_state,
+                context_window_size,
+                token_usage_report,
+                host_base_sections,
+                host_preset_name,
+                host_world_book_name,
+                host_provider_name,
+                plot_summaries,
             }))) => {
                 self.room_id = Some(room_id);
                 // Emit each existing member to the frontend
@@ -1249,6 +1512,14 @@ impl RoomClient {
                     host_character_image_base64,
                     host_character_name,
                     host_character_description,
+                    schema_toggle_state,
+                    context_window_size,
+                    token_usage_report,
+                    host_base_sections,
+                    host_preset_name,
+                    host_world_book_name,
+                    host_provider_name,
+                    plot_summaries,
                 }
             }
             Ok(Ok(Some(RoomMessage::Error { message, .. }))) => {

@@ -30,9 +30,9 @@ interface MobileViewProps {
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: 'queued' | 'completed' | 'failed' | null;
   characterStateOverlayError?: string | null;
-  memoryMode: 'stateless' | 'mem0' | string;
-  mem0Available?: boolean;
-  onUpdateMemoryMode: (mode: 'stateless' | 'mem0') => Promise<void> | void;
+  memoryMode: 'stateless' | 'legacy' | 'mem0' | string;
+  mem0SnapshotWindow?: number;
+  onSnapshotWindowChange?: (window: number) => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number }) => Promise<void> | void;
   playerCharacters: CharacterCard[];
   currentPlayerCharacter?: CharacterCard;
@@ -49,6 +49,9 @@ interface MobileViewProps {
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   onSelectConversation: (conversationId: number) => void;
   onDeleteConversation?: (id: number) => Promise<void> | void;
+  onOpenRoom?: (conversationId: number) => void;
+  onCloseRoom?: (conversationId: number) => void;
+  roomActionLoading?: boolean;
   onOpenNewChat: () => void;
   onOpenJoinRoom: () => void;
   formatConfig?: MessageFormatConfig;
@@ -171,12 +174,12 @@ export const MobileView: Component<MobileViewProps> = (props) => {
           <Show when={activeView() === 'sessions'}>
             <div class="min-h-full w-full">
               <SessionSidebar
-                layout="mobile"
                 sessions={props.sessions}
                 npcCharacters={props.npcCharacters}
                 selectedConversationId={props.selectedConversationId}
                 selectedConversationMembers={props.selectedConversationMembers}
                 loading={props.sessionsLoading}
+                roomActionLoading={props.roomActionLoading}
                 onSelect={(conversationId) => {
                   props.onSelectConversation(conversationId);
                   setActiveView('chat');
@@ -184,6 +187,8 @@ export const MobileView: Component<MobileViewProps> = (props) => {
                 onNewChat={props.onOpenNewChat}
                 onJoinRoom={props.onOpenJoinRoom}
                 onDeleteConversation={props.onDeleteConversation}
+                onOpenRoom={props.onOpenRoom}
+                onCloseRoom={props.onCloseRoom}
               />
             </div>
           </Show>
@@ -316,12 +321,9 @@ export const MobileView: Component<MobileViewProps> = (props) => {
           presetSummaries={props.presetSummaries}
           worldBooks={props.worldBooks}
           onSaveConversationBindings={props.onSaveConversationBindings}
-          overlaySummary={props.characterStateOverlaySummary}
-          overlayStatus={props.characterStateOverlayStatus}
-          overlayError={props.characterStateOverlayError}
           memoryMode={props.memoryMode ?? 'stateless'}
-          mem0Available={props.mem0Available}
-          onUpdateMemoryMode={props.onUpdateMemoryMode}
+          mem0SnapshotWindow={props.mem0SnapshotWindow}
+          onSnapshotWindowChange={props.onSnapshotWindowChange}
           playerCharacters={props.playerCharacters}
           currentPlayerCharacter={props.currentPlayerCharacter}
           onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}

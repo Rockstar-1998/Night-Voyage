@@ -1,6 +1,6 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
-import { Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
+import { Download, Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
 import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 import {
@@ -44,6 +44,8 @@ interface CharacterSidebarProps {
     defaultProviderId?: number;
   }) => Promise<void> | void;
   onDeleteCharacter: (id: number) => Promise<void> | void;
+  onImportExchange: (file: File) => Promise<void> | void;
+  onExportCharacter: (character: CharacterCard) => Promise<void> | void;
 }
 
 interface CharacterBaseSectionFormState {
@@ -98,6 +100,15 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
   const [formData, setFormData] = createSignal<CharacterFormState>(EMPTY_FORM);
   const [uploadingImage, setUploadingImage] = createSignal(false);
   let fileInputRef: HTMLInputElement | undefined;
+  let importInputRef: HTMLInputElement | undefined;
+
+  const handleImportFile = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    await props.onImportExchange(file);
+  };
 
   const currentCharacters = createMemo(() =>
     activeTab() === 'player' ? props.playerCharacters : props.npcCharacters,
@@ -197,9 +208,21 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
       <div class="p-8 flex flex-col gap-6">
         <div class="flex items-center justify-between">
           <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">角色展示柜</h1>
-          <IconButton onClick={() => openModal()} label="添加角色" tone="accent" size="lg">
-            <Plus size={18} />
-          </IconButton>
+          <div class="flex items-center gap-2">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              class="hidden"
+              onChange={(e) => void handleImportFile(e)}
+            />
+            <IconButton onClick={() => importInputRef?.click()} label="导入角色卡" tone="neutral" size="lg">
+              <Upload size={18} />
+            </IconButton>
+            <IconButton onClick={() => openModal()} label="添加角色" tone="accent" size="lg">
+              <Plus size={18} />
+            </IconButton>
+          </div>
         </div>
 
         <div class="flex items-center justify-between gap-4 border-b border-white/10 pb-4 mb-4">
@@ -288,6 +311,17 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                     <IconButton
                       onClick={(event) => {
                         event.stopPropagation();
+                        void props.onExportCharacter(character);
+                      }}
+                      label={`导出角色 ${character.name}`}
+                      size="sm"
+                      class="bg-white/10 text-white"
+                    >
+                      <Download size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={(event) => {
+                        event.stopPropagation();
                         void props.onDeleteCharacter(character.id);
                       }}
                       label={`删除角色 ${character.name}`}
@@ -358,6 +392,17 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                       class="bg-white/10 text-white"
                     >
                       <Pencil size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void props.onExportCharacter(character);
+                      }}
+                      label={`导出角色 ${character.name}`}
+                      size="sm"
+                      class="bg-white/10 text-white"
+                    >
+                      <Download size={14} />
                     </IconButton>
                     <IconButton
                       onClick={(event) => {

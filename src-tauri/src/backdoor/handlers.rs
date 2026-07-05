@@ -548,10 +548,7 @@ async fn cleanup_test_conversation(db: &sqlx::SqlitePool, conversation_id: i64) 
         .execute(db)
         .await;
 
-    let _ = sqlx::query("DELETE FROM character_state_overlays WHERE conversation_id = ?")
-        .bind(conversation_id)
-        .execute(db)
-        .await;
+    // character_state_overlays table dropped in migration 0036
 
     let _ = sqlx::query("DELETE FROM plot_summaries WHERE conversation_id = ?")
         .bind(conversation_id)
