@@ -60,3 +60,9 @@ letta-main/
 
 # Vendored mem0-rs dependency (local path crate, not part of repo)
 MEM0/
+
+# IDE / tool caches and runtime logs (not part of product)
+.reasonix/
+Multiplayer_log/
+refactor_completionsidebar.py
+temp_decompress.py
