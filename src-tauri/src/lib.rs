@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
-mod backdoor;
 mod commands;
 mod db;
 mod llm;
@@ -63,8 +62,6 @@ pub fn run() {
                 db::cleanup_stale_rooms(&cleanup_pool).await;
             });
 
-            backdoor::start_backdoor_server(pool, app.handle().clone());
-
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -122,6 +119,8 @@ pub fn run() {
             commands::chat::retry_failed_round,
             commands::chat::get_conversation_token_usage,
             commands::chat::update_conversation_context_window,
+            commands::chat::rewind_to_round,
+            commands::chat::resolve_conversation_mode,
             commands::characters::character_cards_list,
             commands::characters::character_cards_create,
             commands::characters::character_cards_update,

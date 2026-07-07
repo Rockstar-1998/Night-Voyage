@@ -925,6 +925,46 @@ impl ChatService {
         Ok(())
     }
 
+    /// 回溯到指定轮次：丢弃目标轮次之后的所有消息，重置目标轮次为 collecting。
+    ///
+    /// 步骤：
+    /// 1. 校验目标轮次存在且属于当前会话
+    /// 2. 校验目标轮次非 collecting 状态（collecting 状态无回溯意义）
+    /// 3. 校验当前无活跃 streaming
+    /// 4. 删除 round_index > target 的所有轮次及其消息
+    /// 5. 重置目标轮次为 collecting（删除 assistant 消息，保留 user 消息供编辑）
+    // 注：streaming 禁止、collecting 状态、快照校验等 DB 集成测试待后续建立测试夹具后补充
+    pub async fn rewind_to_round(
+        db: SqlitePool,
+        conversation_id: i64,
+        member_id: i64,
+        target_round_id: i64,
+    ) -> Result<(), String> {
+        ConversationRepository::ensure_member_is_host(&db, conversation_id, member_id).await?;
+
+        let (round_conv_id, round_index, round_status) =
+            RoundRepository::find_round_meta(&db, target_round_id).await?;
+        if round_conv_id != conversation_id {
+            return Err(format!(
+                "轮次不属于当前会话: round_id={}, conv_id={}",
+                target_round_id, conversation_id
+            ));
+        }
+
+        if round_status == "collecting" {
+            return Err("目标轮次正在收集中，无法回溯".into());
+        }
+
+        if RoundRepository::has_active_streaming(&db, conversation_id).await? {
+            return Err("有活跃的流式输出，无法回溯".into());
+        }
+
+        RoundRepository::delete_rounds_after(&db, conversation_id, round_index).await?;
+        RoundRepository::reset_to_collecting(&db, target_round_id).await?;
+
+        Ok(())
+    }
+
     pub async fn retry_failed_round(
         app: AppHandle,
         db: SqlitePool,
@@ -1813,15 +1853,6 @@ pub fn append_mem0_round_log(
         return;
     }
     eprintln!("[llm-debug] mem0 round log appended: {}", full_path.display());
-}
-
-pub fn build_openai_url(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/v1") {
-        format!("{}/chat/completions", trimmed)
-    } else {
-        format!("{}/v1/chat/completions", trimmed)
-    }
 }
 
 /// Build a full `RoomMessage::ContextSnapshot` for the given conversation.

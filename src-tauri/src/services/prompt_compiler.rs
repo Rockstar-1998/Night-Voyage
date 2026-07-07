@@ -418,10 +418,6 @@ pub async fn load_memory_mode(db: &SqlitePool, conversation_id: i64) -> String {
 }
 
 impl PromptCompileResult {
-    pub fn validate_output_text(&self, content: &str) -> Result<(), String> {
-        validate_output_text_with_validators(content, &self.output_validators)
-    }
-
     pub fn retry_output_validator_snapshot(&self) -> Vec<RetryOutputValidatorSnapshot> {
         self.output_validators
             .iter()
@@ -441,24 +437,6 @@ pub fn validate_output_text_with_retry_snapshot(
         let violation = match validator.mode {
             RetryOutputValidationMode::MustMatch => !is_match,
             RetryOutputValidationMode::MustNotMatch => is_match,
-        };
-        if violation {
-            return Err(validator.error_message.clone());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_output_text_with_validators(
-    content: &str,
-    validators: &[CompiledOutputValidator],
-) -> Result<(), String> {
-    for validator in validators {
-        let is_match = validator.regex.is_match(content);
-        let violation = match validator.mode {
-            OutputValidationMode::MustMatch => !is_match,
-            OutputValidationMode::MustNotMatch => is_match,
         };
         if violation {
             return Err(validator.error_message.clone());
@@ -960,17 +938,6 @@ pub async fn compile_preset_preview_data(
         system_blocks: preset_compiler_data.blocks,
         params: preset_compiler_data.params,
     })
-}
-
-pub async fn load_character_system_message(
-    db: &SqlitePool,
-    character_id: i64,
-) -> Result<Option<String>, String> {
-    let Ok(character_data) = load_character_compile_data(db, character_id).await else {
-        return Ok(None);
-    };
-
-    Ok(character_data.and_then(|character_data| build_character_system_message(&character_data)))
 }
 
 async fn load_character_compile_data(
@@ -1851,24 +1818,6 @@ async fn load_preset_provider_override_data(
     })
 }
 
-async fn load_character_base_block(
-    db: &SqlitePool,
-    character_id: i64,
-) -> Result<Option<PromptBlock>, String> {
-    let Some(content) = load_character_system_message(db, character_id).await? else {
-        return Ok(None);
-    };
-
-    Ok(Some(build_block(
-        PromptBlockKind::CharacterBase,
-        PromptRole::System,
-        Some("Character Base".to_string()),
-        content,
-        PromptBlockSource::Character { character_id },
-        true,
-    )))
-}
-
 fn build_world_book_trigger_sources(
     current_user_block: &PromptBlock,
     history_blocks: &[PromptBlock],
@@ -2365,9 +2314,6 @@ async fn load_world_variable_block(
         false,
     )))
 }
-
-/// Default cap on retrieved memories per compilation.
-const DEFAULT_RETRIEVED_DETAIL_TOP_K: usize = 5;
 
 /// Layer 6 loader: pull relevant memories from the (optional) memory backend and
 /// wrap each as a `RetrievedDetail` system block.

@@ -3,6 +3,7 @@ import type {
   ConversationCreateResult,
   ConversationListItem,
   ConversationMember,
+  ConversationMode,
   CreateConversationPayload,
   TokenUsageReport,
   UpdateConversationBindingsPayload,
@@ -59,4 +60,20 @@ export async function updateConversationContextWindow(conversationId: number, co
 
 export async function conversationsFork(conversationId: number, upToMessageId: number) {
   return invokeCommand<number>('conversations_fork', { conversationId, upToMessageId });
+}
+
+/**
+ * 解析会话的能力模式，返回与后端 `ConversationMode` 枚举对齐的 snake_case 字符串。
+ *
+ * single 模式可省略 `memberId`；online 模式必须提供 `memberId` 以区分房主/房客。
+ * 返回值可直接传给 `selectProfile()` 获取 `CapabilityProfile` 驱动 UI 按钮显隐。
+ */
+export async function getConversationMode(
+  conversationId: number,
+  memberId?: number,
+): Promise<ConversationMode> {
+  return invokeCommand<ConversationMode>('resolve_conversation_mode', {
+    conversationId,
+    memberId,
+  });
 }

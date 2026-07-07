@@ -160,27 +160,6 @@ impl RoundRepository {
         Ok(())
     }
 
-    pub async fn mark_completed(
-        db: &SqlitePool,
-        round_id: i64,
-        assistant_message_id: i64,
-    ) -> Result<(), String> {
-        let now = now_ts();
-        sqlx::query(
-            "UPDATE message_rounds \
-             SET status = 'completed', active_assistant_message_id = ?, updated_at = ?, completed_at = ? \
-             WHERE id = ?",
-        )
-        .bind(assistant_message_id)
-        .bind(now)
-        .bind(now)
-        .bind(round_id)
-        .execute(db)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
     pub async fn mark_failed(db: &SqlitePool, round_id: i64) -> Result<(), String> {
         let now = now_ts();
         sqlx::query(
@@ -581,6 +560,151 @@ impl RoundRepository {
 
         tx.commit().await.map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    /// 查询目标轮次的 (conversation_id, round_index, status)
+    pub async fn find_round_meta(
+        db: &SqlitePool,
+        round_id: i64,
+    ) -> Result<(i64, i64, String), String> {
+        let row: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT conversation_id, round_index, status FROM message_rounds WHERE id = ? LIMIT 1",
+        )
+        .bind(round_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| format!("查询轮次元数据失败: {}", e))?;
+
+        row.ok_or_else(|| format!("轮次不存在: id={}", round_id))
+    }
+
+    /// 删除 round_index > target_round_index 的所有轮次及其消息
+    pub async fn delete_rounds_after(
+        db: &SqlitePool,
+        conversation_id: i64,
+        target_round_index: i64,
+    ) -> Result<u64, String> {
+        let round_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM message_rounds WHERE conversation_id = ? AND round_index > ?",
+        )
+        .bind(conversation_id)
+        .bind(target_round_index)
+        .fetch_all(db)
+        .await
+        .map_err(|e| format!("查询待删除轮次失败: {}", e))?;
+
+        if round_ids.is_empty() {
+            return Ok(0);
+        }
+
+        for round_id in &round_ids {
+            Self::delete_messages_by_round(db, *round_id).await?;
+            sqlx::query("DELETE FROM round_member_actions WHERE round_id = ?")
+                .bind(round_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除轮次成员动作失败: {}", e))?;
+        }
+
+        for round_id in &round_ids {
+            sqlx::query("DELETE FROM message_rounds WHERE id = ?")
+                .bind(round_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除轮次记录失败: {}", e))?;
+        }
+
+        Ok(round_ids.len() as u64)
+    }
+
+    /// 删除指定轮次的所有消息（含 message_content_parts、message_tool_calls）
+    async fn delete_messages_by_round(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+        let message_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM messages WHERE round_id = ?")
+            .bind(round_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| format!("查询轮次消息失败: {}", e))?;
+
+        for message_id in &message_ids {
+            sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+                .bind(message_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除消息内容片段失败: {}", e))?;
+
+            sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
+                .bind(message_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除消息工具调用失败: {}", e))?;
+        }
+
+        sqlx::query("DELETE FROM messages WHERE round_id = ?")
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|e| format!("删除轮次消息失败: {}", e))?;
+
+        Ok(())
+    }
+
+    /// 重置目标轮次为 collecting 状态，删除 assistant 消息（保留 user 消息供编辑）
+    pub async fn reset_to_collecting(db: &SqlitePool, round_id: i64) -> Result<(), String> {
+        let assistant_message_ids: Vec<i64> =
+            sqlx::query_scalar("SELECT id FROM messages WHERE round_id = ? AND role = 'assistant'")
+                .bind(round_id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| format!("查询 assistant 消息失败: {}", e))?;
+
+        for message_id in &assistant_message_ids {
+            sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+                .bind(message_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除 assistant 消息内容片段失败: {}", e))?;
+
+            sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
+                .bind(message_id)
+                .execute(db)
+                .await
+                .map_err(|e| format!("删除 assistant 消息工具调用失败: {}", e))?;
+        }
+
+        sqlx::query("DELETE FROM messages WHERE round_id = ? AND role = 'assistant'")
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|e| format!("删除 assistant 消息失败: {}", e))?;
+
+        sqlx::query(
+            "UPDATE message_rounds \
+             SET status = 'collecting', updated_at = ?, completed_at = NULL, active_assistant_message_id = NULL \
+             WHERE id = ?",
+        )
+        .bind(now_ts())
+        .bind(round_id)
+        .execute(db)
+        .await
+        .map_err(|e| format!("重置轮次状态失败: {}", e))?;
+
+        Ok(())
+    }
+
+    /// 检查会话是否有活跃的 streaming 轮次
+    pub async fn has_active_streaming(
+        db: &SqlitePool,
+        conversation_id: i64,
+    ) -> Result<bool, String> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM message_rounds WHERE conversation_id = ? AND status = 'streaming'",
+        )
+        .bind(conversation_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| format!("检查 streaming 状态失败: {}", e))?;
+
+        Ok(count > 0)
     }
 }
 

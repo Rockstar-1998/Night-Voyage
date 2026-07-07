@@ -40,7 +40,7 @@ export const WorkspaceTransitionStage: Component<WorkspaceTransitionStageProps> 
   const titleFor = (element?: HTMLElement | null) =>
     element?.querySelector<HTMLElement>('[data-workspace-title], h1, h2') ?? null;
 
-  const setPaneInteractive = (id: string, element: HTMLDivElement, isActive: boolean, keepVisible = false) => {
+  const setPaneInteractive = (_id: string, element: HTMLDivElement, isActive: boolean, keepVisible = false) => {
     element.style.pointerEvents = isActive ? 'auto' : 'none';
     element.style.visibility = isActive || keepVisible ? 'visible' : 'hidden';
     element.style.zIndex = isActive ? '2' : '0';

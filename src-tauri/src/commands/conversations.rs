@@ -5,6 +5,8 @@ use sqlx::Row;
 use crate::{
     models::{ConversationCreateResult, ConversationListItem, ConversationMember, RoundState},
     repositories::message_repository::{InsertMessageRecord, MessageRepository},
+    services::chat::capability_guard,
+    services::chat::mode::Operation,
     utils::now_ts,
     AppState,
 };
@@ -712,36 +714,6 @@ pub async fn conversations_delete(
     Ok(())
 }
 
-fn row_to_conversation_list_item(row: sqlx::sqlite::SqliteRow) -> ConversationListItem {
-    ConversationListItem {
-        id: row.try_get("id").unwrap_or_default(),
-        conversation_type: row
-            .try_get("conversation_type")
-            .unwrap_or_else(|_| "single".to_string()),
-        title: row.try_get("title").ok(),
-        host_character_id: row.try_get("host_character_id").ok(),
-        world_book_id: row.try_get("world_book_id").ok(),
-        preset_id: normalize_optional_positive_id(row.try_get("preset_id").ok()),
-        provider_id: row.try_get("provider_id").ok(),
-        embedding_provider_id: row.try_get("embedding_provider_id").ok(),
-        chat_mode: row
-            .try_get("chat_mode")
-            .unwrap_or_else(|_| "classic".to_string()),
-        agent_provider_policy: row
-            .try_get("agent_provider_policy")
-            .unwrap_or_else(|_| "shared_host_provider".to_string()),
-        memory_mode: row
-            .try_get("memory_mode")
-            .unwrap_or_else(|_| "stateless".to_string()),
-        mem0_snapshot_window: row.try_get("mem0_snapshot_window").unwrap_or(20),
-        member_count: row.try_get("member_count").unwrap_or_default(),
-        pending_member_count: row.try_get("pending_member_count").unwrap_or_default(),
-        room_status: row.try_get("room_status").ok().flatten(),
-        created_at: row.try_get("created_at").unwrap_or_default(),
-        updated_at: row.try_get("updated_at").unwrap_or_default(),
-    }
-}
-
 fn row_to_conversation_member(row: sqlx::sqlite::SqliteRow) -> ConversationMember {
     ConversationMember {
         id: row.try_get("id").unwrap_or_default(),
@@ -1058,6 +1030,8 @@ pub async fn conversations_fork(
         "[conversation-debug] fork:start conversation_id={} up_to_message_id={}",
         conversation_id, up_to_message_id
     );
+    // 能力校验：fork 不需要 member_id 区分（single 直接放行，online 全 6 变体矩阵保证 Block）
+    capability_guard::resolve_and_check(&state.db, conversation_id, None, Operation::Fork).await?;
     let original: (Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, String, String, Option<String>, String) = sqlx::query_as(
         "SELECT title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, memory_mode FROM conversations WHERE id = ?"
     )
@@ -1085,9 +1059,6 @@ pub async fn conversations_fork(
         agent_provider_policy,
         memory_mode,
     ) = original;
-    if conversation_type == "online" {
-        return Err("不支持对多人房间会话执行分支操作".to_string());
-    }
     let forked_title = format!("{} (分支)", title.unwrap_or_default());
     let now = now_ts();
 

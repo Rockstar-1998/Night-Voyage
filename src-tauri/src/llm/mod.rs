@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 
 pub const ANTHROPIC_API_VERSION: &str = "2025-04-14";
 
-pub type LlmResult<T> = Result<T, LlmError>;
-pub type VectorStoreResult<T> = Result<T, VectorStoreError>;
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmRole {
@@ -174,36 +171,6 @@ pub struct ProviderHttpRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmStreamEventKind {
-    TextDelta,
-    ThinkingDelta,
-    ContentBlockStart,
-    ContentBlockStop,
-    ToolUse,
-    MessageStop,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmToolUsePayload {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmStreamEvent {
-    pub event_kind: LlmStreamEventKind,
-    pub part_index: Option<usize>,
-    pub part_type: Option<String>,
-    pub text_delta: Option<String>,
-    pub json_delta: Option<String>,
-    pub tool_use: Option<LlmToolUsePayload>,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: String,
@@ -239,90 +206,4 @@ impl TryFrom<LlmMessage> for ChatMessage {
             .ok_or_else(|| "仅支持把纯文本 LlmMessage 转换为 ChatMessage".to_string())?;
         Ok(Self::new(value.role.as_str(), content))
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatRequest {
-    pub provider_kind: String,
-    pub model: String,
-    pub messages: Vec<ChatMessage>,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<i64>,
-    pub stream: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatChunk {
-    pub delta: String,
-    pub done: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatStreamHandle {
-    pub request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddingRequest {
-    pub provider_kind: String,
-    pub model: String,
-    pub texts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddingVector {
-    pub index: usize,
-    pub values: Vec<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VectorPoint {
-    pub id: String,
-    pub vector: Vec<f32>,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VectorQuery {
-    pub vector: Vec<f32>,
-    pub top_k: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VectorMatch {
-    pub id: String,
-    pub score: f32,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmError {
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VectorStoreError {
-    pub message: String,
-}
-
-pub trait ModelProviderGateway: Send + Sync {
-    fn provider_kind(&self) -> &'static str;
-}
-
-pub trait EmbeddingGateway: Send + Sync {
-    fn provider_kind(&self) -> &'static str;
-}
-
-pub trait VectorStore: Send + Sync {
-    fn backend(&self) -> &'static str;
 }

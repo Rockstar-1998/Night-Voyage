@@ -3,7 +3,7 @@ import { MessageItem, ChatMessage } from './MessageItem';
 import { TokenIsland } from './TokenIsland';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
-import type { MemoryBackendErrorEvent, TokenUsageReport } from '../lib/backend';
+import type { CapabilityProfile, MemoryBackendErrorEvent, TokenUsageReport } from '../lib/backend';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -13,8 +13,9 @@ interface ChatAreaProps {
   onFork: (id: string) => void;
   onDeleteMessage?: (id: string) => void;
   onRetryFailed?: (id: string, roundId?: number) => void;
+  onRewind?: (id: string, roundId?: number) => void;
+  profile: CapabilityProfile;
   isRoomClient?: boolean;
-  isOnline?: boolean;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
@@ -243,8 +244,8 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 onFork={props.onFork}
                 onDelete={props.onDeleteMessage}
                 onRetryFailed={props.onRetryFailed}
-                isRoomClient={props.isRoomClient}
-                isOnline={props.isOnline}
+                onRewind={props.onRewind}
+                profile={props.profile}
                 swipeInfo={props.swipeInfo?.(msg.id)}
                 onSwitchSwipe={props.onSwitchSwipe ? (direction) => props.onSwitchSwipe!(msg.id, direction) : undefined}
                 formatConfig={props.formatConfig}

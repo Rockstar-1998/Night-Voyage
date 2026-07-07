@@ -8,6 +8,44 @@ export type CharacterBaseSectionKey = 'identity' | 'persona' | 'background' | 'r
 export type WorldBookTriggerMode = 'any' | 'all' | 'always';
 export type ProviderKind = 'openai_compatible' | 'anthropic' | string;
 
+// ─── Capability profile ──
+
+/** 9 种会话模式，与后端 ConversationMode 枚举对齐（snake_case 形式）。 */
+export type ConversationMode =
+  | 'single_stateless'
+  | 'single_legacy'
+  | 'single_mem0'
+  | 'online_stateless_host'
+  | 'online_legacy_host'
+  | 'online_mem0_host'
+  | 'online_stateless_guest'
+  | 'online_legacy_guest'
+  | 'online_mem0_guest';
+
+/** 操作的可见性 profile，用于驱动 UI 按钮显隐。 */
+export interface CapabilityProfile {
+  /** 编辑消息 */
+  canEdit: boolean;
+  /** 重新生成 */
+  canRegenerate: boolean;
+  /** 重新生成受 mem0 快照窗口限制（前端可见但需后端校验） */
+  regenerateLimited: boolean;
+  /** 从某轮对话分支 */
+  canFork: boolean;
+  /** 分支受 mem0 快照窗口限制 */
+  forkLimited: boolean;
+  /** 删除某轮消息 */
+  canDelete: boolean;
+  /** 命令模型开始回复 / 强行中止回复 */
+  canSubmitAbort: boolean;
+  /** 发送消息 */
+  canSend: boolean;
+  /** 回溯到某轮对话 */
+  canRewind: boolean;
+  /** 回溯受 mem0 快照窗口限制 */
+  rewindLimited: boolean;
+}
+
 // ─── Conversation / round / message ───
 
 export interface ConversationListItem {

@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, Switch, Match, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
 import { Download, Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
@@ -534,7 +534,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
   value={section.sectionKey}
   onChange={(val) => {
     const next = [...formData().baseSections];
-    next[idx()] = { ...next[idx()], sectionKey: val };
+    next[idx()] = { ...next[idx()], sectionKey: val as CharacterBaseSectionKey };
     setFormData({ ...formData(), baseSections: next });
   }}
   options={[

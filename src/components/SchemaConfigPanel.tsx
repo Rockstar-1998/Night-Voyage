@@ -326,7 +326,7 @@ export const SchemaConfigPanel: Component<{
                         <label class="text-[10px] text-mist-solid/40 uppercase tracking-widest">对象模式</label>
                         <Select
   value={key.objectKind ?? 'additional_properties'}
-  onChange={(val) => updateKey(index(), { objectKind: val })}
+  onChange={(val) => updateKey(index(), { objectKind: val as "additional_properties" | "fixed_properties" })}
   options={[
   { label: "自由键值对 (Map)", value: "additional_properties" },
   { label: "固定子键列表 (Object)", value: "fixed_properties" }
@@ -397,7 +397,7 @@ export const SchemaConfigPanel: Component<{
   value={subKey.type}
   onChange={(val) => {
     const newProps = [...(key.properties ?? [])];
-    newProps[subIndex()] = { ...subKey, type: val };
+    newProps[subIndex()] = { ...subKey, type: val as "string" | "number" | "boolean" | "object" | "integer" | "array" };
     updateKey(index(), { properties: newProps });
   }}
   options={[

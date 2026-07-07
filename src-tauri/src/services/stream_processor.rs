@@ -376,34 +376,6 @@ async fn spawn_post_round_tasks(
     }
 }
 
-async fn handle_stream_completion(
-    app: AppHandle,
-    db: SqlitePool,
-    conversation_id: i64,
-    round_id: i64,
-    provider_id: i64,
-    assistant_message_id: i64,
-    data: StreamResponseData,
-) -> Result<(), String> {
-    if !data.full_content.is_empty() {
-        spawn_post_round_tasks(
-            &app,
-            &db,
-            conversation_id,
-            round_id,
-            provider_id,
-            assistant_message_id,
-        )
-        .await;
-    }
-
-    if let Ok(round) = RoundRepository::load_state(&db, conversation_id, Some(round_id)).await {
-        let _ = emit_round_state(&app, round);
-    }
-
-    Ok(())
-}
-
 async fn stream_llm_response(
     app: AppHandle,
     db: SqlitePool,

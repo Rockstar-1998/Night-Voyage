@@ -11,7 +11,7 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::{utils::now_ts, AppState};
 
@@ -147,7 +147,7 @@ pub struct ExchangeImportReport {
 
 #[tauri::command]
 pub async fn character_cards_export(
-    app: AppHandle,
+    _app: AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<String, String> {

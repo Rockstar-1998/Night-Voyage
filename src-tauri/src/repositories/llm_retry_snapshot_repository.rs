@@ -1,9 +1,7 @@
 use sqlx::{Row, SqlitePool};
 
 use crate::llm::ProviderHttpRequest;
-use crate::services::prompt_compiler::{
-    validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot,
-};
+use crate::services::prompt_compiler::RetryOutputValidatorSnapshot;
 use crate::utils::now_ts;
 
 const STATUS_PREPARED: &str = "prepared";
@@ -250,13 +248,6 @@ impl RetrySnapshotRepository {
         }
 
         Ok(())
-    }
-
-    pub fn validate_snapshot_rules(
-        content: &str,
-        rules: &[RetryOutputValidatorSnapshot],
-    ) -> Result<(), String> {
-        validate_output_text_with_retry_snapshot(content, rules)
     }
 
     fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<RetrySnapshotRecord, String> {

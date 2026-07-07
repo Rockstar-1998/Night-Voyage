@@ -271,42 +271,6 @@ impl MessageRepository {
         Ok(())
     }
 
-    pub async fn reset_response_artifacts_tx(
-        tx: &mut Transaction<'_, sqlx::Sqlite>,
-        message_id: i64,
-    ) -> Result<(), String> {
-        sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
-            .bind(message_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        sqlx::query("DELETE FROM message_tool_calls WHERE message_id = ?")
-            .bind(message_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
-            .bind("")
-            .bind(message_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        Ok(())
-    }
-
-    pub async fn reset_response_artifacts(
-        db: &SqlitePool,
-        message_id: i64,
-    ) -> Result<(), String> {
-        let mut tx = db.begin().await.map_err(|err| err.to_string())?;
-        Self::reset_response_artifacts_tx(&mut tx, message_id).await?;
-        tx.commit().await.map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
     pub async fn insert_tool_result_content_part(
         tx: &mut Transaction<'_, sqlx::Sqlite>,
         message_id: i64,
@@ -514,35 +478,4 @@ pub fn normalize_tool_use_input_json(input_json: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-pub fn ensure_hidden_message_part(
-    hidden_parts: &mut Vec<PendingMessageContentPart>,
-    hidden_part_lookup: &mut std::collections::HashMap<i64, usize>,
-    provider_part_index: i64,
-    part_type: &str,
-) -> usize {
-    if let Some(index) = hidden_part_lookup.get(&provider_part_index) {
-        return *index;
-    }
-
-    let index = hidden_parts.len();
-    hidden_parts.push(PendingMessageContentPart {
-        part_index: provider_part_index,
-        part_type: part_type.to_string(),
-        text_value: None,
-        json_value: None,
-        asset_id: None,
-        mime_type: None,
-        tool_use_id: None,
-        tool_name: None,
-        is_hidden: true,
-    });
-    hidden_part_lookup.insert(provider_part_index, index);
-    index
-}
-
-pub fn append_hidden_part_text(part: &mut PendingMessageContentPart, delta: &str) {
-    let text = part.text_value.get_or_insert_with(String::new);
-    text.push_str(delta);
 }

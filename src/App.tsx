@@ -13,21 +13,24 @@ import { ChatMessage } from './components/MessageItem';
 import { setSchemaToggleState, clearSchemaToggleState, setAllSchemaToggleState } from './components/MessageFormatRenderer';
 import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
-import { BackdoorTestPanel } from './components/BackdoorTestPanel';
 import { AuroraBackground } from './components/AuroraBackground';
 import { CompletionPresetArea } from './components/CompletionPresetArea';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
-import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, listenMessageReset } from './lib/backend';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
+import { selectProfile, FALLBACK_PROFILE } from './lib/capability-profile';
 import {
   type ApiProviderSummary,
+  type CapabilityProfile,
   type CharacterBaseSection,
   type CharacterBaseSectionInput,
   type CharacterCard,
   type ConversationListItem,
   type ConversationMember,
+  type ConversationMode,
   type PlotSummaryRecord,
   type PresetSummary,
   type RemoteModel,
@@ -200,6 +203,7 @@ const DesktopView = (props: {
   onFork: (id: string) => void;
   onDeleteMessage?: (id: string) => void;
   onRetryFailed?: (id: string, roundId?: number) => void;
+  onRewind?: (id: string, roundId?: number) => void;
   swipeInfo?: (messageId: string) => { current: number; total: number } | undefined;
   onSwitchSwipe?: (messageId: string, direction: 'prev' | 'next') => void;
   onSend: (content: string) => Promise<void> | void;
@@ -310,7 +314,7 @@ const DesktopView = (props: {
   worldBookKeywords?: string[];
   onSetFormatConfig: (config: MessageFormatConfig) => void;
   isRoomClient?: boolean;
-  isOnline?: boolean;
+  profile: CapabilityProfile;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   onPresetsChanged?: () => void;
   /** mem0 startup error — forwarded to SettingsArea for display. */
@@ -447,7 +451,7 @@ const DesktopView = (props: {
                 </Show>
               </div>
               <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
+                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
               </div>
               <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                 <div class="max-w-4xl mx-auto">
@@ -584,7 +588,7 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                                   </Show>
                                 </div>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} isRoomClient={props.isRoomClient} isOnline={props.isOnline} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">
@@ -757,10 +761,14 @@ function App() {
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
   const [mem0InitError, setMem0InitError] = createSignal<string | null>(null);
   const [memoryBackendErrors, setMemoryBackendErrors] = createStore<MemoryBackendErrorEvent[]>([]);
+  const [conversationMode, setConversationMode] = createSignal<ConversationMode | null>(null);
   // Auto-retry toast: shown whenever the backend emits llm-stream-retry.
   // Holds { error, attemptCount } for a short period, then auto-clears.
   const [retryNotice, setRetryNotice] = createSignal<{ error: string; attemptCount: number } | null>(null);
   let retryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  // Rewind confirmation dialog: holds the target message/round when the user
+  // clicks "回溯到此轮". Null = dialog closed.
+  const [rewindTarget, setRewindTarget] = createSignal<{ messageId: string; roundId: number } | null>(null);
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -803,6 +811,11 @@ function App() {
   const visibleMessages = createMemo(() =>
     messages.filter((message) => message.sender !== 'ai' || message.isActiveInRound !== false)
   );
+
+  const profile = createMemo<CapabilityProfile>(() => {
+    const mode = conversationMode();
+    return mode ? selectProfile(mode) : FALLBACK_PROFILE;
+  });
 
   const upsertAssistantMessage = (incoming: ChatMessage) => {
     setMessages(produce((list) => {
@@ -1138,6 +1151,30 @@ function App() {
     } catch (error) {
       console.error('[handleRetryFailed] error:', error);
       window.alert(`自动重试失败：${toErrorMessage(error)}`);
+    }
+  };
+
+  const handleRewind = (_id: string, roundId?: number) => {
+    if (roundId == null) return;
+    setRewindTarget({ messageId: _id, roundId });
+  };
+
+  const confirmRewind = async () => {
+    const target = rewindTarget();
+    const conversationId = selectedConversationId();
+    const memberId = hostMember()?.id ?? activeRoomClientSession()?.memberId;
+    if (!target || !conversationId || !memberId) {
+      setRewindTarget(null);
+      return;
+    }
+
+    try {
+      await rewindToRound(conversationId, memberId, target.roundId);
+      setRewindTarget(null);
+      await refreshConversationContext(conversationId);
+    } catch (error) {
+      console.error('[confirmRewind] error:', error);
+      window.alert(`回溯失败：${toErrorMessage(error)}`);
     }
   };
 
@@ -2177,6 +2214,26 @@ function App() {
     void refreshConversationContext(conversationId);
   });
 
+  createEffect(() => {
+    const conversationId = selectedConversationId();
+    if (conversationId == null) {
+      setConversationMode(null);
+      return;
+    }
+    const roomSession = activeRoomClientSession();
+    const memberId = roomSession?.memberId ?? hostMember()?.id;
+    if (memberId == null) {
+      setConversationMode(null);
+      return;
+    }
+    void getConversationMode(conversationId, memberId)
+      .then(setConversationMode)
+      .catch((err) => {
+        console.error('[conversation-mode] resolve failed:', err);
+        setConversationMode(null);
+      });
+  });
+
   return (
     <>
       <AuroraBackground
@@ -2230,6 +2287,7 @@ function App() {
         onFork={handleForkMessage}
         onDeleteMessage={handleDeleteMessage}
         onRetryFailed={handleRetryFailed}
+        onRewind={handleRewind}
         swipeInfo={getSwipeInfo}
         onSwitchSwipe={handleSwitchSwipe}
         onSend={handleSend}
@@ -2299,7 +2357,7 @@ function App() {
         worldBookKeywords={worldBookKeywords()}
         onSetFormatConfig={handleSetFormatConfig}
         isRoomClient={activeRoomClientSession() !== null}
-        isOnline={selectedConversation()?.conversationType === 'online'}
+        profile={profile()}
         onSchemaToggle={(toggleKey, expanded) => {
           if (activeRoomClientSession() !== null) return;
           void roomBroadcastSchemaToggle(toggleKey, expanded);
@@ -2333,7 +2391,15 @@ function App() {
         onJoined={handleRoomJoined}
         onLeft={handleRoomLeft}
       />
-      <BackdoorTestPanel />
+      <ConfirmDialog
+        open={rewindTarget() !== null}
+        title="回溯到该轮"
+        message="将丢弃该轮之后的所有消息，回到该轮的用户指令。此操作不可撤销。"
+        confirmText="回溯"
+        cancelText="取消"
+        onConfirm={() => void confirmRewind()}
+        onCancel={() => setRewindTarget(null)}
+      />
     </>
   );
 }

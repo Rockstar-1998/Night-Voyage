@@ -29,14 +29,11 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["time", "net", "rt", "sync", "io-util", "macros"] }
 minijinja = "2"
 regex = "1"
-axum = "0.8"
 async-trait = "0.1"
 # mem0-rs memory backend (library mode). Pinned by path to the vendored upstream
 # checkout. Only the adapter in services/memory_providers/mem0_rs.rs may touch
 # these types; business code depends solely on the local MemoryService trait.
 mem0 = { path = "../MEM0/mem0-rs/crates/mem0" }
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [profile.dev]
 opt-level = 1

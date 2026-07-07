@@ -17,46 +17,6 @@ pub struct ApiProvider {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct Conversation {
-    pub id: i64,
-    pub character_id: Option<i64>,
-    pub title: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub id: i64,
-    pub conversation_id: i64,
-    pub role: String,
-    pub content: String,
-    pub is_swipe: bool,
-    pub swipe_index: i64,
-    pub reply_to_id: Option<i64>,
-    pub created_at: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamChunk {
-    pub conversation_id: i64,
-    pub message_id: i64,
-    pub delta: String,
-    pub done: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamError {
-    pub conversation_id: i64,
-    pub message_id: i64,
-    pub error: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct ApiProviderSummary {
     pub id: i64,
     pub name: String,
@@ -321,42 +281,6 @@ pub struct PresetDetail {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct PresetCompilePreviewMessage {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct PresetCompilePreviewParams {
-    pub temperature: Option<f64>,
-    pub max_output_tokens: Option<i64>,
-    pub top_p: Option<f64>,
-    pub top_k: Option<i64>,
-    pub presence_penalty: Option<f64>,
-    pub frequency_penalty: Option<f64>,
-    pub response_mode: Option<String>,
-    pub stop_sequences: Vec<String>,
-    pub thinking_enabled: Option<bool>,
-    pub thinking_budget_tokens: Option<i64>,
-    pub beta_features: Option<Vec<String>>,
-    pub structured_output_schema: Option<String>,
-    pub structured_output_display: Option<String>,
-    pub context_included_keys: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct PresetCompilePreview {
-    pub preset: PresetSummary,
-    pub provider_kind: Option<String>,
-    pub system_text: String,
-    pub system_blocks: Vec<PresetPromptBlockRecord>,
-    pub params: PresetCompilePreviewParams,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct SubmitRoundAction {
     pub member_id: i64,
     pub action_type: String,
@@ -454,37 +378,6 @@ pub struct StreamRetryEvent {
     pub message_id: i64,
     pub error: String,
     pub attempt_count: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageContentPartRecord {
-    pub id: i64,
-    pub message_id: i64,
-    pub part_index: i64,
-    pub part_type: String,
-    pub text_value: Option<String>,
-    pub json_value: Option<String>,
-    pub asset_id: Option<i64>,
-    pub mime_type: Option<String>,
-    pub tool_use_id: Option<String>,
-    pub tool_name: Option<String>,
-    pub is_hidden: bool,
-    pub created_at: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageToolCallRecord {
-    pub id: i64,
-    pub message_id: i64,
-    pub tool_use_id: String,
-    pub tool_name: String,
-    pub input_json: String,
-    pub status: String,
-    pub result_message_id: Option<i64>,
-    pub created_at: i64,
-    pub updated_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -621,49 +514,6 @@ pub struct TokenUsageReport {
     pub layers: Vec<TokenLayerUsage>,
     pub total_estimated_tokens: usize,
     pub total_actual_tokens: Option<usize>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentBinding {
-    pub id: i64,
-    pub conversation_id: i64,
-    pub agent_key: String,
-    pub agent_role: String,
-    pub character_id: Option<i64>,
-    pub provider_mode: String,
-    pub provider_id: Option<i64>,
-    pub model_override: Option<String>,
-    pub temperature_override: Option<f64>,
-    pub max_tokens_override: Option<i64>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRun {
-    pub id: i64,
-    pub round_id: i64,
-    pub conversation_id: i64,
-    pub orchestration_mode: String,
-    pub provider_decision: String,
-    pub status: String,
-    pub started_at: i64,
-    pub finished_at: Option<i64>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentDraft {
-    pub id: i64,
-    pub run_id: i64,
-    pub agent_key: String,
-    pub character_id: Option<i64>,
-    pub draft_content: String,
-    pub draft_intent: Option<String>,
-    pub status: String,
-    pub created_at: i64,
 }
 
 /// Emitted via `llm-memory-error` when a memory backend operation fails.

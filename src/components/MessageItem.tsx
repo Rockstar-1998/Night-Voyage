@@ -1,7 +1,8 @@
 import { Component, Show, createMemo, createSignal, createEffect } from 'solid-js';
-import { RefreshCw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X, Trash2 } from '../lib/icons';
+import { RefreshCw, RotateCcw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X, Trash2 } from '../lib/icons';
 import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig, type StructuredField } from '../lib/messageFormatter';
 import { clearStreamingRenderCache, MessageFormatRenderer } from './MessageFormatRenderer';
+import type { CapabilityProfile } from '../lib/backend/types';
 
 export interface ChatMessage {
   id: string;
@@ -30,8 +31,8 @@ interface MessageItemProps {
   onFork: (id: string) => void;
   onDelete?: (id: string) => void;
   onRetryFailed?: (id: string, roundId?: number) => void;
-  isRoomClient?: boolean;
-  isOnline?: boolean;
+  onRewind?: (id: string, roundId?: number) => void;
+  profile: CapabilityProfile;
   swipeInfo?: { current: number; total: number };
   onSwitchSwipe?: (direction: 'prev' | 'next') => void;
   formatConfig?: MessageFormatConfig;
@@ -223,7 +224,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             <div class="mt-3 text-xs text-red-300/90 whitespace-pre-wrap">{props.message.error}</div>
           </Show>
 
-          <Show when={props.message.sender === 'ai' && !!props.message.error && !!props.message.roundId && !props.isRoomClient}>
+          <Show when={props.message.sender === 'ai' && !!props.message.error && !!props.message.roundId && props.profile.canRegenerate}>
             <button
               onClick={() => props.onRetryFailed?.(props.message.id, props.message.roundId)}
               class="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/20 text-accent text-xs font-medium hover:bg-accent/30 transition-colors border border-accent/20"
@@ -234,7 +235,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             </button>
           </Show>
 
-          <Show when={props.message.sender === 'ai' && props.swipeInfo && props.swipeInfo!.total > 1 && !props.isRoomClient}>
+          <Show when={props.message.sender === 'ai' && props.swipeInfo && props.swipeInfo!.total > 1 && props.profile.canEdit}>
             <div class="flex items-center gap-2 mt-1 text-xs text-mist-solid/40">
               <button
                 onClick={() => props.onSwitchSwipe?.('prev')}
@@ -260,76 +261,95 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
         <div
           class={`absolute top-2 ${isUser() ? 'left-2' : 'right-2'} flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}
         >
-          <Show when={isUser() && !props.isRoomClient}>
-            <button
-              onClick={() => {
-                setEditContent(props.message.content);
-                setIsEditing(true);
-              }}
-              class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-              title="编辑"
-            >
-              <Pencil size={14} />
-            </button>
-            {!props.isOnline && (
+          <Show when={isUser()}>
+            <Show when={props.profile.canEdit}>
+              <button
+                onClick={() => {
+                  setEditContent(props.message.content);
+                  setIsEditing(true);
+                }}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title="编辑"
+              >
+                <Pencil size={14} />
+              </button>
+            </Show>
+            <Show when={props.profile.canFork}>
               <button
                 onClick={() => props.onFork(props.message.id)}
                 class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-                title="分支"
+                title={props.profile.forkLimited ? '分支（受 mem0 快照窗口限制）' : '分支'}
               >
                 <GitFork size={14} />
               </button>
-            )}
-            <button
-              onClick={() => {
-                if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
-                  props.onDelete?.(props.message.id);
-                }
-              }}
-              class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
-              title="删除"
-            >
-              <Trash2 size={14} />
-            </button>
+            </Show>
+            <Show when={props.profile.canDelete}>
+              <button
+                onClick={() => {
+                  if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                    props.onDelete?.(props.message.id);
+                  }
+                }}
+                class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
+                title="删除"
+              >
+                <Trash2 size={14} />
+              </button>
+            </Show>
+            <Show when={props.profile.canRewind}>
+              <button
+                onClick={() => props.onRewind?.(props.message.id, props.message.roundId)}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title={props.profile.rewindLimited ? '回溯到此轮（受 mem0 快照窗口限制）' : '回溯到此轮'}
+              >
+                <RotateCcw size={14} />
+              </button>
+            </Show>
           </Show>
-          <Show when={!isUser() && !props.isRoomClient}>
-            <button
-              onClick={() => {
-                setEditContent(props.message.content);
-                setIsEditing(true);
-              }}
-              class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-              title="编辑"
-            >
-              <Pencil size={14} />
-            </button>
-            <button
-              onClick={() => props.onRegenerate(props.message.id, props.message.roundId)}
-              class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-              title="重新生成"
-            >
-              <RefreshCw size={14} />
-            </button>
-            {!props.isOnline && (
+          <Show when={!isUser()}>
+            <Show when={props.profile.canEdit}>
+              <button
+                onClick={() => {
+                  setEditContent(props.message.content);
+                  setIsEditing(true);
+                }}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title="编辑"
+              >
+                <Pencil size={14} />
+              </button>
+            </Show>
+            <Show when={props.profile.canRegenerate}>
+              <button
+                onClick={() => props.onRegenerate(props.message.id, props.message.roundId)}
+                class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
+                title={props.profile.regenerateLimited ? '重新生成（受 mem0 快照窗口限制）' : '重新生成'}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </Show>
+            <Show when={props.profile.canFork}>
               <button
                 onClick={() => props.onFork(props.message.id)}
                 class="p-1.5 rounded-lg hover:bg-white/10 text-mist-solid/30 hover:text-mist-solid/80 transition-colors"
-                title="分支"
+                title={props.profile.forkLimited ? '分支（受 mem0 快照窗口限制）' : '分支'}
               >
                 <GitFork size={14} />
               </button>
-            )}
-            <button
-              onClick={() => {
-                if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
-                  props.onDelete?.(props.message.id);
-                }
-              }}
-              class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
-              title="删除"
-            >
-              <Trash2 size={14} />
-            </button>
+            </Show>
+            <Show when={props.profile.canDelete}>
+              <button
+                onClick={() => {
+                  if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                    props.onDelete?.(props.message.id);
+                  }
+                }}
+                class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors"
+                title="删除"
+              >
+                <Trash2 size={14} />
+              </button>
+            </Show>
           </Show>
         </div>
       </Show>

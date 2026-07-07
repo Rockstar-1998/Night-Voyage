@@ -224,52 +224,9 @@ impl PresetValidator {
     ) -> Result<Vec<NormalizedPresetProviderOverrideInput>, String> {
         normalize_provider_overrides(provider_overrides)
     }
-
-    pub fn normalize_required(field_name: &str, value: &str) -> Result<String, String> {
-        normalize_required_impl(field_name, value)
-    }
-
-    pub fn normalize_optional_text(value: Option<String>) -> Option<String> {
-        normalize_optional_text_impl(value)
-    }
-
-    pub fn normalize_category(value: Option<String>) -> Result<String, String> {
-        normalize_category_impl(value)
-    }
-
-    pub fn normalize_temperature(value: Option<f64>) -> Result<Option<f64>, String> {
-        normalize_temperature_impl(value)
-    }
-
-    pub fn normalize_max_output_tokens(value: Option<i64>) -> Result<Option<i64>, String> {
-        normalize_max_output_tokens_impl(value)
-    }
-
-    pub fn normalize_top_p(value: Option<f64>) -> Result<Option<f64>, String> {
-        normalize_top_p_impl(value)
-    }
-
-    pub fn normalize_penalty(value: Option<f64>, field_name: &str) -> Result<Option<f64>, String> {
-        normalize_penalty_impl(value, field_name)
-    }
-
-    pub fn normalize_response_mode(
-        value: Option<String>,
-        field_name: &str,
-    ) -> Result<String, String> {
-        normalize_response_mode_impl(value, field_name)
-    }
 }
 
 pub fn normalize_required_impl(field_name: &str, value: &str) -> Result<String, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(format!("{field_name} 不能为空"));
-    }
-    Ok(trimmed.to_string())
-}
-
-pub fn normalize_required_from_row_impl(value: String, field_name: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{field_name} 不能为空"));
@@ -540,34 +497,6 @@ fn normalize_example_role_impl(index: usize, value: &str) -> Result<String, Stri
         ));
     }
     Ok(trimmed)
-}
-
-fn serialize_optional_string_array_impl(
-    values: &Option<Vec<String>>,
-) -> Result<Option<String>, String> {
-    match values {
-        Some(values) => {
-            let json = serde_json::to_string(values).map_err(|e| e.to_string())?;
-            Ok(Some(json))
-        }
-        None => Ok(None),
-    }
-}
-
-fn parse_optional_json_string_array_impl(
-    value: &Option<String>,
-) -> Result<Option<Vec<String>>, String> {
-    match value {
-        Some(json) => {
-            if json.is_empty() {
-                return Ok(None);
-            }
-            let parsed: Vec<String> =
-                serde_json::from_str(json).map_err(|e| format!("JSON 解析失败: {e}"))?;
-            Ok(Some(parsed))
-        }
-        None => Ok(None),
-    }
 }
 
 fn normalize_blocks(

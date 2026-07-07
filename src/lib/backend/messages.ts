@@ -50,3 +50,7 @@ export async function abortRoundStream(conversationId: number, memberId: number,
 export async function retryFailedRound(conversationId: number, memberId: number, roundId: number) {
   return invokeCommand<RetryFailedRoundResult>('retry_failed_round', { conversationId, memberId, roundId });
 }
+
+export async function rewindToRound(conversationId: number, memberId: number, targetRoundId: number) {
+  return invokeCommand<void>('rewind_to_round', { conversationId, memberId, targetRoundId });
+}
