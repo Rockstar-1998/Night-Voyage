@@ -22,6 +22,18 @@ impl ConversationRepository {
         conversation_id: i64,
         member_id: i64,
     ) -> Result<(), String> {
+        let conversation_type: String = sqlx::query_scalar(
+            "SELECT conversation_type FROM conversations WHERE id = ? LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_one(db)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        if conversation_type == "single" {
+            return Ok(());
+        }
+
         let member_role: Option<String> = sqlx::query_scalar(
             "SELECT member_role FROM conversation_members WHERE id = ? AND conversation_id = ? AND is_active = 1 LIMIT 1",
         )
@@ -159,5 +171,21 @@ impl ConversationRepository {
             max_context_tokens: row.try_get("max_context_tokens").ok(),
             temperature: row.try_get("temperature").ok(),
         })
+    }
+
+    /// Persist the JSON-serialised guest character card payload for a specific
+    /// conversation member row.
+    pub async fn update_guest_character_json(
+        db: &SqlitePool,
+        member_id: i64,
+        json: &str,
+    ) -> Result<(), String> {
+        sqlx::query("UPDATE conversation_members SET guest_character_json = ? WHERE id = ?")
+            .bind(json)
+            .bind(member_id)
+            .execute(db)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 }

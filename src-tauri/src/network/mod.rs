@@ -167,6 +167,33 @@ pub enum RoomMessage {
         conversation_id: i64,
         summaries: Vec<crate::models::PlotSummaryRecord>,
     },
+    MessageEdited {
+        conversation_id: i64,
+        message_id: i64,
+        content: String,
+    },
+    MessageDeleted {
+        conversation_id: i64,
+        message_id: i64,
+        round_deleted: bool,
+    },
+    RewoundToRound {
+        conversation_id: i64,
+        target_round_id: i64,
+    },
+    ContextWindowChanged {
+        conversation_id: i64,
+        context_window_size: i64,
+    },
+    GuestCharacterUpdated {
+        conversation_id: i64,
+        member_id: i64,
+        character: GuestCharacterCardPayload,
+    },
+    UpdateGuestCharacter {
+        member_id: i64,
+        character: GuestCharacterCardPayload,
+    },
     Error {
         code: String,
         message: String,
@@ -320,6 +347,44 @@ pub struct RoomPlotSummaryUpdateEvent {
     pub summaries: Vec<crate::models::PlotSummaryRecord>,
 }
 
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomMessageEditedEvent {
+    pub conversation_id: i64,
+    pub message_id: i64,
+    pub content: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomMessageDeletedEvent {
+    pub conversation_id: i64,
+    pub message_id: i64,
+    pub round_deleted: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomRewoundToRoundEvent {
+    pub conversation_id: i64,
+    pub target_round_id: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomContextWindowChangedEvent {
+    pub conversation_id: i64,
+    pub context_window_size: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomGuestCharacterUpdatedEvent {
+    pub conversation_id: i64,
+    pub member_id: i64,
+    pub character: GuestCharacterCardPayload,
+}
+
 impl RoomMessage {
     /// Map this message to the Tauri event name used on the frontend.
     pub fn event_name(&self) -> &'static str {
@@ -340,6 +405,11 @@ impl RoomMessage {
             RoomMessage::SchemaToggle { .. } => "room:schema_toggle",
             RoomMessage::TokenUsage { .. } => "room:token_usage",
             RoomMessage::PlotSummaryUpdate { .. } => "room:plot_summary_update",
+            RoomMessage::MessageEdited { .. } => "room:message_edited",
+            RoomMessage::MessageDeleted { .. } => "room:message_deleted",
+            RoomMessage::RewoundToRound { .. } => "room:rewound_to_round",
+            RoomMessage::ContextWindowChanged { .. } => "room:context_window_changed",
+            RoomMessage::GuestCharacterUpdated { .. } => "room:guest_character_updated",
             _ => "room:message",
         }
     }
@@ -531,6 +601,52 @@ impl RoomMessage {
             } => serde_json::to_value(RoomPlotSummaryUpdateEvent {
                 conversation_id: *conversation_id,
                 summaries: summaries.clone(),
+            })
+            .ok(),
+            RoomMessage::MessageEdited {
+                conversation_id,
+                message_id,
+                content,
+            } => serde_json::to_value(RoomMessageEditedEvent {
+                conversation_id: *conversation_id,
+                message_id: *message_id,
+                content: content.clone(),
+            })
+            .ok(),
+            RoomMessage::MessageDeleted {
+                conversation_id,
+                message_id,
+                round_deleted,
+            } => serde_json::to_value(RoomMessageDeletedEvent {
+                conversation_id: *conversation_id,
+                message_id: *message_id,
+                round_deleted: *round_deleted,
+            })
+            .ok(),
+            RoomMessage::RewoundToRound {
+                conversation_id,
+                target_round_id,
+            } => serde_json::to_value(RoomRewoundToRoundEvent {
+                conversation_id: *conversation_id,
+                target_round_id: *target_round_id,
+            })
+            .ok(),
+            RoomMessage::ContextWindowChanged {
+                conversation_id,
+                context_window_size,
+            } => serde_json::to_value(RoomContextWindowChangedEvent {
+                conversation_id: *conversation_id,
+                context_window_size: *context_window_size,
+            })
+            .ok(),
+            RoomMessage::GuestCharacterUpdated {
+                conversation_id,
+                member_id,
+                character,
+            } => serde_json::to_value(RoomGuestCharacterUpdatedEvent {
+                conversation_id: *conversation_id,
+                member_id: *member_id,
+                character: character.clone(),
             })
             .ok(),
             _ => None,
@@ -1295,6 +1411,32 @@ impl RoomServer {
                                                             let _ = app_handle.emit(error_msg.event_name(), payload);
                                                         }
                                                     }
+                                                }
+                                            }
+                                            RoomMessage::UpdateGuestCharacter { member_id, character } => {
+                                                let json = match serde_json::to_string(character) {
+                                                    Ok(j) => j,
+                                                    Err(e) => {
+                                                        eprintln!("[room-server] failed to serialize guest character: {}", e);
+                                                        continue;
+                                                    }
+                                                };
+                                                if let Err(e) = crate::repositories::conversation_repository::ConversationRepository::update_guest_character_json(&db_inner, *member_id, &json).await {
+                                                    eprintln!("[room-server] failed to update guest character json: {}", e);
+                                                }
+                                                let broadcast_msg = RoomMessage::GuestCharacterUpdated {
+                                                    conversation_id,
+                                                    member_id: *member_id,
+                                                    character: character.clone(),
+                                                };
+                                                {
+                                                    let c = clients.read().await;
+                                                    for (_, handle) in c.iter() {
+                                                        let _ = handle.tx.send(broadcast_msg.clone());
+                                                    }
+                                                }
+                                                if let Some(payload) = broadcast_msg.event_payload() {
+                                                    let _ = app_handle.emit(broadcast_msg.event_name(), payload);
                                                 }
                                             }
                                             _ => {

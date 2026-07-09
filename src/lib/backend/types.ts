@@ -78,6 +78,7 @@ export interface ConversationMember {
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
+  guestCharacterJson?: string;
 }
 
 export interface RoundState {
@@ -943,4 +944,32 @@ export interface RoomRoundStateUpdateEvent {
 export interface RoomErrorEvent {
   code: string;
   message: string;
+}
+
+export interface RoomMessageEditedEvent {
+  conversationId: number;
+  messageId: number;
+  content: string;
+}
+
+export interface RoomMessageDeletedEvent {
+  conversationId: number;
+  messageId: number;
+  roundDeleted: boolean;
+}
+
+export interface RoomRewoundToRoundEvent {
+  conversationId: number;
+  targetRoundId: number;
+}
+
+export interface RoomContextWindowChangedEvent {
+  conversationId: number;
+  contextWindowSize: number;
+}
+
+export interface RoomGuestCharacterUpdatedEvent {
+  conversationId: number;
+  memberId: number;
+  character: GuestCharacterCardPayload;
 }

@@ -147,6 +147,7 @@ pub fn run() {
             commands::rooms::room_broadcast_schema_toggle,
             commands::rooms::room_broadcast_token_usage,
             commands::rooms::room_broadcast_plot_summary,
+            commands::rooms::room_update_guest_character,
             commands::rooms::room_request_context,
             commands::settings::app_info,
             commands::settings::settings_get_all,

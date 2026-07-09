@@ -3,15 +3,20 @@ import { invokeCommand, toInvokeArgs } from './internal';
 import type {
   GuestCharacterCardPayload,
   RoomContextSnapshotEvent,
+  RoomContextWindowChangedEvent,
   RoomCreateResult,
   RoomErrorEvent,
+  RoomGuestCharacterUpdatedEvent,
   RoomJoinResult,
   RoomMemberJoinedEvent,
   RoomMemberLeftEvent,
+  RoomMessageDeletedEvent,
+  RoomMessageEditedEvent,
   RoomMessageResetEvent,
   RoomOpenResult,
   RoomPlayerMessageEvent,
   RoomPlotSummaryUpdateEvent,
+  RoomRewoundToRoundEvent,
   RoomRoundStateUpdateEvent,
   RoomSchemaToggleEvent,
   RoomStatusResult,
@@ -294,4 +299,75 @@ export async function listenRoomPlotSummaryUpdate(
     });
     handler(event.payload);
   });
+}
+
+export async function listenRoomMessageEdited(
+  handler: (payload: RoomMessageEditedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomMessageEditedEvent>('room:message_edited', (event) => {
+    console.debug('[room-message_edited] received', {
+      conversationId: event.payload.conversationId,
+      messageId: event.payload.messageId,
+      contentLength: event.payload.content?.length ?? 0,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomMessageDeleted(
+  handler: (payload: RoomMessageDeletedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomMessageDeletedEvent>('room:message_deleted', (event) => {
+    console.debug('[room-message_deleted] received', {
+      conversationId: event.payload.conversationId,
+      messageId: event.payload.messageId,
+      roundDeleted: event.payload.roundDeleted,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomRewoundToRound(
+  handler: (payload: RoomRewoundToRoundEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomRewoundToRoundEvent>('room:rewound_to_round', (event) => {
+    console.debug('[room-rewound_to_round] received', {
+      conversationId: event.payload.conversationId,
+      targetRoundId: event.payload.targetRoundId,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomContextWindowChanged(
+  handler: (payload: RoomContextWindowChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomContextWindowChangedEvent>('room:context_window_changed', (event) => {
+    console.debug('[room-context_window_changed] received', {
+      conversationId: event.payload.conversationId,
+      contextWindowSize: event.payload.contextWindowSize,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomGuestCharacterUpdated(
+  handler: (payload: RoomGuestCharacterUpdatedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomGuestCharacterUpdatedEvent>('room:guest_character_updated', (event) => {
+    console.debug('[room-guest_character_updated] received', {
+      conversationId: event.payload.conversationId,
+      memberId: event.payload.memberId,
+      characterName: event.payload.character?.name,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function roomUpdateGuestCharacter(payload: {
+  conversationId: number;
+  memberId: number;
+  character: GuestCharacterCardPayload;
+}): Promise<void> {
+  return invokeCommand<void>('room_update_guest_character', toInvokeArgs(payload));
 }

@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use crate::{
     models::{ConversationListItem, ConversationMember, RoundState, TokenUsageReport, UiMessage},
     network::{GuestCharacterCardPayload, RoomClient, RoomMessage, RoomServer},
+    repositories::conversation_repository::ConversationRepository,
     utils::now_ts,
     AppState,
 };
@@ -520,6 +521,63 @@ pub async fn room_broadcast_plot_summary(
     };
     server.broadcast_message(&msg).await;
     Ok(())
+}
+
+/// Guest-side command: update the caller's own guest character card.
+///
+/// In guest mode (room_client connected), sends an `UpdateGuestCharacter`
+/// message to the host's RoomServer over TCP. The host then persists the
+/// update to its DB and broadcasts `GuestCharacterUpdated` to all clients.
+///
+/// In host mode (host_server running, used as fallback), persists directly
+/// to the local DB and broadcasts `GuestCharacterUpdated` immediately.
+///
+/// Does NOT call `ensure_member_is_host` — guests update their own card.
+///
+/// IPC error strings use forward slashes to stay JSON-safe across Windows
+/// paths, per the project Rust style rules.
+#[tauri::command]
+pub async fn room_update_guest_character(
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    member_id: i64,
+    character: GuestCharacterCardPayload,
+) -> Result<(), String> {
+    let json = serde_json::to_string(&character)
+        .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    if json.len() > 256 * 1024 {
+        return Err("角色卡数据过大（超过 256KB），请精简后重试".to_string());
+    }
+
+    let room_client_guard = state.room_client.lock().await;
+    if let Some(room_client) = room_client_guard.as_ref() {
+        let mut client = room_client.lock().await;
+        let msg = RoomMessage::UpdateGuestCharacter {
+            member_id,
+            character: character.clone(),
+        };
+        client.send_message(&msg).await?;
+        return Ok(());
+    }
+    drop(room_client_guard);
+
+    let host_server = state.host_server.lock().await;
+    if let Some(server) = host_server.as_ref() {
+        let server = server.lock().await;
+        ConversationRepository::update_guest_character_json(&state.db, member_id, &json)
+            .await
+            .map_err(|err| err.to_string().replace('\\', "/"))?;
+        let msg = RoomMessage::GuestCharacterUpdated {
+            conversation_id,
+            member_id,
+            character: character.clone(),
+        };
+        server.broadcast_message(&msg).await;
+        return Ok(());
+    }
+
+    Err("当前既非房客也非房主模式，无法更新角色卡".to_string())
 }
 
 /// Asks the host (when the local app is the guest) for a fresh

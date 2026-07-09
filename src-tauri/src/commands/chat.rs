@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::models::{
     ChatAttachment, ChatSubmitInputResult, RegenerateRoundResult, RetryFailedRoundResult,
@@ -165,6 +165,7 @@ pub async fn round_state_get(
 
 #[tauri::command]
 pub async fn messages_update_content(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: i64,
     member_id: i64,
@@ -178,7 +179,7 @@ pub async fn messages_update_content(
         Operation::Edit,
     )
     .await?;
-    ChatService::update_message_content(&state.db, conversation_id, member_id, message_id, content)
+    ChatService::update_message_content(&state.db, &app, conversation_id, member_id, message_id, content)
         .await
 }
 
@@ -203,6 +204,7 @@ pub async fn messages_switch_swipe(
 
 #[tauri::command]
 pub async fn messages_delete(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: i64,
     member_id: i64,
@@ -215,7 +217,7 @@ pub async fn messages_delete(
         Operation::Delete,
     )
     .await?;
-    ChatService::delete_message(&state.db, conversation_id, member_id, message_id).await
+    ChatService::delete_message(&state.db, &app, conversation_id, member_id, message_id).await
 }
 
 #[tauri::command]
@@ -264,6 +266,7 @@ pub async fn get_conversation_token_usage(
 
 #[tauri::command]
 pub async fn update_conversation_context_window(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: i64,
     context_window_size: i64,
@@ -288,11 +291,28 @@ pub async fn update_conversation_context_window(
         .await
         .map_err(|err| err.to_string())?;
 
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let app_state = app.state::<crate::AppState>();
+            let host_server = app_state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let msg = crate::network::RoomMessage::ContextWindowChanged {
+                    conversation_id,
+                    context_window_size,
+                };
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn rewind_to_round(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: i64,
     member_id: i64,
@@ -316,7 +336,7 @@ pub async fn rewind_to_round(
         capability_guard::check_snapshot_limited(&state.db, conversation_id, round_index).await?;
     }
 
-    ChatService::rewind_to_round(state.db.clone(), conversation_id, member_id, target_round_id)
+    ChatService::rewind_to_round(state.db.clone(), &app, conversation_id, member_id, target_round_id)
         .await
 }
 

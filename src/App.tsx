@@ -102,10 +102,16 @@ import {
   listenRoomSchemaToggle,
   listenRoomTokenUsage,
   listenRoomPlotSummaryUpdate,
+  listenRoomMessageEdited,
+  listenRoomMessageDeleted,
+  listenRoomRewoundToRound,
+  listenRoomContextWindowChanged,
+  listenRoomGuestCharacterUpdated,
   roomRequestContext,
   roomOpen,
   roomClose,
   roomBroadcastSchemaToggle,
+  roomUpdateGuestCharacter,
   type RoomStreamChunkEvent,
   type RoomStreamEndEvent,
   type RoomStreamRetryEvent,
@@ -118,6 +124,11 @@ import {
   type RoomSchemaToggleEvent,
   type RoomTokenUsageEvent,
   type RoomPlotSummaryUpdateEvent,
+  type RoomMessageEditedEvent,
+  type RoomMessageDeletedEvent,
+  type RoomRewoundToRoundEvent,
+  type RoomContextWindowChangedEvent,
+  type RoomGuestCharacterUpdatedEvent,
   type RoomHostCharacter,
   type RoomJoinResult,
   type TokenUsageReport,
@@ -906,17 +917,28 @@ function App() {
       return;
     }
     try {
-      const [messageList, members, roundState, summaryList] = await Promise.all([
+      const [messageList, members, roundState, summaryList, conversationList] = await Promise.all([
         messagesList(conversationId),
         conversationMembersList(conversationId),
         roundStateGet(conversationId),
         plotSummariesList(conversationId),
+        conversationsList(),
       ]);
 
       setMessages(messageList.map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
       setSelectedConversationMembers(members);
       setCurrentRoundState(roundState);
       setPlotSummaries(summaryList);
+
+      const updatedConversation = conversationList.find((c) => c.id === conversationId);
+      if (updatedConversation) {
+        setSessions(produce((list) => {
+          const idx = list.findIndex((s) => s.id === conversationId);
+          if (idx !== -1) {
+            list[idx] = updatedConversation;
+          }
+        }));
+      }
     } catch (error) {
       console.error('[conversation-debug] refreshConversationContext:error', {
         conversationId,
@@ -1180,15 +1202,23 @@ function App() {
 
   const handleEditMessage = async (id: string, content: string) => {
     const conversationId = selectedConversationId();
-    const memberId = hostMember()?.id;
     const backendId = messages.find(m => m.id === id)?.backendId;
-    if (!conversationId || !memberId || !backendId) return;
-    await messagesUpdateContent(conversationId, memberId, backendId, content);
-    setMessages(
-      (m) => m.id === id,
-      'content',
-      content
-    );
+    if (!conversationId || !backendId) return;
+    try {
+      const hm = hostMember();
+      if (!hm) {
+        throw new Error('未找到当前会话的宿主成员，无法编辑消息。');
+      }
+      await messagesUpdateContent(conversationId, hm.id, backendId, content);
+      setMessages(
+        (m) => m.id === id,
+        'content',
+        content
+      );
+    } catch (error) {
+      console.error('[handleEditMessage] error:', error);
+      window.alert(`编辑消息失败：${toErrorMessage(error)}`);
+    }
   };
 
   const handleForkMessage = async (id: string) => {
@@ -1517,9 +1547,36 @@ function App() {
   };
 
   const handleSwitchPlayerCharacter = async (playerCharacterId: number) => {
-    const hm = hostMember();
     const conversationId = selectedConversationId();
-    if (!hm || conversationId == null) {
+    if (conversationId == null) {
+      throw new Error('当前未选择会话，无法切换玩家角色卡。');
+    }
+
+    const roomSession = activeRoomClientSession();
+    if (roomSession) {
+      const character = playerCharacters.find((c) => c.id === playerCharacterId);
+      if (!character) {
+        throw new Error(`未找到玩家角色卡（id=${playerCharacterId}），无法切换。`);
+      }
+      await roomUpdateGuestCharacter({
+        conversationId,
+        memberId: roomSession.memberId,
+        character: {
+          name: character.name,
+          description: character.description,
+          tags: character.tags,
+          baseSections: character.baseSections.map((s) => ({
+            sectionKey: s.sectionKey,
+            title: s.title,
+            content: s.content,
+          })),
+        },
+      });
+      return;
+    }
+
+    const hm = hostMember();
+    if (!hm) {
       throw new Error('当前未选择会话或未找到宿主成员，无法切换玩家角色卡。');
     }
     await conversationMembersUpdate({
@@ -2173,6 +2230,86 @@ function App() {
       setMemoryBackendErrors(produce((errs) => { errs.push(payload); }));
     });
 
+    const roomMessageEditedUnlisten = await listenRoomMessageEdited((payload: RoomMessageEditedEvent) => {
+      console.debug('[room-message_edited] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        contentLength: payload.content?.length ?? 0,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      if (!activeRoomClientSession()) return;
+      updateMessageContent(payload.messageId, () => ({
+        content: payload.content,
+        structuredFields: undefined,
+        isStreaming: false,
+      }));
+    });
+
+    const roomMessageDeletedUnlisten = await listenRoomMessageDeleted((payload: RoomMessageDeletedEvent) => {
+      console.debug('[room-message_deleted] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        roundDeleted: payload.roundDeleted,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      if (!activeRoomClientSession()) return;
+      if (payload.roundDeleted) {
+        const target = messages.find((m) => m.backendId === payload.messageId);
+        const roundId = target?.roundId;
+        setMessages((list) =>
+          roundId != null
+            ? list.filter((m) => m.roundId !== roundId)
+            : list.filter((m) => m.backendId !== payload.messageId),
+        );
+      } else {
+        setMessages((list) => list.filter((m) => m.backendId !== payload.messageId));
+      }
+    });
+
+    const roomRewoundToRoundUnlisten = await listenRoomRewoundToRound((payload: RoomRewoundToRoundEvent) => {
+      console.debug('[room-rewound_to_round] received', {
+        conversationId: payload.conversationId,
+        targetRoundId: payload.targetRoundId,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      if (!activeRoomClientSession()) return;
+      setMessages((list) => list.filter((m) => m.roundId == null || m.roundId <= payload.targetRoundId));
+      const current = currentRoundState();
+      if (current && current.roundId > payload.targetRoundId) {
+        setCurrentRoundState(null);
+      }
+    });
+
+    const roomContextWindowChangedUnlisten = await listenRoomContextWindowChanged((payload: RoomContextWindowChangedEvent) => {
+      console.debug('[room-context_window_changed] received', {
+        conversationId: payload.conversationId,
+        contextWindowSize: payload.contextWindowSize,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      const remote = activeRoomClientSession();
+      if (!remote) return;
+      setRoomClientSession({
+        ...remote,
+        contextWindowSize: payload.contextWindowSize,
+      });
+    });
+
+    const roomGuestCharacterUpdatedUnlisten = await listenRoomGuestCharacterUpdated((payload: RoomGuestCharacterUpdatedEvent) => {
+      console.debug('[room-guest_character_updated] received', {
+        conversationId: payload.conversationId,
+        memberId: payload.memberId,
+        characterName: payload.character?.name,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      const characterJson = JSON.stringify(payload.character);
+      setSelectedConversationMembers(produce((members) => {
+        const member = members.find((m) => m.id === payload.memberId);
+        if (member) {
+          member.guestCharacterJson = characterJson;
+        }
+      }));
+    });
+
     onCleanup(() => {
       chunkUnlisten();
       errorUnlisten();
@@ -2199,6 +2336,11 @@ function App() {
       roomDisconnectedUnlisten();
       roomMemberJoinedUnlisten();
       roomMemberLeftUnlisten();
+      roomMessageEditedUnlisten();
+      roomMessageDeletedUnlisten();
+      roomRewoundToRoundUnlisten();
+      roomContextWindowChangedUnlisten();
+      roomGuestCharacterUpdatedUnlisten();
       memoryErrorUnlisten();
     });
   });

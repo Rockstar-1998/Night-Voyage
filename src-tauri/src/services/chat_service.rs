@@ -752,6 +752,7 @@ impl ChatService {
         let assistant_message = MessageRepository::find_by_id(&db, assistant_message_id).await?;
 
         emit_round_state(&app, round.clone())?;
+        broadcast_room_message_reset(&app, conversation_id, round_id, assistant_message_id);
         crate::services::stream_processor::spawn_stream_task(
             app.clone(),
             db.clone(),
@@ -771,6 +772,7 @@ impl ChatService {
 
     pub async fn update_message_content(
         db: &SqlitePool,
+        app: &AppHandle,
         conversation_id: i64,
         member_id: i64,
         message_id: i64,
@@ -779,6 +781,14 @@ impl ChatService {
         ConversationRepository::ensure_member_is_host(db, conversation_id, member_id).await?;
         MessageRepository::update_content(db, message_id, &content).await?;
         MessageRepository::update_content_parts_text(db, message_id, &content).await?;
+        broadcast_room_message(
+            app,
+            crate::network::RoomMessage::MessageEdited {
+                conversation_id,
+                message_id,
+                content: content.clone(),
+            },
+        );
         Ok(())
     }
 
@@ -796,6 +806,7 @@ impl ChatService {
 
     pub async fn delete_message(
         db: &SqlitePool,
+        app: &AppHandle,
         conversation_id: i64,
         member_id: i64,
         message_id: i64,
@@ -812,6 +823,8 @@ impl ChatService {
             message_id, role, message_kind, round_id, conversation_id
         );
 
+        let mut round_deleted = false;
+
         if let Some(round_id) = round_id {
             if role == "assistant" {
                 eprintln!(
@@ -819,6 +832,7 @@ impl ChatService {
                     round_id
                 );
                 Self::delete_round_completely(db, round_id).await?;
+                round_deleted = true;
             } else {
                 MessageRepository::delete_message(db, message_id).await?;
 
@@ -842,6 +856,7 @@ impl ChatService {
                 if visible_count == 0 {
                     eprintln!("[delete_message] user: no visible messages left, deleting round {}", round_id);
                     Self::delete_round_completely(db, round_id).await?;
+                    round_deleted = true;
                 } else if is_aggregate || is_streaming_or_queued {
                     let has_assistant: Option<i64> = sqlx::query_scalar(
                         "SELECT id FROM messages \
@@ -865,12 +880,22 @@ impl ChatService {
                     } else {
                         eprintln!("[delete_message] user: no assistant, deleting round {}", round_id);
                         Self::delete_round_completely(db, round_id).await?;
+                        round_deleted = true;
                     }
                 }
             }
         } else {
             MessageRepository::delete_message(db, message_id).await?;
         }
+
+        broadcast_room_message(
+            app,
+            crate::network::RoomMessage::MessageDeleted {
+                conversation_id,
+                message_id,
+                round_deleted,
+            },
+        );
 
         Ok(())
     }
@@ -936,6 +961,7 @@ impl ChatService {
     // 注：streaming 禁止、collecting 状态、快照校验等 DB 集成测试待后续建立测试夹具后补充
     pub async fn rewind_to_round(
         db: SqlitePool,
+        app: &AppHandle,
         conversation_id: i64,
         member_id: i64,
         target_round_id: i64,
@@ -961,6 +987,18 @@ impl ChatService {
 
         RoundRepository::delete_rounds_after(&db, conversation_id, round_index).await?;
         RoundRepository::reset_to_collecting(&db, target_round_id).await?;
+
+        let round = RoundRepository::load_state(&db, conversation_id, Some(target_round_id))
+            .await?;
+        emit_round_state(app, round)?;
+
+        broadcast_room_message(
+            app,
+            crate::network::RoomMessage::RewoundToRound {
+                conversation_id,
+                target_round_id,
+            },
+        );
 
         Ok(())
     }
@@ -1110,6 +1148,23 @@ fn broadcast_room_player_message(app: &AppHandle, message: UiMessage, action_typ
                 if let Some(payload) = msg.event_payload() {
                     let _ = app.emit(msg.event_name(), payload);
                 }
+                let server = server.lock().await;
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+}
+
+/// Best-effort broadcast of a `RoomMessage` to all connected room guests.
+/// Spawns an async task so the caller never blocks on TCP writes.
+/// Single-player mode (no `host_server`) silently skips the broadcast.
+fn broadcast_room_message(app: &AppHandle, msg: crate::network::RoomMessage) {
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
                 server.broadcast_message(&msg).await;
             }
