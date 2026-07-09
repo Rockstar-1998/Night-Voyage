@@ -1,0 +1,4 @@
+interface:
+  display_name: "Night Voyage Guardrails"
+  short_description: "Mandatory project guardrails for all Night Voyage tasks."
+  default_prompt: "Use $night-voyage-guardrails before working on any Night Voyage task."

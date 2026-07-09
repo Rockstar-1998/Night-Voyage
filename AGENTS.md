@@ -113,6 +113,9 @@ Walkthrough/          → 变更留痕记录（每次代码修改一份新文件
   - 生产路径禁裸 `unwrap()` / `expect()`，使用显式错误处理（与 C2 零回退一致）。
   - 跨 IPC 错误信息必须把反斜杠替换为正斜杠，防止 JSON 解析问题。
   - Windows 路径比较前必须规范化（`canonicalize()` 返回 UNC 路径需归一化）。
+  - **组合优于继承**：复用与扩展用结构体组合（newtype、字段嵌入、方法委托）与可自由组合的小 trait；禁深 trait 继承（`trait Sub: Super`）与运行时 downcast 模拟 OO 继承；变体行为用独立类型 + 公共 trait，不写 `enum Kind + match + flag: bool`。
+  - **类型驱动、最小分支**：无效状态不可表达；`if let Some(x) = y { x.foo() } else { alt.foo() }` 这类"同一抽象不同实现"分支改 trait 调度；禁 `enabled: bool` / `is_admin: bool` / `force: bool` / `skip_*` / `.silent` / `.dry_run` 这类把类型决策推迟到运行期的标志位；用 `unwrap_or` / `and_then` / `map` / `filter_map` 组合子替代命令式 if-let 链；错误处理用 `?` + `From`，禁层层 `match err` 改写错误；`match` 用于穷尽分支是被鼓励的，禁 `_ =>` 吞未知变体、禁 `..` 跳过字段。
+  - **Rust 官方风格细节**：公共 API 遵循 Rust API Guidelines；参数优先 `&str` / `&[T]` / `Cow<'_, T>` 而非 `&String` / `&Vec<T>`；复杂构造用 builder 模式；类型转换用 `From` / `TryFrom`；格式化用 `write!` / `format!` 禁 `+` 拼接；迭代器链与闭包优先于显式 `for`；`unsafe` / `transmute` / 裸指针 / `as` 非数值转换必须给出理由并最小化；公开导出项必须有 `#[doc]`；Cargo 依赖优先 workspace 共享版本，禁同 crate 引入同一 crate 多 major。
 - **TypeScript / SolidJS**：
   - 优先细粒度响应式，避免在热路径创建不必要的信号或派生计算。
   - 长列表/流式输出场景必须使用虚拟化、增量渲染、批量提交。

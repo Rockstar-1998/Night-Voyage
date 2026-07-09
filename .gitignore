@@ -33,7 +33,8 @@ target/
 src-tauri/target/
 
 # Agent workspace
-.codex/
+.codex/*
+!.codex/skills/
 .trae/
 
 # Logs and debug
