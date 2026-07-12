@@ -19,11 +19,12 @@ use crate::services::prompt_compiler::{
     validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot,
 };
 use crate::utils::now_ts;
+use crate::dbg_eprintln;
 
 const ALLOWED_IMAGE_MIME_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 pub fn chat_debug_log(app: &AppHandle, message: &str) {
-    eprintln!("[chat] {}", message);
+    dbg_eprintln!("[chat] {}", message);
     if let Ok(data_dir) = app.path().app_data_dir() {
         let log_dir = data_dir.join("chat_debug_logs");
         let _ = std::fs::create_dir_all(&log_dir);
@@ -71,7 +72,7 @@ pub fn spawn_memory_extraction_task(
         )
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[memory] extraction task failed: conv={}, round={}, err={}",
                 conversation_id, round_id, err
             );
@@ -195,7 +196,7 @@ async fn run_memory_extraction_task(
 
     if let Err(err) = add_result {
         // Write failure: report explicitly to UI via event instead of silent log.
-        eprintln!(
+        dbg_eprintln!(
             "[memory] add failed: conv={}, round={}, character_id={}, err={}",
             conversation_id, round_id, character_id, err
         );
@@ -301,7 +302,7 @@ impl ChatService {
                             if let Err(err) = crate::services::mem0_snapshot::create_snapshot(
                                 &db, conversation_id, ri,
                             ).await {
-                                eprintln!("[chat] mem0 snapshot failed (non-fatal): {err}");
+                                dbg_eprintln!("[chat] mem0 snapshot failed (non-fatal): {err}");
                             }
                             let window = crate::services::mem0_snapshot::load_snapshot_window(&db, conversation_id).await;
                             let _ = crate::services::mem0_snapshot::prune_old_snapshots(
@@ -331,7 +332,7 @@ impl ChatService {
             .map_err(|err| err.to_string())?;
 
             if member_visible_count == 0 {
-                eprintln!(
+                dbg_eprintln!(
                     "[chat] submit_input: member_already_decided=true but member has 0 visible messages, clearing stale action. round_id={}, member_id={}",
                     round_id, member_id
                 );
@@ -404,7 +405,7 @@ impl ChatService {
         let auto_dispatched =
             required_member_count > 0 && decided_member_count >= required_member_count;
 
-        eprintln!(
+        dbg_eprintln!(
             "[chat] submit_input: conversation_id={}, round_id={}, member_id={}, required_members={}, decided_members={}, auto_dispatched={}",
             conversation_id, round_id, member_id, required_member_count, decided_member_count, auto_dispatched
         );
@@ -491,7 +492,7 @@ impl ChatService {
         let round = match RoundRepository::load_state(&db, conversation_id, Some(round_id)).await {
             Ok(r) => Some(r),
             Err(err) => {
-                eprintln!("[chat] submit_input: load_state failed after commit: {}", err);
+                dbg_eprintln!("[chat] submit_input: load_state failed after commit: {}", err);
                 None
             }
         };
@@ -506,7 +507,7 @@ impl ChatService {
 
         if let Some(ref r) = round {
             if let Err(err) = emit_round_state(&app, r.clone()) {
-                eprintln!("[chat] submit_input: emit_round_state failed: {}", err);
+                dbg_eprintln!("[chat] submit_input: emit_round_state failed: {}", err);
             }
         }
 
@@ -515,7 +516,7 @@ impl ChatService {
         }
 
         if let (Some(provider_id), Some(message_id)) = (provider_id_to_use, assistant_message_id) {
-            eprintln!(
+            dbg_eprintln!(
                 "[chat] submit_input: spawning stream task, provider_id={}, assistant_message_id={}",
                 provider_id, message_id
             );
@@ -534,6 +535,7 @@ impl ChatService {
                 provider_id,
                 message_id,
                 attachments,
+                false,  // auto_retry_enabled
             );
         }
 
@@ -694,6 +696,7 @@ impl ChatService {
             provider_id,
             assistant_message_id,
             vec![],
+            false,  // auto_retry_enabled
         );
 
         let round_state =
@@ -761,6 +764,7 @@ impl ChatService {
             provider_id,
             assistant_message_id,
             Vec::new(),
+            false,  // auto_retry_enabled
         );
 
         Ok(RegenerateRoundResult {
@@ -794,6 +798,7 @@ impl ChatService {
 
     pub async fn switch_swipe(
         db: &SqlitePool,
+        app: &AppHandle,
         conversation_id: i64,
         member_id: i64,
         round_id: i64,
@@ -801,6 +806,17 @@ impl ChatService {
     ) -> Result<UiMessage, String> {
         ConversationRepository::ensure_member_is_host(db, conversation_id, member_id).await?;
         RoundRepository::set_active_assistant_message(db, round_id, target_message_id).await?;
+        let state = app.state::<crate::AppState>();
+        let host_server = state.host_server.lock().await;
+        if let Some(server) = host_server.as_ref() {
+            let server = server.lock().await;
+            let msg = crate::network::RoomMessage::SwipeActivated {
+                conversation_id,
+                round_id,
+                message_id: target_message_id,
+            };
+            server.broadcast_message(&msg).await;
+        }
         MessageRepository::find_by_id(db, target_message_id).await
     }
 
@@ -818,7 +834,7 @@ impl ChatService {
         let conversation_id = message.conversation_id;
         let message_kind = message.message_kind.clone();
 
-        eprintln!(
+        dbg_eprintln!(
             "[delete_message] id={}, role={}, kind={}, round_id={:?}, conv={}",
             message_id, role, message_kind, round_id, conversation_id
         );
@@ -827,7 +843,7 @@ impl ChatService {
 
         if let Some(round_id) = round_id {
             if role == "assistant" {
-                eprintln!(
+                dbg_eprintln!(
                     "[delete_message] assistant: deleting entire round_id={}",
                     round_id
                 );
@@ -840,7 +856,7 @@ impl ChatService {
                 let is_streaming_or_queued = round.status == "streaming" || round.status == "queued";
                 let is_aggregate = message_kind == "user_aggregate";
 
-                eprintln!(
+                dbg_eprintln!(
                     "[delete_message] user: round_id={}, round_status={}, is_aggregate={}, is_streaming_or_queued={}",
                     round_id, round.status, is_aggregate, is_streaming_or_queued
                 );
@@ -854,7 +870,7 @@ impl ChatService {
                 .map_err(|err| err.to_string())?;
 
                 if visible_count == 0 {
-                    eprintln!("[delete_message] user: no visible messages left, deleting round {}", round_id);
+                    dbg_eprintln!("[delete_message] user: no visible messages left, deleting round {}", round_id);
                     Self::delete_round_completely(db, round_id).await?;
                     round_deleted = true;
                 } else if is_aggregate || is_streaming_or_queued {
@@ -869,7 +885,7 @@ impl ChatService {
                     .map_err(|err| err.to_string())?;
 
                     if has_assistant.is_some() {
-                        eprintln!("[delete_message] user: has_assistant, setting completed");
+                        dbg_eprintln!("[delete_message] user: has_assistant, setting completed");
                         sqlx::query(
                             "UPDATE message_rounds SET status = 'completed', aggregate_message_id = NULL, aggregated_user_content = NULL WHERE id = ?",
                         )
@@ -878,7 +894,7 @@ impl ChatService {
                         .await
                         .map_err(|err| err.to_string())?;
                     } else {
-                        eprintln!("[delete_message] user: no assistant, deleting round {}", round_id);
+                        dbg_eprintln!("[delete_message] user: no assistant, deleting round {}", round_id);
                         Self::delete_round_completely(db, round_id).await?;
                         round_deleted = true;
                     }
@@ -909,7 +925,7 @@ impl ChatService {
         .await
         .map_err(|err| err.to_string())?;
 
-        eprintln!(
+        dbg_eprintln!(
             "[delete_message] delete_round_completely: round_id={}, deleting {} messages",
             round_id,
             message_ids.len()
@@ -946,7 +962,7 @@ impl ChatService {
             .await
             .map_err(|err| err.to_string())?;
 
-        eprintln!("[delete_message] delete_round_completely: round_id={} deleted", round_id);
+        dbg_eprintln!("[delete_message] delete_round_completely: round_id={} deleted", round_id);
         Ok(())
     }
 
@@ -1059,6 +1075,7 @@ impl ChatService {
             snapshot.provider_id,
             assistant_message_id,
             Vec::new(),
+            true,  // auto_retry_enabled
         );
 
         Ok(RetryFailedRoundResult {
@@ -1107,7 +1124,7 @@ pub fn emit_round_state(app: &AppHandle, round: RoundState) -> Result<(), String
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
                 let client_count = server.client_count().await;
-                eprintln!(
+                dbg_eprintln!(
                     "[room-broadcast] RoundStateUpdate: round_id={}, status={}, clients={}",
                     round.round_id, round.status, client_count,
                 );
@@ -1186,7 +1203,7 @@ pub fn broadcast_room_message_reset(
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
                 let client_count = server.client_count().await;
-                eprintln!(
+                dbg_eprintln!(
                     "[room-broadcast] MessageReset: conv={}, round={}, msg={}, clients={}",
                     conversation_id, round_id, message_id, client_count,
                 );
@@ -1197,7 +1214,7 @@ pub fn broadcast_room_message_reset(
                 };
                 server.broadcast_message(&msg).await;
             } else {
-                eprintln!("[room-broadcast] MessageReset skipped: host_server is None");
+                dbg_eprintln!("[room-broadcast] MessageReset skipped: host_server is None");
             }
         }
     });
@@ -1296,7 +1313,7 @@ pub fn flush_text_delta_event(
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
                 let client_count = server.client_count().await;
-                eprintln!(
+                dbg_eprintln!(
                     "[room-broadcast] StreamChunk: conv={}, round={}, msg={}, delta_len={}, done={}, clients={}",
                     chunk_event.conversation_id,
                     chunk_event.round_id,
@@ -1314,7 +1331,7 @@ pub fn flush_text_delta_event(
                 };
                 server.broadcast_message(&msg).await;
             } else {
-                eprintln!("[room-broadcast] StreamChunk skipped: host_server is None");
+                dbg_eprintln!("[room-broadcast] StreamChunk skipped: host_server is None");
             }
         }
     });
@@ -1366,7 +1383,7 @@ pub fn emit_stream_message_stop(
             if let Some(server) = host_server.as_ref() {
                 let server = server.lock().await;
                 let client_count = server.client_count().await;
-                eprintln!(
+                dbg_eprintln!(
                     "[room-broadcast] StreamEnd: conv={}, round={}, msg={}, clients={}",
                     chunk_event.conversation_id,
                     chunk_event.round_id,
@@ -1388,7 +1405,7 @@ pub fn emit_stream_message_stop(
                 };
                 server.broadcast_message(&msg).await;
             } else {
-                eprintln!("[room-broadcast] StreamEnd skipped: host_server is None");
+                dbg_eprintln!("[room-broadcast] StreamEnd skipped: host_server is None");
             }
             drop(host_server);
 
@@ -1416,7 +1433,7 @@ pub fn emit_stream_message_stop(
                     }
                 }
                 Err(error) => {
-                    eprintln!(
+                    dbg_eprintln!(
                         "[room-broadcast] TokenUsage skipped: failed to compile report for conv={}: {}",
                         chunk_event.conversation_id, error
                     );
@@ -1445,23 +1462,18 @@ pub fn emit_stream_message_stop(
 
 /// Broadcast `RoomMessage::StreamEnd` to all room clients.
 /// Used by the error/abort paths of `spawn_stream_task` so guests stop streaming.
-pub fn broadcast_stream_end(app: &AppHandle, conversation_id: i64, round_id: i64, message_id: i64) {
-    tauri::async_runtime::spawn({
-        let app = app.clone();
-        async move {
-            let state = app.state::<crate::AppState>();
-            let host_server = state.host_server.lock().await;
-            if let Some(server) = host_server.as_ref() {
-                let server = server.lock().await;
-                let msg = crate::network::RoomMessage::StreamEnd {
-                    conversation_id,
-                    round_id,
-                    message_id,
-                };
-                server.broadcast_message(&msg).await;
-            }
-        }
-    });
+pub async fn broadcast_stream_end(app: &AppHandle, conversation_id: i64, round_id: i64, message_id: i64) {
+    let state = app.state::<crate::AppState>();
+    let host_server = state.host_server.lock().await;
+    if let Some(server) = host_server.as_ref() {
+        let server = server.lock().await;
+        let msg = crate::network::RoomMessage::StreamEnd {
+            conversation_id,
+            round_id,
+            message_id,
+        };
+        server.broadcast_message(&msg).await;
+    }
 }
 
 /// Emit `string_field_delta` to the host frontend AND broadcast it to room clients.
@@ -1602,7 +1614,7 @@ pub async fn finalize_streamed_response(
     }
 
     if let Err(err) = MessageRepository::replace_content_parts_tx(&mut tx, assistant_message_id, content_parts).await {
-        eprintln!("[finalize_streamed_response] replace_content_parts failed: {}, round_id={}", err, round_id);
+        dbg_eprintln!("[finalize_streamed_response] replace_content_parts failed: {}, round_id={}", err, round_id);
     }
 
     let now = crate::utils::now_ts();
@@ -1657,7 +1669,7 @@ pub fn save_llm_debug_log(
         dir
     };
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        dbg_eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
         return;
     }
 
@@ -1728,9 +1740,9 @@ pub fn save_llm_debug_log(
     });
 
     if let Err(e) = std::fs::write(&full_path, combined.to_string()) {
-        eprintln!("[llm-debug] failed to write log {}: {}", filename, e);
+        dbg_eprintln!("[llm-debug] failed to write log {}: {}", filename, e);
     } else {
-        eprintln!("[llm-debug] saved to {}", full_path.display());
+        dbg_eprintln!("[llm-debug] saved to {}", full_path.display());
     }
 }
 
@@ -1770,7 +1782,7 @@ pub fn save_intermediate_llm_log(
         dir
     };
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        dbg_eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
         return;
     }
 
@@ -1793,9 +1805,9 @@ pub fn save_intermediate_llm_log(
     });
 
     if let Err(e) = std::fs::write(&full_path, combined.to_string()) {
-        eprintln!("[llm-debug] failed to write intermediate log {}: {}", filename, e);
+        dbg_eprintln!("[llm-debug] failed to write intermediate log {}: {}", filename, e);
     } else {
-        eprintln!("[llm-debug] intermediate log saved to {}", full_path.display());
+        dbg_eprintln!("[llm-debug] intermediate log saved to {}", full_path.display());
     }
 }
 
@@ -1836,7 +1848,7 @@ pub fn append_mem0_round_log(
         dir
     };
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        dbg_eprintln!("[llm-debug] failed to create log dir {}: {}", log_dir.display(), e);
         return;
     }
 
@@ -1894,20 +1906,20 @@ pub fn append_mem0_round_log(
     let payload = match serde_json::to_string_pretty(&doc) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[llm-debug] failed to serialize mem0 log {}: {}", filename, e);
+            dbg_eprintln!("[llm-debug] failed to serialize mem0 log {}: {}", filename, e);
             return;
         }
     };
     if let Err(e) = std::fs::write(&tmp_path, &payload) {
-        eprintln!("[llm-debug] failed to write mem0 tmp {}: {}", tmp_path.display(), e);
+        dbg_eprintln!("[llm-debug] failed to write mem0 tmp {}: {}", tmp_path.display(), e);
         return;
     }
     if let Err(e) = std::fs::rename(&tmp_path, &full_path) {
-        eprintln!("[llm-debug] failed to rename mem0 log {} -> {}: {}", tmp_path.display(), full_path.display(), e);
+        dbg_eprintln!("[llm-debug] failed to rename mem0 log {} -> {}: {}", tmp_path.display(), full_path.display(), e);
         let _ = std::fs::remove_file(&tmp_path);
         return;
     }
-    eprintln!("[llm-debug] mem0 round log appended: {}", full_path.display());
+    dbg_eprintln!("[llm-debug] mem0 round log appended: {}", full_path.display());
 }
 
 /// Build a full `RoomMessage::ContextSnapshot` for the given conversation.
@@ -1971,7 +1983,7 @@ pub async fn build_context_snapshot(
                 Some(report),
             ),
             Err(error) => {
-                eprintln!(
+                dbg_eprintln!(
                     "[room-server] failed to compile token usage report for conversation {} in context snapshot: {}",
                     conversation_id, error
                 );
@@ -2029,7 +2041,7 @@ pub async fn build_context_snapshot(
     {
         Ok(records) => Some(records),
         Err(error) => {
-            eprintln!(
+            dbg_eprintln!(
                 "[room-server] failed to load plot summaries for conversation {} in context snapshot: {}",
                 conversation_id, error
             );

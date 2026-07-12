@@ -3,6 +3,7 @@ import { RefreshCw, RotateCcw, Pencil, GitFork, ChevronLeft, ChevronRight, Check
 import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig, type StructuredField } from '../lib/messageFormatter';
 import { clearStreamingRenderCache, MessageFormatRenderer } from './MessageFormatRenderer';
 import type { CapabilityProfile } from '../lib/backend/types';
+import { showConfirm } from './Toast';
 
 export interface ChatMessage {
   id: string;
@@ -285,8 +286,8 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             </Show>
             <Show when={props.profile.canDelete}>
               <button
-                onClick={() => {
-                  if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                onClick={async () => {
+                  if (await showConfirm({ message: '确定要删除这条消息吗？此操作不可撤销。' })) {
                     props.onDelete?.(props.message.id);
                   }
                 }}
@@ -339,8 +340,8 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             </Show>
             <Show when={props.profile.canDelete}>
               <button
-                onClick={() => {
-                  if (window.confirm('确定要删除这条消息吗？此操作不可撤销。')) {
+                onClick={async () => {
+                  if (await showConfirm({ message: '确定要删除这条消息吗？此操作不可撤销。' })) {
                     props.onDelete?.(props.message.id);
                   }
                 }}

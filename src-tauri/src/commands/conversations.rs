@@ -10,6 +10,7 @@ use crate::{
     utils::now_ts,
     AppState,
 };
+use crate::dbg_eprintln;
 
 #[tauri::command]
 pub async fn conversations_list(
@@ -298,7 +299,7 @@ pub async fn conversations_update_bindings(
     agent_provider_policy: Option<String>,
 ) -> Result<ConversationListItem, String> {
     let now = now_ts();
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] update_bindings:start conversation_id={} title_present={} host_character_id={:?} world_book_id={:?} preset_id={:?} provider_id={:?} embedding_provider_id={:?} chat_mode={:?} agent_provider_policy={:?}",
         conversation_id,
         title.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
@@ -357,7 +358,7 @@ pub async fn conversations_update_bindings(
          WHERE id = ?",
         embedding_clause
     );
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] update_bindings:sql={}",
         update_sql.replace('\n', " ")
     );
@@ -379,14 +380,14 @@ pub async fn conversations_update_bindings(
         .execute(&state.db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] update_bindings:error conversation_id={} error={}",
                 conversation_id, err
             );
             err.to_string()
         })?;
 
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] update_bindings:success conversation_id={} normalized_preset_id={:?} normalized_world_book_id={:?}",
         conversation_id,
         normalize_optional_positive_id(preset_id),
@@ -551,20 +552,20 @@ pub async fn conversations_delete(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<(), String> {
-    eprintln!("[conversation-debug] delete:start conversation_id={}", id);
+    dbg_eprintln!("[conversation-debug] delete:start conversation_id={}", id);
     let room_ref_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM rooms WHERE conversation_id = ?")
             .bind(id)
             .fetch_one(&state.db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[conversation-debug] delete:room_ref_count_error conversation_id={} error={}",
                     id, err
                 );
                 err.to_string()
             })?;
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] delete:room_ref_count conversation_id={} room_ref_count={}",
         id, room_ref_count
     );
@@ -575,13 +576,13 @@ pub async fn conversations_delete(
             .fetch_all(&state.db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[conversation-debug] delete:load_round_ids_error conversation_id={} error={}",
                     id, err
                 );
                 err.to_string()
             })?;
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] delete:loaded_round_ids conversation_id={} round_count={}",
         id,
         round_ids.len()
@@ -627,20 +628,20 @@ pub async fn conversations_delete(
             .fetch_all(&state.db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[conversation-debug] delete:load_agent_runs_error conversation_id={} error={}",
                     id, err
                 );
                 err.to_string()
             })?;
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] delete:loaded_agent_runs conversation_id={} agent_run_count={}",
         id,
         agent_run_ids.len()
     );
 
     for agent_run_id in &agent_run_ids {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] delete:delete_agent_drafts conversation_id={} agent_run_id={}",
             id, agent_run_id
         );
@@ -649,7 +650,7 @@ pub async fn conversations_delete(
             .execute(&state.db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[conversation-debug] delete:delete_agent_drafts_error conversation_id={} agent_run_id={} error={}",
                     id,
                     agent_run_id,
@@ -685,12 +686,45 @@ pub async fn conversations_delete(
         .await
         .map_err(|err| err.to_string())?;
 
+    // 如果该会话关联的 RoomServer 仍在运行，先关闭它，避免端口被旧实例占用
+    {
+        let host_server = state.host_server.lock().await;
+        let room_id = match host_server.as_ref() {
+            Some(server_arc) => {
+                let server = server_arc.lock().await;
+                Some(server.room_id)
+            }
+            None => None,
+        };
+        drop(host_server); // 释放锁后执行 DB 查询，避免持锁阻塞其他 host_server 访问
+
+        if let Some(room_id) = room_id {
+            let room_belongs_to_conversation: Option<i64> =
+                sqlx::query_scalar(
+                    "SELECT id FROM rooms WHERE id = ? AND conversation_id = ? LIMIT 1",
+                )
+                .bind(room_id)
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|err| err.to_string())?;
+
+            if room_belongs_to_conversation.is_some() {
+                let mut host_server = state.host_server.lock().await;
+                if let Some(server_arc) = host_server.take() {
+                    let mut server = server_arc.lock().await;
+                    server.shutdown().await;
+                }
+            }
+        }
+    }
+
     sqlx::query("DELETE FROM rooms WHERE conversation_id = ?")
         .bind(id)
         .execute(&state.db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] delete:delete_rooms_error conversation_id={} error={}",
                 id, err
             );
@@ -702,7 +736,7 @@ pub async fn conversations_delete(
         .execute(&state.db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] delete:delete_conversation_row_error conversation_id={} error={}",
                 id,
                 err
@@ -710,7 +744,7 @@ pub async fn conversations_delete(
             err.to_string()
         })?;
 
-    eprintln!("[conversation-debug] delete:success conversation_id={}", id);
+    dbg_eprintln!("[conversation-debug] delete:success conversation_id={}", id);
     Ok(())
 }
 
@@ -743,13 +777,13 @@ async fn conversations_get_by_id(
          FROM conversations c \
          LEFT JOIN rooms r ON r.conversation_id = c.id \
          WHERE c.id = ? LIMIT 1";
-    eprintln!("[conversation-debug] get_by_id:base_sql={}", base_sql);
+    dbg_eprintln!("[conversation-debug] get_by_id:base_sql={}", base_sql);
     let row = sqlx::query(base_sql)
         .bind(id)
         .fetch_one(db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] get_by_id:base_sql_error id={} error={}",
                 id, err
             );
@@ -772,7 +806,7 @@ async fn conversations_get_by_id(
 
     let member_count_sql =
         "SELECT COUNT(*) FROM conversation_members WHERE conversation_id = ? AND is_active = 1";
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] get_by_id:member_count_sql={}",
         member_count_sql
     );
@@ -781,7 +815,7 @@ async fn conversations_get_by_id(
         .fetch_one(db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] get_by_id:member_count_error id={} error={}",
                 id, err
             );
@@ -789,7 +823,7 @@ async fn conversations_get_by_id(
         })?;
 
     let pending_member_count = load_pending_member_count(db, id).await.map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] get_by_id:pending_member_count_error id={} error={}",
             id, err
         );
@@ -846,7 +880,7 @@ async fn load_pending_member_count(
     conversation_id: i64,
 ) -> Result<i64, String> {
     let round_sql = "SELECT id FROM message_rounds WHERE conversation_id = ? AND status = 'collecting' ORDER BY round_index DESC LIMIT 1";
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] load_pending_member_count:round_sql={}",
         round_sql
     );
@@ -855,13 +889,13 @@ async fn load_pending_member_count(
     .fetch_optional(db)
     .await
     .map_err(|err| {
-        eprintln!("[conversation-debug] load_pending_member_count:round_sql_error conversation_id={} error={}", conversation_id, err);
+        dbg_eprintln!("[conversation-debug] load_pending_member_count:round_sql_error conversation_id={} error={}", conversation_id, err);
         err.to_string()
     })?
     .flatten();
 
     let Some(round_id) = collecting_round_id else {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] load_pending_member_count:no_collecting_round conversation_id={}",
             conversation_id
         );
@@ -869,14 +903,14 @@ async fn load_pending_member_count(
     };
 
     let pending_sql = "SELECT COUNT(*) FROM conversation_members m WHERE m.conversation_id = ? AND m.is_active = 1 AND NOT EXISTS (SELECT 1 FROM round_member_actions a WHERE a.round_id = ? AND a.member_id = m.id)";
-    eprintln!("[conversation-debug] load_pending_member_count:pending_sql={} conversation_id={} round_id={}", pending_sql, conversation_id, round_id);
+    dbg_eprintln!("[conversation-debug] load_pending_member_count:pending_sql={} conversation_id={} round_id={}", pending_sql, conversation_id, round_id);
     sqlx::query_scalar(pending_sql)
     .bind(conversation_id)
     .bind(round_id)
     .fetch_one(db)
     .await
     .map_err(|err| {
-        eprintln!("[conversation-debug] load_pending_member_count:pending_sql_error conversation_id={} round_id={} error={}", conversation_id, round_id, err);
+        dbg_eprintln!("[conversation-debug] load_pending_member_count:pending_sql_error conversation_id={} round_id={} error={}", conversation_id, round_id, err);
         err.to_string()
     })
 }
@@ -1026,7 +1060,7 @@ pub async fn conversations_fork(
     conversation_id: i64,
     up_to_message_id: i64,
 ) -> Result<i64, String> {
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] fork:start conversation_id={} up_to_message_id={}",
         conversation_id, up_to_message_id
     );
@@ -1039,7 +1073,7 @@ pub async fn conversations_fork(
     .fetch_one(&state.db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] fork:load_original_error conversation_id={} up_to_message_id={} error={}",
             conversation_id,
             up_to_message_id,
@@ -1120,7 +1154,7 @@ pub async fn conversations_fork(
     .fetch_one(&state.db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] fork:get_target_round_index_error conversation_id={} up_to_message_id={} error={}",
             conversation_id,
             up_to_message_id,
@@ -1138,7 +1172,7 @@ pub async fn conversations_fork(
     .fetch_all(&state.db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[conversation-debug] fork:load_round_rows_error conversation_id={} target_round_index={} error={}",
             conversation_id,
             target_round_index,
@@ -1155,7 +1189,7 @@ pub async fn conversations_fork(
             format!("{}:{}", round_id, round_index)
         })
         .collect::<Vec<_>>();
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] fork:round_rows conversation_id={} up_to_message_id={} target_round_index={} rows={:?}",
         conversation_id,
         up_to_message_id,
@@ -1179,7 +1213,7 @@ pub async fn conversations_fork(
         .fetch_one(&state.db)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[conversation-debug] fork:insert_round_error source_conversation_id={} fork_id={} orig_round_id={} round_index={} error={}",
                 conversation_id,
                 fork_id,
@@ -1243,7 +1277,7 @@ pub async fn conversations_fork(
         }
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[conversation-debug] fork:success source_conversation_id={} up_to_message_id={} fork_id={}",
         conversation_id,
         up_to_message_id,

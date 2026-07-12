@@ -1,6 +1,7 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { Search, Plus, UserPlus, Trash2, Users } from 'lucide-solid';
 import { CharacterCard, ConversationListItem, resolveImageSrc } from '../../src/lib/backend';
+import { showConfirm } from './Toast';
 
 interface SessionListProps {
   sessions: ConversationListItem[];
@@ -106,9 +107,9 @@ export const SessionList: Component<SessionListProps> = (props) => {
                         </p>
                         
                         <button
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.stopPropagation();
-                            if (window.confirm(`确定要删除会话「${session.title ?? '未命名会话'}」吗？`)) {
+                            if (await showConfirm({ message: `确定要删除会话「${session.title ?? '未命名会话'}」吗？` })) {
                               props.onDeleteConversation?.(session.id);
                             }
                           }}

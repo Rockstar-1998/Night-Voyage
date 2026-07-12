@@ -10,6 +10,7 @@ use crate::{
     utils::now_ts,
     AppState,
 };
+use crate::dbg_eprintln;
 
 const PROVIDER_KIND_OPENAI_COMPATIBLE: &str = "openai_compatible";
 const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
@@ -106,7 +107,7 @@ pub async fn providers_create(
     let model_name = normalize_model_name(&model_name);
     let now = now_ts();
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_create:start provider_kind={} purpose={} base_url={} model_name={} has_api_key={}",
         provider_kind,
         purpose,
@@ -132,7 +133,7 @@ pub async fn providers_create(
     .execute(&state.db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_create:error provider_kind={} purpose={} base_url={} model_name={} error={}",
             provider_kind,
             purpose,
@@ -143,7 +144,7 @@ pub async fn providers_create(
         err.to_string()
     })?;
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_create:success provider_kind={} purpose={} provider_id={} model_name={}",
         provider_kind,
         purpose,
@@ -183,7 +184,7 @@ pub async fn providers_update(
     let api_key = normalize_optional_secret(api_key)?;
     let now = now_ts();
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_update:start provider_id={} provider_kind={:?} purpose={:?} base_url={} model_name={} has_api_key_update={}",
         id,
         provider_kind,
@@ -215,7 +216,7 @@ pub async fn providers_update(
     .execute(&state.db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_update:error provider_id={} provider_kind={:?} purpose={:?} base_url={} model_name={} error={}",
             id,
             provider_kind,
@@ -227,7 +228,7 @@ pub async fn providers_update(
         err.to_string()
     })?;
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_update:success provider_id={} provider_kind={:?} purpose={:?} model_name={}",
         id,
         provider_kind,
@@ -285,7 +286,7 @@ pub async fn providers_test(
     let http_request = build_provider_http_request(&request, &base_url, &api_key)?;
     let request_url = http_request.url.clone();
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_test:start provider_kind={} base_url={} url={} model={}",
         provider_kind, base_url, request_url, model_name
     );
@@ -295,7 +296,7 @@ pub async fn providers_test(
     let response = match execute_provider_post_request(&client, http_request).await {
         Ok(response) => response,
         Err(error) => {
-            eprintln!(
+            dbg_eprintln!(
                 "[provider-debug] providers_test:transport_error provider_kind={} base_url={} url={} model={} elapsed_ms={} error={}",
                 provider_kind,
                 base_url,
@@ -312,7 +313,7 @@ pub async fn providers_test(
 
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_test:http_error provider_kind={} base_url={} url={} model={} status={} elapsed_ms={} body_preview={}",
             provider_kind,
             base_url,
@@ -325,7 +326,7 @@ pub async fn providers_test(
         return Err(format!("测试失败: {} {}", status, text));
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_test:success provider_kind={} base_url={} url={} model={} status={} elapsed_ms={}",
         provider_kind, base_url, request_url, model_name, status, latency_ms
     );
@@ -390,7 +391,7 @@ pub async fn providers_test_claude_native(
             build_provider_http_request(&request, &provider.base_url, &provider.api_key)?;
         let request_url = http_request.url.clone();
 
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_test_claude_native:attempt_start provider_id={} attempt={}/{} base_url={} url={} model={} timeout_seconds={} prompt_preview={}",
             provider.id,
             attempt,
@@ -407,7 +408,7 @@ pub async fn providers_test_claude_native(
             Ok(response) => response,
             Err(error) => {
                 let error_message = format!("Claude 原生测试传输失败: {}", error);
-                eprintln!(
+                dbg_eprintln!(
                     "[provider-debug] providers_test_claude_native:transport_error provider_id={} attempt={}/{} url={} elapsed_ms={} error={}",
                     provider.id,
                     attempt,
@@ -427,7 +428,7 @@ pub async fn providers_test_claude_native(
             Ok(text) => text,
             Err(error) => {
                 let error_message = format!("Claude 原生测试读取响应失败: {}", error);
-                eprintln!(
+                dbg_eprintln!(
                     "[provider-debug] providers_test_claude_native:read_error provider_id={} attempt={}/{} url={} elapsed_ms={} error={}",
                     provider.id,
                     attempt,
@@ -443,7 +444,7 @@ pub async fn providers_test_claude_native(
 
         if !status.is_success() {
             let error_message = format!("Claude 原生测试失败: {} {}", status, response_text);
-            eprintln!(
+            dbg_eprintln!(
                 "[provider-debug] providers_test_claude_native:http_error provider_id={} attempt={}/{} url={} status={} elapsed_ms={} body_preview={}",
                 provider.id,
                 attempt,
@@ -461,7 +462,7 @@ pub async fn providers_test_claude_native(
             Ok(response_preview) => response_preview,
             Err(error) => {
                 let error_message = format!("Claude 原生测试响应解析失败: {}", error);
-                eprintln!(
+                dbg_eprintln!(
                     "[provider-debug] providers_test_claude_native:parse_error provider_id={} attempt={}/{} url={} status={} elapsed_ms={} body_preview={}",
                     provider.id,
                     attempt,
@@ -477,7 +478,7 @@ pub async fn providers_test_claude_native(
         };
 
         let degraded = latency_ms >= degraded_threshold_ms as u128;
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_test_claude_native:success provider_id={} attempt={}/{} url={} status={} latency_ms={} degraded={} response_preview={}",
             provider.id,
             attempt,
@@ -512,7 +513,7 @@ pub async fn providers_fetch_models(
     let provider = load_provider_secret(&state.db, provider_id).await?;
     let client = build_http_client()?;
     let models_url = build_models_url(&provider.base_url, &provider.provider_kind)?;
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_fetch_models:start provider_id={} provider_kind={} base_url={} url={} model={}",
         provider.id,
         provider.provider_kind,
@@ -525,7 +526,7 @@ pub async fn providers_fetch_models(
         match try_fetch_models_from_api(&client, &provider, &models_url).await {
             Ok(fetched) => fetched,
             Err(_) => {
-                eprintln!(
+                dbg_eprintln!(
                     "[provider-debug] providers_fetch_models:anthropic_fallback provider_id={} url={}",
                     provider.id, models_url
                 );
@@ -568,7 +569,7 @@ pub async fn providers_fetch_models(
 
     tx.commit().await.map_err(|err| err.to_string())?;
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_fetch_models:success provider_id={} provider_kind={} url={} model_count={} elapsed_ms={}",
         provider.id,
         provider.provider_kind,
@@ -956,7 +957,7 @@ async fn try_fetch_models_from_api(
     let response = match request.send().await {
         Ok(response) => response,
         Err(error) => {
-            eprintln!(
+            dbg_eprintln!(
                 "[provider-debug] providers_fetch_models:transport_error provider_id={} provider_kind={} url={} elapsed_ms={} error={}",
                 provider.id,
                 provider.provider_kind,
@@ -973,7 +974,7 @@ async fn try_fetch_models_from_api(
     let response_text = response.text().await.map_err(|err| err.to_string())?;
 
     if !status.is_success() {
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_fetch_models:http_error provider_id={} provider_kind={} url={} status={} elapsed_ms={} body_preview={}",
             provider.id,
             provider.provider_kind,
@@ -985,7 +986,7 @@ async fn try_fetch_models_from_api(
         return Err(format!("拉取模型列表失败: {} {}", status, response_text));
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[provider-debug] providers_fetch_models:response provider_id={} provider_kind={} url={} status={} elapsed_ms={} body_preview={}",
         provider.id,
         provider.provider_kind,
@@ -996,7 +997,7 @@ async fn try_fetch_models_from_api(
     );
 
     let value: serde_json::Value = serde_json::from_str(&response_text).map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[provider-debug] providers_fetch_models:json_error provider_id={} provider_kind={} url={} error={} body_preview={}",
             provider.id,
             provider.provider_kind,
@@ -1010,7 +1011,7 @@ async fn try_fetch_models_from_api(
         .get("data")
         .and_then(|items| items.as_array())
         .ok_or_else(|| {
-            eprintln!(
+            dbg_eprintln!(
                 "[provider-debug] providers_fetch_models:invalid_shape provider_id={} provider_kind={} url={} body_preview={}",
                 provider.id,
                 provider.provider_kind,

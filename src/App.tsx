@@ -19,6 +19,7 @@ import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { NotificationContainer, showToast } from './components/Toast';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
 import { selectProfile, FALLBACK_PROFILE } from './lib/capability-profile';
@@ -107,6 +108,7 @@ import {
   listenRoomRewoundToRound,
   listenRoomContextWindowChanged,
   listenRoomGuestCharacterUpdated,
+  listenRoomSwipeActivated,
   roomRequestContext,
   roomOpen,
   roomClose,
@@ -129,6 +131,7 @@ import {
   type RoomRewoundToRoundEvent,
   type RoomContextWindowChangedEvent,
   type RoomGuestCharacterUpdatedEvent,
+  type RoomSwipeActivatedEvent,
   type RoomHostCharacter,
   type RoomJoinResult,
   type TokenUsageReport,
@@ -194,6 +197,7 @@ type RoomClientSession = {
   contextWindowSize?: number;
   tokenUsageReport?: TokenUsageReport;
   plotSummaries?: PlotSummaryRecord[];
+  playerCharacterId?: number;
 };
 
 const DESKTOP_WORKSPACE_IDS = ['chat', 'settings', 'character', 'kb', 'workspace'] as const;
@@ -571,20 +575,23 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
 
                       <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
                         <WorkspaceTransitionStage
-                          activeWorkspace={props.selectedConversationId || 'empty'}
-                          paneIds={['empty', ...props.sessions.map((s) => s.id)]}
+                          activeWorkspace={props.selectedConversationId != null ? String(props.selectedConversationId) : 'empty'}
+                          paneIds={['empty', ...props.sessions.map((s) => String(s.id))]}
                         >
                           {(sessionId) => {
                             const safeTitle = createMemo((prev: string | undefined) => {
-                              if (sessionId === props.selectedConversationId) return props.selectedConversationTitle;
+                              const selectedId = props.selectedConversationId;
+                              if (selectedId != null && sessionId === String(selectedId)) return props.selectedConversationTitle;
                               return prev || 'No conversation selected';
                             });
                             const safeMessages = createMemo((prev: typeof props.messages | undefined) => {
-                              if (sessionId === props.selectedConversationId) return props.messages;
+                              const selectedId = props.selectedConversationId;
+                              if (selectedId != null && sessionId === String(selectedId)) return props.messages;
                               return prev || [];
                             });
                             const safeRoundState = createMemo((prev: typeof props.currentRoundState | undefined) => {
-                              if (sessionId === props.selectedConversationId) return props.currentRoundState;
+                              const selectedId = props.selectedConversationId;
+                              if (selectedId != null && sessionId === String(selectedId)) return props.currentRoundState;
                               return prev;
                             });
 
@@ -775,7 +782,7 @@ function App() {
   const [conversationMode, setConversationMode] = createSignal<ConversationMode | null>(null);
   // Auto-retry toast: shown whenever the backend emits llm-stream-retry.
   // Holds { error, attemptCount } for a short period, then auto-clears.
-  const [retryNotice, setRetryNotice] = createSignal<{ error: string; attemptCount: number } | null>(null);
+  const [retryNotice, setRetryNotice] = createSignal<{ error: string; attemptCount: number; autoRetryEnabled: boolean; roundId: number } | null>(null);
   let retryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   // Rewind confirmation dialog: holds the target message/round when the user
   // clicks "回溯到此轮". Null = dialog closed.
@@ -811,6 +818,14 @@ function App() {
     return npcCharacters.find((c) => c.id === hostCharacterId);
   });
   const currentPlayerCharacter = createMemo(() => {
+    const roomSession = roomClientSession();
+    if (roomSession?.memberId) {
+      // 房客模式：优先用 session 中保存的 playerCharacterId
+      const playerCharId = roomSession.playerCharacterId ?? selectedConversationMembers.find((m) => m.id === roomSession.memberId)?.playerCharacterId;
+      if (!playerCharId) return undefined;
+      return playerCharacters.find((c) => c.id === playerCharId);
+    }
+    // 房主/单人模式：用 hostMember
     const hm = hostMember();
     if (!hm?.playerCharacterId) return undefined;
     return playerCharacters.find((c) => c.id === hm.playerCharacterId);
@@ -997,6 +1012,7 @@ function App() {
   };
 
   const handleSend = async (content: string) => {
+    setRetryNotice(null);
     const conversationId = selectedConversationId();
     const providerId = selectedConversation()?.providerId;
     if (!conversationId) return;
@@ -1053,7 +1069,7 @@ function App() {
     } catch (err) {
       console.error('[handleSend] Error sending message:', err);
       setReplyStatus('idle');
-      window.alert(`发送消息失败：${toErrorMessage(err)}`);
+      showToast(`发送消息失败：${toErrorMessage(err)}`, 'error');
     } finally {
       setSending(false);
     }
@@ -1081,7 +1097,7 @@ function App() {
             roundId: streamingMsg.roundId,
             error,
           });
-          window.alert(`中断回复失败：${toErrorMessage(error)}`);
+          showToast(`中断回复失败：${toErrorMessage(error)}`, 'error');
         }
       }
       return;
@@ -1100,7 +1116,7 @@ function App() {
         roundId,
         error,
       });
-      window.alert(`中断回复失败：${toErrorMessage(error)}`);
+      showToast(`中断回复失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1148,7 +1164,7 @@ function App() {
       });
       setReplyStatus('idle');
       setAbortingRoundId(null);
-      window.alert(`重新回复失败：${toErrorMessage(error)}`);
+      showToast(`重新回复失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1172,7 +1188,7 @@ function App() {
       setAbortingRoundId(roundId);
     } catch (error) {
       console.error('[handleRetryFailed] error:', error);
-      window.alert(`自动重试失败：${toErrorMessage(error)}`);
+      showToast(`自动重试失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1196,7 +1212,7 @@ function App() {
       await refreshConversationContext(conversationId);
     } catch (error) {
       console.error('[confirmRewind] error:', error);
-      window.alert(`回溯失败：${toErrorMessage(error)}`);
+      showToast(`回溯失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1217,7 +1233,7 @@ function App() {
       );
     } catch (error) {
       console.error('[handleEditMessage] error:', error);
-      window.alert(`编辑消息失败：${toErrorMessage(error)}`);
+      showToast(`编辑消息失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1238,7 +1254,7 @@ function App() {
         backendId,
         error,
       });
-      window.alert(`创建会话分支失败：${toErrorMessage(error)}`);
+      showToast(`创建会话分支失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1275,7 +1291,7 @@ function App() {
         backendId,
         error,
       });
-      window.alert(`删除消息失败：${toErrorMessage(error)}`);
+      showToast(`删除消息失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1328,7 +1344,7 @@ function App() {
         targetBackendId,
         error,
       });
-      window.alert(`切换回复版本失败：${toErrorMessage(error)}`);
+      showToast(`切换回复版本失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1364,7 +1380,7 @@ function App() {
         selectedConversationId: selectedConversationId(),
         error,
       });
-      window.alert(`删除会话失败：${toErrorMessage(error)}`);
+      showToast(`删除会话失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1378,7 +1394,8 @@ function App() {
         conversationId,
         error,
       });
-      window.alert(`开启房间失败：${toErrorMessage(error)}`);
+      await refreshSessions();
+      showToast(`开启房间失败：${toErrorMessage(error)}`, 'error');
     } finally {
       setRoomActionLoading(false);
     }
@@ -1394,7 +1411,8 @@ function App() {
         conversationId,
         error,
       });
-      window.alert(`关闭房间失败：${toErrorMessage(error)}`);
+      await refreshSessions();
+      showToast(`关闭房间失败：${toErrorMessage(error)}`, 'error');
     } finally {
       setRoomActionLoading(false);
     }
@@ -1494,12 +1512,13 @@ function App() {
       const payloadJson = await file.text();
       const report = await exchangeImport(payloadJson);
       await Promise.all([refreshCharacters(), refreshWorldBooks()]);
-      window.alert(
+      showToast(
         `导入完成：角色 ${report.characters} 个、世界书 ${report.worldBooks} 本、条目 ${report.worldBookEntries} 条、头像 ${report.avatars} 张。`,
+        'success',
       );
     } catch (error) {
       console.error('[exchange] frontend:import:error', { fileName: file.name, error });
-      window.alert(`导入失败：${toErrorMessage(error)}`);
+      showToast(`导入失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1510,7 +1529,7 @@ function App() {
       downloadJsonFile(fileName, json);
     } catch (error) {
       console.error('[exchange] frontend:export_character:error', { id: character.id, error });
-      window.alert(`导出角色卡失败：${toErrorMessage(error)}`);
+      showToast(`导出角色卡失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1521,7 +1540,7 @@ function App() {
       downloadJsonFile(fileName, json);
     } catch (error) {
       console.error('[exchange] frontend:export_world_book:error', { id: book.id, error });
-      window.alert(`导出世界书失败：${toErrorMessage(error)}`);
+      showToast(`导出世界书失败：${toErrorMessage(error)}`, 'error');
     }
   };
 
@@ -1644,7 +1663,7 @@ function App() {
 
   const handleRoomJoined = (
     result: RoomJoinResult,
-    connection: { hostAddress: string; port: number; displayName: string },
+    connection: { hostAddress: string; port: number; displayName: string; selectedCharacterId?: number },
   ) => {
     if (!result.conversation || result.memberId == null) {
       console.error('[room-join] missing room session metadata', result);
@@ -1685,6 +1704,7 @@ function App() {
       contextWindowSize: result.contextWindowSize,
       tokenUsageReport: result.tokenUsageReport,
       plotSummaries: result.plotSummaries ?? [],
+      playerCharacterId: connection.selectedCharacterId,
     });
     setPlotSummaries(result.plotSummaries ?? []);
     if (result.schemaToggleState) {
@@ -1703,6 +1723,14 @@ function App() {
     setActiveWorkspace('chat');
     setSelectedConversationId(result.conversation.id);
     setSelectedConversationMembers(result.members ?? []);
+    if (connection.selectedCharacterId != null) {
+      setSelectedConversationMembers(produce((members) => {
+        const ownMember = members.find((m) => m.id === result.memberId);
+        if (ownMember) {
+          ownMember.playerCharacterId = connection.selectedCharacterId;
+        }
+      }));
+    }
     setMessages((result.fullMessages ?? result.recentMessages ?? []).map((m) => toChatMessage(m, currentAiCharacter(), currentPlayerCharacter(), remoteHostCharacter())));
     setCurrentRoundState(result.roundState ?? null);
     setActiveModal(null);
@@ -1817,6 +1845,7 @@ function App() {
           }));
           setReplyStatus('idle');
           setAbortingRoundId(null);
+          setRetryNotice(null);
           break;
         }
         case 'thinking_delta': {
@@ -1846,23 +1875,35 @@ function App() {
       }));
       setReplyStatus('idle');
       setAbortingRoundId(null);
+      setRetryNotice(null);
     });
 
     const retryUnlisten = await listenStreamRetry((payload) => {
       if (payload.conversationId !== selectedConversationId()) return;
-      console.warn('[llm-stream-retry] auto-retrying after error:', payload.error, 'messageId=', payload.messageId, 'roundId=', payload.roundId, 'attemptCount=', payload.attemptCount);
-      // 弹窗通知用户:展示失败原因与重试次数,4 秒后自动消失。
-      setRetryNotice({ error: payload.error, attemptCount: payload.attemptCount });
-      if (retryNoticeTimer) clearTimeout(retryNoticeTimer);
-      retryNoticeTimer = setTimeout(() => setRetryNotice(null), 4000);
+      console.warn('[llm-stream-retry] retry event:', payload.error, 'messageId=', payload.messageId, 'roundId=', payload.roundId, 'attemptCount=', payload.attemptCount, 'autoRetryEnabled=', payload.autoRetryEnabled);
+      setRetryNotice({ error: payload.error, attemptCount: payload.attemptCount, autoRetryEnabled: payload.autoRetryEnabled, roundId: payload.roundId });
       upsertStreamingAssistant(payload.messageId, payload.roundId);
-      updateMessageContent(payload.messageId, () => ({
-        content: '',
-        isStreaming: true,
-        error: undefined,
-        structuredFields: undefined,
-      }));
-      setReplyStatus('connecting');
+      if (payload.autoRetryEnabled) {
+        // 自动重试中：保持流式状态
+        updateMessageContent(payload.messageId, () => ({
+          content: '',
+          isStreaming: true,
+          error: undefined,
+          structuredFields: undefined,
+        }));
+        setReplyStatus('connecting');
+        setAbortingRoundId(payload.roundId);
+      } else {
+        // 首次失败：停止流式状态，等待用户操作
+        updateMessageContent(payload.messageId, () => ({
+          content: '',
+          isStreaming: false,
+          error: payload.error,
+          structuredFields: undefined,
+        }));
+        setReplyStatus('idle');
+        setAbortingRoundId(null);
+      }
     });
 
     const messageResetUnlisten = await listenMessageReset((payload) => {
@@ -1928,6 +1969,7 @@ function App() {
       }));
       setReplyStatus('idle');
       setAbortingRoundId(null);
+      setRetryNotice(null);
     });
 
     const roomStructuredDeltaUnlisten = await listenRoomStreamStructuredFieldDelta((payload: RoomStreamStructuredFieldDeltaEvent) => {
@@ -1974,16 +2016,28 @@ function App() {
         conversationId: payload.conversationId,
         messageId: payload.messageId,
         roundId: payload.roundId,
+        autoRetryEnabled: payload.autoRetryEnabled,
       });
       if (payload.conversationId !== selectedConversationId()) return;
       // Host already receives retry via llm-stream-retry; skip to avoid duplicates
       if (!activeRoomClientSession()) return;
+      setRetryNotice({ error: payload.error, attemptCount: payload.attemptCount, autoRetryEnabled: payload.autoRetryEnabled, roundId: payload.roundId });
       upsertStreamingAssistant(payload.messageId, payload.roundId);
-      updateMessageContent(payload.messageId, () => ({
-        content: '',
-        isStreaming: true,
-      }));
-      setReplyStatus('connecting');
+      if (payload.autoRetryEnabled) {
+        updateMessageContent(payload.messageId, () => ({
+          content: '',
+          isStreaming: true,
+        }));
+        setReplyStatus('connecting');
+        setAbortingRoundId(payload.roundId);
+      } else {
+        updateMessageContent(payload.messageId, () => ({
+          content: '',
+          isStreaming: false,
+        }));
+        setReplyStatus('idle');
+        setAbortingRoundId(null);
+      }
     });
 
     const roomMessageResetUnlisten = await listenRoomMessageReset((payload: RoomMessageResetEvent) => {
@@ -2080,7 +2134,11 @@ function App() {
     const roomTokenUsageUnlisten = await listenRoomTokenUsage((payload: RoomTokenUsageEvent) => {
       const remote = activeRoomClientSession();
       if (!remote) return;
-      const reportContextWindow = payload.tokenUsageReport?.contextWindowSize ?? null;
+      if (payload.tokenUsageReport == null) {
+        // null 时保持旧 tokenUsageReport
+        return;
+      }
+      const reportContextWindow = payload.tokenUsageReport.contextWindowSize ?? null;
       const nextContextWindow = reportContextWindow != null ? reportContextWindow : remote.contextWindowSize;
       setRoomClientSession({
         ...remote,
@@ -2310,6 +2368,21 @@ function App() {
       }));
     });
 
+    const roomSwipeActivatedUnlisten = await listenRoomSwipeActivated((payload: RoomSwipeActivatedEvent) => {
+      const remote = activeRoomClientSession();
+      if (!remote) return;
+      setMessages(produce((list) => {
+        for (const message of list) {
+          if (message.roundId !== payload.roundId) continue;
+          if (message.backendId === payload.messageId) {
+            message.isActiveInRound = true;
+          } else if (message.isActiveInRound) {
+            message.isActiveInRound = false;
+          }
+        }
+      }));
+    });
+
     onCleanup(() => {
       chunkUnlisten();
       errorUnlisten();
@@ -2341,11 +2414,13 @@ function App() {
       roomRewoundToRoundUnlisten();
       roomContextWindowChangedUnlisten();
       roomGuestCharacterUpdatedUnlisten();
+      roomSwipeActivatedUnlisten();
       memoryErrorUnlisten();
     });
   });
 
   createEffect(() => {
+    setRetryNotice(null);
     const conversationId = selectedConversationId();
     setCharacterStateOverlaySummary(null);
     setCharacterStateOverlayStatus(null);
@@ -2391,32 +2466,67 @@ function App() {
           <div
             style={{
               position: 'fixed',
-              top: '24px',
-              left: '50%',
-              transform: 'translateX(-50%)',
+              'top': '80px',
+              'right': '24px',
               'z-index': 9999,
-              'min-width': '320px',
-              'max-width': '560px',
-              padding: '12px 18px',
-              'border-radius': '10px',
-              background: 'rgba(20, 20, 28, 0.95)',
+              'max-width': '360px',
+              padding: '12px 16px',
+              'background': 'rgba(30, 30, 40, 0.95)',
+              'border-radius': '12px',
+              'font-size': '13px',
               color: '#fff',
-              'font-size': '14px',
               'line-height': '1.5',
               'box-shadow': '0 8px 32px rgba(0, 0, 0, 0.45)',
               border: '1px solid rgba(255, 120, 120, 0.5)',
               display: 'flex',
               'flex-direction': 'column',
-              gap: '4px',
-              'pointer-events': 'none',
+              gap: '8px',
             }}
           >
             <div style={{ 'font-weight': 600, color: '#ff9a9a' }}>
-              自动重试中 · 第 {notice().attemptCount} 次尝试
+              {notice().autoRetryEnabled
+                ? `自动重试中 · 第 ${notice().attemptCount} 次尝试`
+                : `发送失败 · 第 ${notice().attemptCount} 次尝试`}
             </div>
             <div style={{ opacity: 0.85, 'word-break': 'break-word' }}>
               失败原因:{notice().error}
             </div>
+            <Show when={!activeRoomClientSession()}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Show when={!notice().autoRetryEnabled}>
+                  <button
+                    onClick={() => void handleRetryFailed('', notice().roundId)}
+                    style={{
+                      padding: '4px 12px',
+                      'font-size': '12px',
+                      'border-radius': '6px',
+                      border: '1px solid rgba(255, 120, 120, 0.5)',
+                      background: 'rgba(255, 120, 120, 0.2)',
+                      color: '#ff9a9a',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    自动重试
+                  </button>
+                </Show>
+                <Show when={notice().autoRetryEnabled}>
+                  <button
+                    onClick={() => void handleAbortReply()}
+                    style={{
+                      padding: '4px 12px',
+                      'font-size': '12px',
+                      'border-radius': '6px',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      color: '#fff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    停止
+                  </button>
+                </Show>
+              </div>
+            </Show>
           </div>
         )}
       </Show>
@@ -2502,6 +2612,7 @@ function App() {
         profile={profile()}
         onSchemaToggle={(toggleKey, expanded) => {
           if (activeRoomClientSession() !== null) return;
+          if (selectedConversation()?.conversationType !== 'online') return;
           void roomBroadcastSchemaToggle(toggleKey, expanded);
         }}
         onPresetsChanged={refreshPresets}
@@ -2542,6 +2653,7 @@ function App() {
         onConfirm={() => void confirmRewind()}
         onCancel={() => setRewindTarget(null)}
       />
+      <NotificationContainer />
     </>
   );
 }

@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use crate::dbg_eprintln;
 
 #[derive(Debug, PartialEq)]
 pub enum StructuredOutputEvent {
@@ -248,10 +249,10 @@ impl StructuredOutputParser {
                         self.active_string_key = None;
                         self.phase = Phase::ExpectCommaOrEnd;
                     } else if ch == '\n' {
-                        eprintln!("[structured_output] raw newline in string value for key {:?}, treating as \\n escape", self.active_string_key);
+                        dbg_eprintln!("[structured_output] raw newline in string value for key {:?}, treating as \\n escape", self.active_string_key);
                         self.current_string.push('\n');
                     } else if ch == '\r' {
-                        eprintln!("[structured_output] raw carriage return in string value for key {:?}, treating as \\r escape", self.active_string_key);
+                        dbg_eprintln!("[structured_output] raw carriage return in string value for key {:?}, treating as \\r escape", self.active_string_key);
                         self.current_string.push('\r');
                     } else if ch == '\t' {
                         self.current_string.push('\t');

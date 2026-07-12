@@ -13,6 +13,7 @@ import {
   characterCardsUpdate,
   characterCardsDelete
 } from '../../../src/lib/backend';
+import { showToast, showConfirm } from '../Toast';
 
 interface CharacterDrawerProps {
   isOpen: boolean;
@@ -107,7 +108,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
       const imported = await importManagedImageFile(file);
       setImagePath(imported.storedPath);
     } catch (e) {
-      window.alert('上传失败');
+      showToast('上传失败', 'error');
     } finally {
       setUploadingImage(false);
     }
@@ -115,7 +116,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
 
   const handleSave = async () => {
     if (!name().trim()) {
-      window.alert('角色名称不能为空');
+      showToast('角色名称不能为空', 'warning');
       return;
     }
     
@@ -149,7 +150,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
       await props.onRefresh();
       props.onClose();
     } catch (e) {
-      window.alert(`保存失败: ${e instanceof Error ? e.message : String(e)}`);
+      showToast(`保存失败: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -157,7 +158,10 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
 
   const handleDelete = async () => {
     if (!props.character) return;
-    if (!window.confirm(`确定要删除角色「${props.character.name}」吗？`)) return;
+    const confirmed = await showConfirm({
+      message: `确定要删除角色「${props.character.name}」吗？`,
+    });
+    if (!confirmed) return;
     
     setIsSaving(true);
     try {
@@ -165,7 +169,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
       await props.onRefresh();
       props.onClose();
     } catch (e) {
-      window.alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
+      showToast(`删除失败: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsSaving(false);
     }

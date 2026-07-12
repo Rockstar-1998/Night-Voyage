@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { Search, Plus, UserPlus, Users, User, Trash2 } from '../lib/icons';
 import { CharacterCard, ConversationListItem, ConversationMember, resolveImageSrc } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
+import { showConfirm } from './Toast';
 
 interface SessionSidebarProps {
   sessions: ConversationListItem[];
@@ -121,10 +122,10 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                             <button
                               type="button"
                               class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => {
+                              onClick={async (e) => {
                                 e.stopPropagation();
                                 const title = session.title ?? '未命名会话';
-                                if (window.confirm(`确定要删除会话「${title}」吗？此操作不可撤销。`)) {
+                                if (await showConfirm({ message: `确定要删除会话「${title}」吗？此操作不可撤销。` })) {
                                   props.onDeleteConversation?.(session.id);
                                 }
                               }}
@@ -179,9 +180,9 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                               >
                                 <button
                                   type="button"
-                                  onClick={(e) => {
+                                  onClick={async (e) => {
                                     e.stopPropagation();
-                                    if (window.confirm('确定要关闭房间吗？其他玩家将断开连接。')) {
+                                    if (await showConfirm({ message: '确定要关闭房间吗？其他玩家将断开连接。' })) {
                                       props.onCloseRoom?.(session.id);
                                     }
                                   }}
@@ -262,10 +263,10 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                             role="button"
                             tabindex={0}
                             class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
                               const title = session.title ?? '未命名会话';
-                              if (window.confirm(`确定要删除会话「${title}」吗？此操作不可撤销。`)) {
+                              if (await showConfirm({ message: `确定要删除会话「${title}」吗？此操作不可撤销。` })) {
                               props.onDeleteConversation?.(session.id);
                             }
                             }}

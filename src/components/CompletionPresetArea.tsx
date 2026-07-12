@@ -47,6 +47,7 @@ import {
 import { SchemaConfigPanel } from './SchemaConfigPanel';
 import { CompletionPreviewModal } from './CompletionPreviewModal';
 import { IconButton } from './ui/IconButton';
+import { showConfirm } from './Toast';
 
 const DEFAULT_NEW_BLOCK: PresetBlockEditorData = {
   title: '',
@@ -509,10 +510,12 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
             </button>
             <IconButton
               type="button"
-              onClick={(event) => {
+              onClick={async (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                const confirmed = window.confirm(`该条目已锁定${block.lockReason ? `（锁定原因：${block.lockReason}）` : ''}，确定要删除吗？`);
+                const confirmed = await showConfirm({
+                  message: `该条目已锁定${block.lockReason ? `（锁定原因：${block.lockReason}）` : ''}，确定要删除吗？`,
+                });
                 if (!confirmed) return;
                 void deleteBlockFromPreset(block.id);
               }}
@@ -869,7 +872,9 @@ export const CompletionPresetArea: Component<{ onPresetsChanged?: () => void }> 
   const deletePreset = async () => {
     const detail = presetDetail();
     if (!detail) return;
-    const confirmed = window.confirm(`确认删除预设“${detail.preset.name}”吗？`);
+    const confirmed = await showConfirm({
+      message: `确认删除预设“${detail.preset.name}”吗？`,
+    });
     if (!confirmed) return;
 
     setSaving(true);

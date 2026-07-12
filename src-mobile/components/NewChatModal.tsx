@@ -1,6 +1,7 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import { X, CheckCircle2, ChevronDown, User, Users, Check, AlertTriangle, Book, Link as LinkIcon, Radio } from 'lucide-solid';
 import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, PresetSummary } from '../../src/lib/backend';
+import { showToast } from './Toast';
 
 interface NewChatModalProps {
   isOpen: boolean;
@@ -80,7 +81,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       props.onClose();
     } catch (error) {
       console.error('[NewChatModal] handleSubmit: create conversation failed', error);
-      window.alert(`创建会话失败：${error instanceof Error ? error.message : String(error)}`);
+      showToast(`创建会话失败：${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 

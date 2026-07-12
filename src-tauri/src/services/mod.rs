@@ -2,6 +2,8 @@
 // WorldVariable merged into message_rounds.world_variables.
 pub mod chat;
 pub mod chat_service;
+/// Isolated debug log macros — see module docs for cleanup procedure.
+pub mod debug_log;
 pub mod http_client;
 pub mod mem0_snapshot;
 pub mod memory_providers;

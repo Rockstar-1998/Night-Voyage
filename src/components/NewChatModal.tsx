@@ -3,6 +3,7 @@ import { Select } from './ui/Select';
 import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
 import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
+import { showToast } from './Toast';
 
 interface NewChatModalProps {
   isOpen: boolean;
@@ -115,7 +116,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       }
     } catch (error) {
       console.error('[NewChatModal] handleSubmit: create conversation failed', error);
-      window.alert(`创建会话失败：${error instanceof Error ? error.message : String(error)}`);
+      showToast(`创建会话失败：${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 

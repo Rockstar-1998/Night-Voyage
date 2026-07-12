@@ -21,6 +21,7 @@ use crate::{
         },
     },
 };
+use crate::dbg_eprintln;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptCompileMode {
@@ -472,11 +473,11 @@ pub async fn compile_prompt(
         }
     }
 
-    eprintln!("[prompt-compiler] compile_prompt: step=load_conversation_compile_context conversation_id={}", input.conversation_id);
+    dbg_eprintln!("[prompt-compiler] compile_prompt: step=load_conversation_compile_context conversation_id={}", input.conversation_id);
     let context = load_conversation_compile_context(db, input.conversation_id)
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[prompt-compiler] compile_prompt: ERROR at load_conversation_compile_context: {}",
                 err
             );
@@ -484,7 +485,7 @@ pub async fn compile_prompt(
         })?;
     let mut debug = PromptCompileDebugReport::default();
 
-    eprintln!(
+    dbg_eprintln!(
         "[prompt-compiler] compile_prompt: step=load_current_user_block conversation_id={}",
         input.conversation_id
     );
@@ -492,7 +493,7 @@ pub async fn compile_prompt(
         load_current_user_block(db, input.conversation_id, input.target_round_id)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[prompt-compiler] compile_prompt: ERROR at load_current_user_block: {}",
                     err
                 );
@@ -505,9 +506,9 @@ pub async fn compile_prompt(
 
     let character_data = match context.host_character_id {
         Some(character_id) => {
-            eprintln!("[prompt-compiler] compile_prompt: step=load_character_compile_data character_id={}", character_id);
+            dbg_eprintln!("[prompt-compiler] compile_prompt: step=load_character_compile_data character_id={}", character_id);
             load_character_compile_data(db, character_id).await.map_err(|err| {
-                eprintln!("[prompt-compiler] compile_prompt: ERROR at load_character_compile_data: {}", err);
+                dbg_eprintln!("[prompt-compiler] compile_prompt: ERROR at load_character_compile_data: {}", err);
                 err
             })?
         }
@@ -515,9 +516,9 @@ pub async fn compile_prompt(
     };
     let player_character_data = match context.player_character_id {
         Some(player_character_id) => {
-            eprintln!("[prompt-compiler] compile_prompt: step=load_player_character_compile_data player_character_id={}", player_character_id);
+            dbg_eprintln!("[prompt-compiler] compile_prompt: step=load_player_character_compile_data player_character_id={}", player_character_id);
             load_character_compile_data(db, player_character_id).await.map_err(|err| {
-                eprintln!("[prompt-compiler] compile_prompt: ERROR at load_player_character_compile_data: {}", err);
+                dbg_eprintln!("[prompt-compiler] compile_prompt: ERROR at load_player_character_compile_data: {}", err);
                 err
             })?
         }
@@ -531,7 +532,7 @@ pub async fn compile_prompt(
         player_character_data.as_ref(),
     );
 
-    eprintln!(
+    dbg_eprintln!(
         "[prompt-compiler] compile_prompt: step=load_preset_compiler_data preset_id={:?}",
         context.preset_id
     );
@@ -544,7 +545,7 @@ pub async fn compile_prompt(
     )
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] compile_prompt: ERROR at load_preset_compiler_data: {}",
             err
         );
@@ -575,7 +576,7 @@ pub async fn compile_prompt(
         load_plot_summary_mode(db, input.conversation_id)
             .await
             .unwrap_or_else(|err| {
-                eprintln!("[prompt-compiler] compile_prompt: failed to load plot_summary_mode: {}, assuming disabled", err);
+                dbg_eprintln!("[prompt-compiler] compile_prompt: failed to load plot_summary_mode: {}, assuming disabled", err);
                 PLOT_SUMMARY_MODE_DISABLED.to_string()
             })
             != PLOT_SUMMARY_MODE_DISABLED
@@ -625,7 +626,7 @@ pub async fn compile_prompt(
             load_plot_summary_blocks(db, input.conversation_id, input.target_round_id, &mut debug)
                 .await
                 .map_err(|err| {
-                    eprintln!(
+                    dbg_eprintln!(
                         "[prompt-compiler] compile_prompt: ERROR at load_plot_summary_blocks: {}",
                         err
                     );
@@ -637,7 +638,7 @@ pub async fn compile_prompt(
             input.target_round_id,
         )
         .await.map_err(|err| {
-            eprintln!("[prompt-compiler] compile_prompt: ERROR at load_completed_plot_summary_round_ids_before: {}", err);
+            dbg_eprintln!("[prompt-compiler] compile_prompt: ERROR at load_completed_plot_summary_round_ids_before: {}", err);
             err
         })?;
         (blocks, round_ids)
@@ -652,7 +653,7 @@ pub async fn compile_prompt(
     let history_blocks = if mem0_active {
         Vec::new()
     } else {
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] compile_prompt: step=load_recent_history_blocks conversation_id={}",
             input.conversation_id
         );
@@ -666,7 +667,7 @@ pub async fn compile_prompt(
         )
         .await
         .map_err(|err| {
-            eprintln!(
+            dbg_eprintln!(
                 "[prompt-compiler] compile_prompt: ERROR at load_recent_history_blocks: {}",
                 err
             );
@@ -707,7 +708,7 @@ pub async fn compile_prompt(
     .await;
 
     if let Some(world_book_id) = context.world_book_id {
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] compile_prompt: step=load_world_book_blocks world_book_id={}",
             world_book_id
         );
@@ -829,7 +830,18 @@ pub async fn compile_token_usage_report(
         log_dir: None,
     };
 
-    let result = compile_prompt(db, &input, 0, None).await?;
+    let result = match compile_prompt(db, &input, 0, None).await {
+        Ok(result) => result,
+        Err(err) if err.contains("current round input message was not found") => {
+            return Ok(TokenUsageReport {
+                context_window_size: max_context_tokens.map(|v| v as usize),
+                layers: Vec::new(),
+                total_estimated_tokens: 0,
+                total_actual_tokens: None,
+            });
+        }
+        Err(err) => return Err(err),
+    };
 
     fn kind_color(kind: &PromptBlockKind) -> &'static str {
         match kind {
@@ -1416,7 +1428,7 @@ async fn load_preset_compiler_data(
             .fetch_all(db)
             .await
             .unwrap_or_default();
-            eprintln!(
+            dbg_eprintln!(
                 "[prompt-compiler] ERROR: conversation preset {preset_id} was not found. Available presets: {:?}",
                 all_presets
             );
@@ -1986,21 +1998,21 @@ async fn load_recent_history_blocks(
 ) -> Result<Vec<PromptBlock>, String> {
     let rows = if let Some(tid) = target_round_id {
         let sql = "SELECT id, role, content, message_kind, round_id FROM messages WHERE conversation_id = ? AND id != ? AND ((message_kind = 'user_aggregate' AND (round_id IS NULL OR round_id != ?)) OR (message_kind = 'user_visible' AND round_id IS NULL) OR (message_kind = 'assistant_visible' AND (round_id IS NULL OR id IN (SELECT active_assistant_message_id FROM message_rounds WHERE conversation_id = ? AND active_assistant_message_id IS NOT NULL AND id != ?))) OR message_kind = 'system') ORDER BY created_at ASC, id ASC";
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] load_recent_history_blocks(Some): sql={}",
             sql
         );
-        eprintln!("[prompt-compiler] load_recent_history_blocks(Some): params: conversation_id={}, exclude_message_id={}, tid={}", conversation_id, exclude_message_id, tid);
+        dbg_eprintln!("[prompt-compiler] load_recent_history_blocks(Some): params: conversation_id={}, exclude_message_id={}, tid={}", conversation_id, exclude_message_id, tid);
 
         let step1 = sqlx::query("SELECT id FROM messages WHERE conversation_id = ? LIMIT 1")
             .bind(conversation_id)
             .fetch_optional(db)
             .await
             .map_err(|err| {
-                eprintln!("[prompt-compiler] step1_ERROR: {}", err);
+                dbg_eprintln!("[prompt-compiler] step1_ERROR: {}", err);
                 err.to_string()
             })?;
-        eprintln!("[prompt-compiler] step1_ok: {:?}", step1.is_some());
+        dbg_eprintln!("[prompt-compiler] step1_ok: {:?}", step1.is_some());
 
         let step2 =
             sqlx::query("SELECT id FROM messages WHERE conversation_id = ? AND id != ? LIMIT 1")
@@ -2009,33 +2021,33 @@ async fn load_recent_history_blocks(
                 .fetch_optional(db)
                 .await
                 .map_err(|err| {
-                    eprintln!("[prompt-compiler] step2_ERROR: {}", err);
+                    dbg_eprintln!("[prompt-compiler] step2_ERROR: {}", err);
                     err.to_string()
                 })?;
-        eprintln!("[prompt-compiler] step2_ok: {:?}", step2.is_some());
+        dbg_eprintln!("[prompt-compiler] step2_ok: {:?}", step2.is_some());
 
         let step3 = sqlx::query("SELECT id, role, content, message_kind, round_id FROM messages WHERE conversation_id = ? AND id != ? AND message_kind = 'user_aggregate' LIMIT 1")
             .bind(conversation_id)
             .bind(exclude_message_id)
             .fetch_optional(db)
             .await
-            .map_err(|err| { eprintln!("[prompt-compiler] step3_ERROR: {}", err); err.to_string() })?;
-        eprintln!("[prompt-compiler] step3_ok: {:?}", step3.is_some());
+            .map_err(|err| { dbg_eprintln!("[prompt-compiler] step3_ERROR: {}", err); err.to_string() })?;
+        dbg_eprintln!("[prompt-compiler] step3_ok: {:?}", step3.is_some());
 
         let step4 = sqlx::query("SELECT id FROM message_rounds WHERE conversation_id = ? AND active_assistant_message_id IS NOT NULL LIMIT 1")
             .bind(conversation_id)
             .fetch_optional(db)
             .await
-            .map_err(|err| { eprintln!("[prompt-compiler] step4_ERROR: {}", err); err.to_string() })?;
-        eprintln!("[prompt-compiler] step4_ok: {:?}", step4.is_some());
+            .map_err(|err| { dbg_eprintln!("[prompt-compiler] step4_ERROR: {}", err); err.to_string() })?;
+        dbg_eprintln!("[prompt-compiler] step4_ok: {:?}", step4.is_some());
 
         let step5 = sqlx::query("SELECT id FROM messages WHERE conversation_id = ? AND id IN (SELECT active_assistant_message_id FROM message_rounds WHERE conversation_id = ?) LIMIT 1")
             .bind(conversation_id)
             .bind(conversation_id)
             .fetch_optional(db)
             .await
-            .map_err(|err| { eprintln!("[prompt-compiler] step5_ERROR: {}", err); err.to_string() })?;
-        eprintln!("[prompt-compiler] step5_ok: {:?}", step5.is_some());
+            .map_err(|err| { dbg_eprintln!("[prompt-compiler] step5_ERROR: {}", err); err.to_string() })?;
+        dbg_eprintln!("[prompt-compiler] step5_ok: {:?}", step5.is_some());
 
         sqlx::query(sql)
             .bind(conversation_id)
@@ -2046,7 +2058,7 @@ async fn load_recent_history_blocks(
             .fetch_all(db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[prompt-compiler] load_recent_history_blocks(Some): SQL_ERROR: {}",
                     err
                 );
@@ -2054,7 +2066,7 @@ async fn load_recent_history_blocks(
             })?
     } else {
         let sql = "SELECT id, role, content, message_kind, round_id FROM messages WHERE conversation_id = ? AND id != ? AND (message_kind = 'user_aggregate' OR (message_kind = 'user_visible' AND round_id IS NULL) OR (message_kind = 'assistant_visible' AND (round_id IS NULL OR id IN (SELECT active_assistant_message_id FROM message_rounds WHERE conversation_id = ? AND active_assistant_message_id IS NOT NULL))) OR message_kind = 'system') ORDER BY created_at ASC, id ASC";
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] load_recent_history_blocks(None): sql={}",
             sql
         );
@@ -2065,7 +2077,7 @@ async fn load_recent_history_blocks(
             .fetch_all(db)
             .await
             .map_err(|err| {
-                eprintln!(
+                dbg_eprintln!(
                     "[prompt-compiler] load_recent_history_blocks(None): SQL_ERROR: {}",
                     err
                 );
@@ -2134,7 +2146,7 @@ async fn load_opening_block(
     .fetch_optional(db)
     .await
     .map_err(|err| {
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] load_opening_block: SQL_ERROR: {}",
             err
         );
@@ -2193,7 +2205,7 @@ async fn ensure_opening_in_history(
         Ok(Some(block)) => block,
         Ok(None) => return,
         Err(err) => {
-            eprintln!("[prompt-compiler] ensure_opening_in_history: failed to load opening (non-fatal): {}", err);
+            dbg_eprintln!("[prompt-compiler] ensure_opening_in_history: failed to load opening (non-fatal): {}", err);
             return;
         }
     };
@@ -2410,7 +2422,7 @@ async fn load_retrieved_detail_blocks(
             }
             Err(err) => {
                 let msg = format!("{strategy} search failed: {err}");
-                eprintln!("[prompt-compiler] {msg}");
+                dbg_eprintln!("[prompt-compiler] {msg}");
                 debug.errors.push(msg.clone());
             }
         }
@@ -2555,7 +2567,7 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
         .saturating_sub(reserve_output)
         .saturating_sub(safety_margin);
 
-    eprintln!(
+    dbg_eprintln!(
         "[prompt-compiler] apply_budget_trim: max_total_tokens={}, reserve_output={}, safety_margin={}, allowed_tokens={}, estimated_before={}",
         max_total_tokens, reserve_output, safety_margin, allowed_tokens, total_estimated_tokens(result)
     );
@@ -2563,7 +2575,7 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
     loop {
         let total_tokens = total_estimated_tokens(result);
         if total_tokens <= allowed_tokens {
-            eprintln!(
+            dbg_eprintln!(
                 "[prompt-compiler] apply_budget_trim: done. estimated_after={}, trimmed_count={}",
                 total_tokens,
                 result.debug.trimmed_blocks.len()
@@ -2594,7 +2606,7 @@ fn apply_budget_trim(result: &mut PromptCompileResult, budget: &PromptBudget) {
         ) {
             continue;
         }
-        eprintln!(
+        dbg_eprintln!(
             "[prompt-compiler] apply_budget_trim: WARNING cannot trim further. estimated={}, allowed={}",
             total_tokens, allowed_tokens
         );

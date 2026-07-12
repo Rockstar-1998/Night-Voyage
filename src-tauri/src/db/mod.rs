@@ -3,6 +3,7 @@ use std::{env, path::PathBuf, time::Duration};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager};
+use crate::dbg_eprintln;
 
 pub type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -41,7 +42,7 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
     {
         Ok(ids) => ids,
         Err(err) => {
-            eprintln!("[startup] cleanup_stale_rounds: query failed: {}", err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: query failed: {}", err);
             return;
         }
     };
@@ -50,20 +51,20 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
         return;
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[startup] cleanup_stale_rounds: found {} stale collecting rounds with no visible messages",
         stale_rounds.len()
     );
 
     for round_id in &stale_rounds {
-        eprintln!("[startup] cleanup_stale_rounds: cleaning round_id={}", round_id);
+        dbg_eprintln!("[startup] cleanup_stale_rounds: cleaning round_id={}", round_id);
 
         if let Err(err) = sqlx::query("DELETE FROM message_content_parts WHERE message_id IN (SELECT id FROM messages WHERE round_id = ?)")
             .bind(round_id)
             .execute(db)
             .await
         {
-            eprintln!("[startup] cleanup_stale_rounds: failed to delete content_parts for round {}: {}", round_id, err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: failed to delete content_parts for round {}: {}", round_id, err);
         }
 
         if let Err(err) = sqlx::query("DELETE FROM message_tool_calls WHERE message_id IN (SELECT id FROM messages WHERE round_id = ?)")
@@ -71,7 +72,7 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
             .execute(db)
             .await
         {
-            eprintln!("[startup] cleanup_stale_rounds: failed to delete tool_calls for round {}: {}", round_id, err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: failed to delete tool_calls for round {}: {}", round_id, err);
         }
 
         if let Err(err) = sqlx::query("DELETE FROM messages WHERE round_id = ?")
@@ -79,7 +80,7 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
             .execute(db)
             .await
         {
-            eprintln!("[startup] cleanup_stale_rounds: failed to delete messages for round {}: {}", round_id, err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: failed to delete messages for round {}: {}", round_id, err);
         }
 
         if let Err(err) = sqlx::query("DELETE FROM round_member_actions WHERE round_id = ?")
@@ -87,7 +88,7 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
             .execute(db)
             .await
         {
-            eprintln!("[startup] cleanup_stale_rounds: failed to delete member_actions for round {}: {}", round_id, err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: failed to delete member_actions for round {}: {}", round_id, err);
         }
 
         if let Err(err) = sqlx::query("DELETE FROM message_rounds WHERE id = ?")
@@ -95,11 +96,11 @@ async fn cleanup_stale_rounds(db: &SqlitePool) {
             .execute(db)
             .await
         {
-            eprintln!("[startup] cleanup_stale_rounds: failed to delete round {}: {}", round_id, err);
+            dbg_eprintln!("[startup] cleanup_stale_rounds: failed to delete round {}: {}", round_id, err);
         }
     }
 
-    eprintln!("[startup] cleanup_stale_rounds: cleaned {} stale rounds", stale_rounds.len());
+    dbg_eprintln!("[startup] cleanup_stale_rounds: cleaned {} stale rounds", stale_rounds.len());
 }
 
 pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
@@ -111,7 +112,7 @@ pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
     {
         Ok(rooms) => rooms,
         Err(err) => {
-            eprintln!("[startup] cleanup_stale_rooms: query failed: {}", err);
+            dbg_eprintln!("[startup] cleanup_stale_rooms: query failed: {}", err);
             return;
         }
     };
@@ -120,13 +121,13 @@ pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
         return;
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[startup] cleanup_stale_rooms: found {} waiting rooms to close",
         stale_rooms.len()
     );
 
     for (room_id, conversation_id) in &stale_rooms {
-        eprintln!(
+        dbg_eprintln!(
             "[startup] cleanup_stale_rooms: cleaning room_id={}, conversation_id={}",
             room_id, conversation_id
         );
@@ -138,7 +139,7 @@ pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
         .execute(db)
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[startup] cleanup_stale_rooms: failed to clean members for room {}: {}",
                 room_id, err
             );
@@ -151,14 +152,14 @@ pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
         .execute(db)
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[startup] cleanup_stale_rooms: failed to close room {}: {}",
                 room_id, err
             );
         }
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[startup] cleanup_stale_rooms: cleaned {} stale rooms",
         stale_rooms.len()
     );

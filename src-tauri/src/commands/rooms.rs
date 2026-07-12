@@ -9,6 +9,7 @@ use crate::{
     utils::now_ts,
     AppState,
 };
+use crate::dbg_eprintln;
 
 // ─── Tauri Commands ───
 
@@ -59,6 +60,9 @@ pub struct RoomJoinResult {
     pub host_preset_name: Option<String>,
     pub host_world_book_name: Option<String>,
     pub host_provider_name: Option<String>,
+    pub host_character_image_base64: Option<String>,
+    pub host_character_name: Option<String>,
+    pub host_character_description: Option<String>,
     pub plot_summaries: Option<Vec<crate::models::PlotSummaryRecord>>,
 }
 
@@ -79,6 +83,15 @@ pub async fn room_create(
             "端口 {} 超出 TCP 有效范围 (1-65535)，当前仅支持标准 TCP 端口",
             port
         ));
+    }
+
+    // 先关闭可能仍在运行的旧 server（不管关联哪个会话），避免端口被旧实例占用
+    {
+        let mut host_server = state.host_server.lock().await;
+        if let Some(old_server) = host_server.take() {
+            let mut server = old_server.lock().await;
+            server.shutdown().await;
+        }
     }
 
     // Insert room record
@@ -108,7 +121,7 @@ pub async fn room_create(
                 .execute(db)
                 .await
             {
-                eprintln!(
+                dbg_eprintln!(
                     "[room-create] failed to clean up room {} after server start failure: {}",
                     room_id, cleanup_error
                 );
@@ -146,10 +159,12 @@ pub async fn room_open(
 ) -> Result<RoomOpenResult, String> {
     let db = &state.db;
 
+    // 先关闭可能仍在运行的旧 server（不管关联哪个会话），避免端口被旧实例占用
     {
-        let host_server = state.host_server.lock().await;
-        if host_server.is_some() {
-            return Err("已有房间在运行，请先关闭".to_string());
+        let mut host_server = state.host_server.lock().await;
+        if let Some(old_server) = host_server.take() {
+            let mut server = old_server.lock().await;
+            server.shutdown().await;
         }
     }
 
@@ -161,11 +176,7 @@ pub async fn room_open(
     .await
     .map_err(|e| e.to_string())?;
 
-    let (room_id, host_port, status) = room.ok_or_else(|| "房间不存在".to_string())?;
-
-    if status == "waiting" {
-        return Err("房间已开启".to_string());
-    }
+    let (room_id, host_port, _status) = room.ok_or_else(|| "房间不存在".to_string())?;
 
     sqlx::query(
         "DELETE FROM conversation_members WHERE conversation_id = ? AND join_order > 0",
@@ -242,6 +253,9 @@ pub async fn room_join(
                 host_preset_name: session.host_preset_name,
                 host_world_book_name: session.host_world_book_name,
                 host_provider_name: session.host_provider_name,
+                host_character_image_base64: session.host_character_image_base64,
+                host_character_name: session.host_character_name,
+                host_character_description: session.host_character_description,
                 plot_summaries: session.plot_summaries,
             })
         }
@@ -261,6 +275,9 @@ pub async fn room_join(
             host_preset_name: None,
             host_world_book_name: None,
             host_provider_name: None,
+            host_character_image_base64: None,
+            host_character_name: None,
+            host_character_description: None,
             plot_summaries: None,
         }),
     }
@@ -302,7 +319,7 @@ async fn close_all_rooms(state: &AppState) -> Result<(), String> {
         .execute(db)
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[room-close] failed to clean members for room {}: {}",
                 room_id, e
             );
@@ -315,7 +332,7 @@ async fn close_all_rooms(state: &AppState) -> Result<(), String> {
         .execute(db)
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[room-close] failed to close room {}: {}",
                 room_id, e
             );

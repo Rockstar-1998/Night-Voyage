@@ -30,6 +30,7 @@ use crate::services::prompt_compiler::{
 use crate::services::provider_adapter::{
     build_llm_chat_request, build_provider_http_request, ProviderCapabilityMatrix,
 };
+use crate::dbg_eprintln;
 
 const STREAM_ABORTED_ERROR: &str = "__stream_aborted__";
 
@@ -95,7 +96,7 @@ async fn is_round_aborted(db: &SqlitePool, round_id: i64, assistant_message_id: 
                 return Ok(true);
             }
             if active_msg_id != Some(assistant_message_id) {
-                eprintln!(
+                dbg_eprintln!(
                     "[chat] is_round_aborted: active_assistant_message_id mismatch, expected={}, got={:?}, treating as aborted",
                     assistant_message_id, active_msg_id
                 );
@@ -110,7 +111,7 @@ async fn is_round_aborted(db: &SqlitePool, round_id: i64, assistant_message_id: 
             .map(|count: i64| count > 0)
             .unwrap_or(false);
             if !msg_exists {
-                eprintln!(
+                dbg_eprintln!(
                     "[chat] is_round_aborted: assistant_message_id={} no longer exists, treating as aborted",
                     assistant_message_id
                 );
@@ -129,9 +130,10 @@ pub fn spawn_stream_task(
     provider_id: i64,
     assistant_message_id: i64,
     attachments: Vec<ChatAttachment>,
+    auto_retry_enabled: bool,
 ) {
     tauri::async_runtime::spawn(async move {
-        eprintln!(
+        dbg_eprintln!(
             "[chat] spawn_stream_task: starting stream_llm_response, conversation_id={}, round_id={}, provider_id={}, assistant_message_id={}",
             conversation_id, round_id, provider_id, assistant_message_id
         );
@@ -160,7 +162,7 @@ pub fn spawn_stream_task(
 
             match stream_result {
                 Err(error) => {
-                    eprintln!(
+                    dbg_eprintln!(
                         "[chat] spawn_stream_task: stream_llm_response FAILED (attempt), conversation_id={}, round_id={}, error={}",
                         conversation_id, round_id, error
                     );
@@ -185,7 +187,7 @@ pub fn spawn_stream_task(
                                 error,
                             },
                         );
-                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
                         break;
                     }
 
@@ -206,18 +208,18 @@ pub fn spawn_stream_task(
                                 error,
                             },
                         );
-                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
                         break;
                     }
 
                     // Check if the user aborted during the stream (status = 'aborted').
                     if let Ok(true) = is_round_aborted(&db, round_id, assistant_message_id).await {
-                        eprintln!(
+                        dbg_eprintln!(
                             "[chat] spawn_stream_task: round aborted by user, stopping retry loop, round_id={}",
                             round_id
                         );
                         let _ = RetrySnapshotRepository::mark_aborted(&db, round_id).await;
-                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id);
+                        broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
                         break;
                     }
 
@@ -234,28 +236,26 @@ pub fn spawn_stream_task(
                             message_id: assistant_message_id,
                             error: error.clone(),
                             attempt_count,
+                            auto_retry_enabled,
                         },
                     );
 
-                    tauri::async_runtime::spawn({
-                        let app = app.clone();
-                        let error = error.clone();
-                        async move {
-                            let state = app.state::<crate::AppState>();
-                            let host_server = state.host_server.lock().await;
-                            if let Some(server) = host_server.as_ref() {
-                                let server = server.lock().await;
-                                let msg = crate::network::RoomMessage::StreamRetry {
-                                    conversation_id,
-                                    round_id,
-                                    message_id: assistant_message_id,
-                                    error,
-                                    attempt_count,
-                                };
-                                server.broadcast_message(&msg).await;
-                            }
+                    {
+                        let state = app.state::<crate::AppState>();
+                        let host_server = state.host_server.lock().await;
+                        if let Some(server) = host_server.as_ref() {
+                            let server = server.lock().await;
+                            let msg = crate::network::RoomMessage::StreamRetry {
+                                conversation_id,
+                                round_id,
+                                message_id: assistant_message_id,
+                                error: error.clone(),
+                                attempt_count,
+                                auto_retry_enabled,
+                            };
+                            server.broadcast_message(&msg).await;
                         }
-                    });
+                    }
 
                     // Reset the assistant message content for the next attempt.
                     let now = crate::utils::now_ts();
@@ -277,10 +277,19 @@ pub fn spawn_stream_task(
                     .execute(&db)
                     .await;
 
+                    if !auto_retry_enabled {
+                        // 首次失败不自动重试，等待用户点击"自动重试"按钮
+                        dbg_eprintln!(
+                            "[chat] spawn_stream_task: first failure, auto_retry disabled, breaking loop, conversation_id={}, round_id={}",
+                            conversation_id, round_id
+                        );
+                        break;
+                    }
+
                     // Brief delay before retrying to avoid hammering the API.
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-                    eprintln!(
+                    dbg_eprintln!(
                         "[chat] spawn_stream_task: retrying stream_llm_response, conversation_id={}, round_id={}",
                         conversation_id, round_id
                     );
@@ -354,7 +363,7 @@ async fn spawn_post_round_tasks(
                 if let Err(err) = crate::services::plot_summaries::create_round_placeholder(
                     db, conversation_id, round_id, ri,
                 ).await {
-                    eprintln!(
+                    dbg_eprintln!(
                         "[stream] spawn_post_round_tasks: create_round_placeholder failed: {err}"
                     );
                 }
@@ -387,7 +396,7 @@ async fn stream_llm_response(
 ) -> Result<StreamResponseData, String> {
     let provider = ConversationRepository::load_provider(&db, provider_id).await?;
 
-    eprintln!(
+    dbg_eprintln!(
         "[chat] stream_llm_response: loaded provider, provider_kind={}, model_name={}, base_url_len={}",
         provider.provider_kind, provider.model_name, provider.base_url.len()
     );
@@ -415,7 +424,7 @@ async fn stream_llm_response(
     }
 
     let compile_mode = resolve_prompt_compile_mode(&db, round_id, assistant_message_id).await?;
-    eprintln!("[chat] stream_llm_response: compile_mode={:?}", compile_mode);
+    dbg_eprintln!("[chat] stream_llm_response: compile_mode={:?}", compile_mode);
 
     let conv_preset_id: Option<i64> = sqlx::query_scalar(
         "SELECT preset_id FROM conversations WHERE id = ? LIMIT 1",
@@ -456,7 +465,7 @@ async fn stream_llm_response(
         },
         log_dir: debug_log_dir.clone(),
     };
-    eprintln!("[chat] stream_llm_response: calling compile_prompt...");
+    dbg_eprintln!("[chat] stream_llm_response: calling compile_prompt...");
     // Build the memory backend lazily for mem0-mode conversations only.
     // Non-mem0 conversations pass None so compile_prompt skips retrieval.
     // Build errors propagate rather than silently degrading.
@@ -483,7 +492,7 @@ async fn stream_llm_response(
             memory_service.as_ref(),
         )
         .await?;
-    eprintln!(
+    dbg_eprintln!(
         "[chat] stream_llm_response: compile_prompt done, response_mode={:?}, structured_output_schema={:?}, system_blocks={}, history_blocks={}",
         compiled_prompt.params.response_mode,
         compiled_prompt.params.structured_output_schema.as_ref().map(|s| if s.len() > 80 { format!("{}...", &s[..80]) } else { s.clone() }),
@@ -509,7 +518,7 @@ async fn stream_llm_response(
         effective_max_tokens,
     )?;
     inject_image_parts_into_request(&mut request, &attachments)?;
-    eprintln!(
+    dbg_eprintln!(
         "[chat] stream_llm_response: provider={}/{}, max_output_tokens={:?}, model={}, messages_count={}, system_blocks={}, estimated_input_tokens={}",
         provider.provider_kind,
         provider.model_name,
@@ -540,7 +549,7 @@ async fn stream_llm_response(
     )
     .await;
 
-    eprintln!(
+    dbg_eprintln!(
         "[chat] request body preview: messages_count={}, system_count={}, model={}, stream={}",
         request_body.get("messages").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
         request_body.get("system").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
@@ -658,7 +667,7 @@ async fn stream_llm_response(
 async fn execute_provider_http_request(
     http_request: &ProviderHttpRequest,
 ) -> Result<reqwest::Response, String> {
-    eprintln!(
+    dbg_eprintln!(
         "[chat] HTTP POST url={}, body_size={}",
         http_request.url,
         http_request.body.to_string().len(),
@@ -695,7 +704,7 @@ async fn execute_provider_http_request(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("none")
         .to_string();
-    eprintln!(
+    dbg_eprintln!(
         "[chat] HTTP response: status={}, content-encoding={}, content-type={}",
         status, content_encoding, content_type
     );
@@ -736,7 +745,7 @@ async fn stream_openai_text_response(
             let is_timeout = err.is_timeout();
             let is_body = err.is_body();
             let is_decode = err.is_decode();
-            eprintln!(
+            dbg_eprintln!(
                 "[chat] bytes_stream error: {} | timeout={} body={} decode={}",
                 err, is_timeout, is_body, is_decode
             );
@@ -793,7 +802,7 @@ async fn stream_openai_text_response(
                             }
                         }
                         Err(err) => {
-                            eprintln!("[structured_output] finish error: {}", err);
+                            dbg_eprintln!("[structured_output] finish error: {}", err);
                         }
                     }
                 }
@@ -830,7 +839,7 @@ async fn stream_openai_text_response(
             let value: Value = match serde_json::from_str(data) {
                 Ok(value) => value,
                 Err(_) => {
-                    eprintln!("[chat] stream_openai_text: failed to parse SSE data as JSON, len={}", data.len());
+                    dbg_eprintln!("[chat] stream_openai_text: failed to parse SSE data as JSON, len={}", data.len());
                     continue;
                 }
             };
@@ -839,7 +848,7 @@ async fn stream_openai_text_response(
             let has_reasoning = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).and_then(|d| d.get("reasoning_content")).is_some();
             let has_finish = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("finish_reason")).is_some();
             if !has_content && !has_reasoning && !has_finish {
-                eprintln!("[chat] stream_openai_text: unrecognized SSE event, keys={:?}", value.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                dbg_eprintln!("[chat] stream_openai_text: unrecognized SSE event, keys={:?}", value.as_object().map(|o| o.keys().collect::<Vec<_>>()));
             }
 
             if let Some(delta) = value
@@ -854,7 +863,7 @@ async fn stream_openai_text_response(
                         let has_backslash = delta.contains('\\');
                         let has_raw_newline = delta.contains('\n');
                         if has_backslash || has_raw_newline {
-                            eprintln!(
+                            dbg_eprintln!(
                                 "[structured_output] feed delta contains escape chars: len={}, has_backslash={}, has_raw_newline={}, preview={:?}",
                                 delta.len(), has_backslash, has_raw_newline,
                                 if delta.len() > 80 { &delta[..delta.ceil_char_boundary(80)] } else { delta }
@@ -900,7 +909,7 @@ async fn stream_openai_text_response(
                                     )?;
                                 }
                                 crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
-                                    eprintln!("[structured_output] parse error: {}", err);
+                                    dbg_eprintln!("[structured_output] parse error: {}", err);
                                 }
                             }
                         }
@@ -1001,7 +1010,7 @@ async fn stream_openai_text_response(
                 }
             }
             Err(err) => {
-                eprintln!("[structured_output] finish error: {}", err);
+                dbg_eprintln!("[structured_output] finish error: {}", err);
             }
         }
     }
@@ -1025,7 +1034,7 @@ async fn stream_openai_text_response(
             .map(|count: i64| count > 0)
             .unwrap_or(false);
         if !msg_exists {
-            eprintln!("[chat] stream_openai: content empty and message {} deleted, silently returning", assistant_message_id);
+            dbg_eprintln!("[chat] stream_openai: content empty and message {} deleted, silently returning", assistant_message_id);
             return Ok(StreamResponseData {
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
@@ -1091,7 +1100,7 @@ async fn stream_anthropic_text_response(
             let is_timeout = err.is_timeout();
             let is_body = err.is_body();
             let is_decode = err.is_decode();
-            eprintln!(
+            dbg_eprintln!(
                 "[chat] bytes_stream error (anthropic): {} | timeout={} body={} decode={}",
                 err, is_timeout, is_body, is_decode
             );
@@ -1305,7 +1314,7 @@ async fn stream_anthropic_text_response(
                                                 )?;
                                             }
                                             crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
-                                                eprintln!("[structured_output] parse error: {}", err);
+                                                dbg_eprintln!("[structured_output] parse error: {}", err);
                                             }
                                         }
                                     }
@@ -1362,7 +1371,7 @@ async fn stream_anthropic_text_response(
                                             )?;
                                         }
                                         crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
-                                            eprintln!("[structured_output] parse error: {}", err);
+                                            dbg_eprintln!("[structured_output] parse error: {}", err);
                                         }
                                     }
                                 }
@@ -1603,7 +1612,7 @@ async fn stream_anthropic_text_response(
                                 }
                             }
                             Err(err) => {
-                                eprintln!("[structured_output] finish error: {}", err);
+                                dbg_eprintln!("[structured_output] finish error: {}", err);
                             }
                         }
                     }
@@ -1727,7 +1736,7 @@ async fn stream_anthropic_text_response(
                 }
             }
             Err(err) => {
-                eprintln!("[structured_output] finish error: {}", err);
+                dbg_eprintln!("[structured_output] finish error: {}", err);
             }
         }
     }
@@ -1751,7 +1760,7 @@ async fn stream_anthropic_text_response(
             .map(|count: i64| count > 0)
             .unwrap_or(false);
         if !msg_exists {
-            eprintln!("[chat] stream_anthropic: content empty and message {} deleted, silently returning", assistant_message_id);
+            dbg_eprintln!("[chat] stream_anthropic: content empty and message {} deleted, silently returning", assistant_message_id);
             return Ok(StreamResponseData {
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },

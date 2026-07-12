@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::services::prompt_compiler::{
     validate_preset_block_definition,
 };
+use crate::dbg_eprintln;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -455,14 +456,14 @@ fn normalize_optional_response_mode_from_row_impl(
             match normalized.as_str() {
                 "pseudo_xml" | "structured_json" => Ok(Some(normalized)),
                 "text" | "json_object" | "compact" | "verbose" | "auto" => {
-                    eprintln!(
+                    dbg_eprintln!(
                         "警告: response_mode '{}' 已废弃，自动映射为 pseudo_xml",
                         mode
                     );
                     Ok(Some("pseudo_xml".to_string()))
                 }
                 _ => {
-                    eprintln!(
+                    dbg_eprintln!(
                         "警告: response_mode '{}' 无效，已被忽略，使用默认值 pseudo_xml",
                         mode
                     );

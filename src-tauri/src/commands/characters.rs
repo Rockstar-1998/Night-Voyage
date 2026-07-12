@@ -6,6 +6,7 @@ use crate::{
     utils::now_ts,
     AppState,
 };
+use crate::dbg_eprintln;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -243,7 +244,7 @@ pub async fn character_card_export_image(
     let bytes = std::fs::read(trimmed).map_err(|e| e.to_string())?;
     const MAX_BYTES: usize = 2 * 1024 * 1024;
     if bytes.len() > MAX_BYTES {
-        eprintln!(
+        dbg_eprintln!(
             "[character_card_export_image] image too large for id={}, skipping",
             id
         );

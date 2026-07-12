@@ -69,7 +69,7 @@ pub fn run() {
             if payload.event() == PageLoadEvent::Finished {
                 let window = webview.window();
                 let _ = window.show();
-                eprintln!("[startup] page-load-finished: window shown");
+                dbg_eprintln!("[startup] page-load-finished: window shown");
             }
         })
         .invoke_handler(tauri::generate_handler![

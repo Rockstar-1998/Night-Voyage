@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use crate::services::memory_service::{
     MemoryMessage, MemoryRecord, MemoryService, MemoryServiceError,
 };
+use crate::dbg_eprintln;
 
 /// Project-owned configuration used to construct the adapter. Built from the
 /// `api_providers` table plus the fixed cache path; deliberately free of any
@@ -208,7 +209,7 @@ impl MemoryService for Mem0RsProvider {
             .map_err(|err| MemoryServiceError::Backend(err.to_string()))?;
         let (records, skipped) = parse_records(&value);
         for reason in &skipped {
-            eprintln!("[mem0-rs] search skipped record: {reason}");
+            dbg_eprintln!("[mem0-rs] search skipped record: {reason}");
         }
         Ok(records)
     }
@@ -226,7 +227,7 @@ impl MemoryService for Mem0RsProvider {
             .map_err(|err| MemoryServiceError::Backend(err.to_string()))?;
         let (records, skipped) = parse_records(&value);
         for reason in &skipped {
-            eprintln!("[mem0-rs] get_all skipped record: {reason}");
+            dbg_eprintln!("[mem0-rs] get_all skipped record: {reason}");
         }
         Ok(records)
     }

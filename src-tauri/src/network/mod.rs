@@ -11,6 +11,7 @@ use tokio::time::{timeout, Duration};
 use crate::models::{ConversationListItem, ConversationMember, RoundState, TokenUsageReport, UiMessage};
 use crate::repositories::round_repository::RoundRepository;
 use crate::services::chat_service::ChatService;
+use crate::dbg_eprintln;
 
 // ─── Protocol ───
 
@@ -145,6 +146,7 @@ pub enum RoomMessage {
         message_id: i64,
         error: String,
         attempt_count: i64,
+        auto_retry_enabled: bool,
     },
     MessageReset {
         conversation_id: i64,
@@ -176,6 +178,11 @@ pub enum RoomMessage {
         conversation_id: i64,
         message_id: i64,
         round_deleted: bool,
+    },
+    SwipeActivated {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
     },
     RewoundToRound {
         conversation_id: i64,
@@ -276,6 +283,7 @@ pub struct RoomStreamRetryPayload {
     pub message_id: i64,
     pub error: String,
     pub attempt_count: i64,
+    pub auto_retry_enabled: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -337,7 +345,7 @@ pub struct RoomSchemaToggleEvent {
 #[serde(rename_all = "camelCase")]
 pub struct RoomTokenUsageEvent {
     pub conversation_id: i64,
-    pub report: TokenUsageReport,
+    pub token_usage_report: TokenUsageReport,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -361,6 +369,14 @@ pub struct RoomMessageDeletedEvent {
     pub conversation_id: i64,
     pub message_id: i64,
     pub round_deleted: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomSwipeActivatedEvent {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -407,6 +423,7 @@ impl RoomMessage {
             RoomMessage::PlotSummaryUpdate { .. } => "room:plot_summary_update",
             RoomMessage::MessageEdited { .. } => "room:message_edited",
             RoomMessage::MessageDeleted { .. } => "room:message_deleted",
+            RoomMessage::SwipeActivated { .. } => "room:swipe_activated",
             RoomMessage::RewoundToRound { .. } => "room:rewound_to_round",
             RoomMessage::ContextWindowChanged { .. } => "room:context_window_changed",
             RoomMessage::GuestCharacterUpdated { .. } => "room:guest_character_updated",
@@ -510,12 +527,14 @@ impl RoomMessage {
                 message_id,
                 error,
                 attempt_count,
+                auto_retry_enabled,
             } => serde_json::to_value(RoomStreamRetryPayload {
                 conversation_id: *conversation_id,
                 round_id: *round_id,
                 message_id: *message_id,
                 error: error.clone(),
                 attempt_count: *attempt_count,
+                auto_retry_enabled: *auto_retry_enabled,
             })
             .ok(),
             RoomMessage::MessageReset {
@@ -592,7 +611,7 @@ impl RoomMessage {
                 report,
             } => serde_json::to_value(RoomTokenUsageEvent {
                 conversation_id: *conversation_id,
-                report: report.clone(),
+                token_usage_report: report.clone(),
             })
             .ok(),
             RoomMessage::PlotSummaryUpdate {
@@ -621,6 +640,16 @@ impl RoomMessage {
                 conversation_id: *conversation_id,
                 message_id: *message_id,
                 round_deleted: *round_deleted,
+            })
+            .ok(),
+            RoomMessage::SwipeActivated {
+                conversation_id,
+                round_id,
+                message_id,
+            } => serde_json::to_value(RoomSwipeActivatedEvent {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
             })
             .ok(),
             RoomMessage::RewoundToRound {
@@ -716,7 +745,7 @@ async fn write_error_frame(stream: &mut TcpStream, code: &str, message: impl Int
     )
     .await
     {
-        eprintln!(
+        dbg_eprintln!(
             "[room-server] failed to send error response code={} message={} write_error={}",
             code, message, error
         );
@@ -735,7 +764,7 @@ async fn rollback_joined_member(
             .execute(db)
             .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[room-server] failed to roll back member {} after join failure: {}",
                 member_id, error
             );
@@ -750,7 +779,7 @@ async fn rollback_joined_member(
         .execute(db)
         .await
         {
-            eprintln!(
+            dbg_eprintln!(
                 "[room-server] failed to roll back room player count for room {}: {}",
                 room_id, error
             );
@@ -937,9 +966,20 @@ impl RoomServer {
             ));
         }
         let tcp_port = port as u16;
-        let listener = TcpListener::bind(("0.0.0.0", tcp_port))
-            .await
-            .map_err(|e| format!("Failed to bind to port {}: {}", port, e))?;
+        let listener = match TcpListener::bind(("0.0.0.0", tcp_port)).await {
+            Ok(listener) => listener,
+            Err(_e) => {
+                let occupant = crate::utils::port::get_port_occupant(tcp_port).await;
+                let error_msg = match occupant {
+                    Some(name) => format!(
+                        "端口 {} 已被占用（占用程序：{}），请关闭该程序或更换端口",
+                        port, name
+                    ),
+                    None => format!("端口 {} 已被占用，请更换端口", port),
+                };
+                return Err(error_msg);
+            }
+        };
 
         let clients: Arc<RwLock<HashMap<i64, ClientHandle>>> =
             Arc::new(RwLock::new(HashMap::new()));
@@ -972,7 +1012,7 @@ impl RoomServer {
                         let db_inner = db_for_accept_loop.clone();
                         let room_id_inner = room_id_for_accept_loop;
                         tauri::async_runtime::spawn(async move {
-                            eprintln!("[room-server] accepted client {} for room {}", addr, room_id_inner);
+                            dbg_eprintln!("[room-server] accepted client {} for room {}", addr, room_id_inner);
                             let client_id = {
                                 let mut id = next_client_id.lock().await;
                                 let v = *id;
@@ -993,16 +1033,16 @@ impl RoomServer {
                             let (display_name, character) = match read_frame(&mut stream).await {
                                 Ok(Some(RoomMessage::JoinRoom { display_name, character, .. })) => (display_name, character),
                                 Ok(Some(other)) => {
-                                    eprintln!("[room-server] invalid first room message from {}: {:?}", addr, other);
+                                    dbg_eprintln!("[room-server] invalid first room message from {}: {:?}", addr, other);
                                     write_error_frame(&mut stream, "INVALID_JOIN", "加入失败：首个消息不是加入房间请求").await;
                                     return;
                                 }
                                 Ok(None) => {
-                                    eprintln!("[room-server] client {} closed before join message", addr);
+                                    dbg_eprintln!("[room-server] client {} closed before join message", addr);
                                     return;
                                 }
                                 Err(error) => {
-                                    eprintln!("[room-server] failed to read join message from {}: {}", addr, error);
+                                    dbg_eprintln!("[room-server] failed to read join message from {}: {}", addr, error);
                                     write_error_frame(&mut stream, "INVALID_JOIN", format!("加入失败：读取加入请求失败: {}", error)).await;
                                     return;
                                 }
@@ -1013,7 +1053,7 @@ impl RoomServer {
                                     let json = match serde_json::to_string(payload) {
                                         Ok(json) => json,
                                         Err(error) => {
-                                            eprintln!(
+                                            dbg_eprintln!(
                                                 "[room-server] failed to serialize guest character for {}: {}",
                                                 addr, error
                                             );
@@ -1051,12 +1091,12 @@ impl RoomServer {
                             {
                                 Ok(Some(conversation_id)) => conversation_id,
                                 Ok(None) => {
-                                    eprintln!("[room-server] room {} not found during join", room_id_inner);
+                                    dbg_eprintln!("[room-server] room {} not found during join", room_id_inner);
                                     write_error_frame(&mut stream, "ROOM_NOT_FOUND", "加入失败：房间不存在或已关闭").await;
                                     return;
                                 }
                                 Err(error) => {
-                                    eprintln!("[room-server] failed to load room {} during join: {}", room_id_inner, error);
+                                    dbg_eprintln!("[room-server] failed to load room {} during join: {}", room_id_inner, error);
                                     write_error_frame(&mut stream, "ROOM_DB_ERROR", format!("加入失败：读取房间信息失败: {}", error)).await;
                                     return;
                                 }
@@ -1071,7 +1111,7 @@ impl RoomServer {
                             {
                                 Ok(join_order) => join_order,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to allocate join order for conversation {}: {}",
                                         conversation_id, error
                                     );
@@ -1096,7 +1136,7 @@ impl RoomServer {
                             {
                                 Ok(member_id) => member_id,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to insert member for conversation {}: {}",
                                         conversation_id, error
                                     );
@@ -1113,7 +1153,7 @@ impl RoomServer {
                             .execute(&db_inner)
                             .await
                             {
-                                eprintln!(
+                                dbg_eprintln!(
                                     "[room-server] failed to update player count for room {}: {}",
                                     room_id_inner, error
                                 );
@@ -1125,7 +1165,7 @@ impl RoomServer {
                             let conversation = match load_conversation_summary(&db_inner, conversation_id, Some("open".to_string())).await {
                                 Ok(conversation) => conversation,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to load conversation {} during join: {}",
                                         conversation_id, error
                                     );
@@ -1138,7 +1178,7 @@ impl RoomServer {
                             let member_profiles = match load_active_conversation_members(&db_inner, conversation_id).await {
                                 Ok(members) => members,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to list member profiles for conversation {}: {}",
                                         conversation_id, error
                                     );
@@ -1151,7 +1191,7 @@ impl RoomServer {
                             let full_messages = match ChatService::list_messages(&db_inner, conversation_id, None).await {
                                 Ok(messages) => messages,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to list messages for conversation {}: {}",
                                         conversation_id, error
                                     );
@@ -1164,7 +1204,7 @@ impl RoomServer {
                             let round_state = match RoundRepository::load_state(&db_inner, conversation_id, None).await {
                                 Ok(round_state) => round_state,
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to load round state for conversation {}: {}",
                                         conversation_id, error
                                     );
@@ -1226,7 +1266,7 @@ impl RoomServer {
                                         Some(report),
                                     ),
                                     Err(error) => {
-                                        eprintln!(
+                                        dbg_eprintln!(
                                             "[room-server] failed to compile token usage report for conversation {} during join: {}",
                                             conversation_id, error
                                         );
@@ -1289,7 +1329,7 @@ impl RoomServer {
                                 {
                                     Ok(records) => Some(records),
                                     Err(error) => {
-                                        eprintln!(
+                                        dbg_eprintln!(
                                             "[room-server] failed to load plot summaries for conversation {} during join: {}",
                                             conversation_id, error
                                         );
@@ -1317,7 +1357,7 @@ impl RoomServer {
                                 plot_summaries,
                             };
                             if let Err(error) = write_frame(&mut stream, &success_msg).await {
-                                eprintln!(
+                                dbg_eprintln!(
                                     "[room-server] failed to send join success to {} for room {}: {}",
                                     addr, room_id_inner, error
                                 );
@@ -1347,7 +1387,7 @@ impl RoomServer {
                                     let _ = tx.send(snapshot);
                                 }
                                 Err(error) => {
-                                    eprintln!(
+                                    dbg_eprintln!(
                                         "[room-server] failed to build context snapshot for new client {} in room {}: {}",
                                         addr, room_id_inner, error
                                     );
@@ -1417,12 +1457,12 @@ impl RoomServer {
                                                 let json = match serde_json::to_string(character) {
                                                     Ok(j) => j,
                                                     Err(e) => {
-                                                        eprintln!("[room-server] failed to serialize guest character: {}", e);
+                                                        dbg_eprintln!("[room-server] failed to serialize guest character: {}", e);
                                                         continue;
                                                     }
                                                 };
                                                 if let Err(e) = crate::repositories::conversation_repository::ConversationRepository::update_guest_character_json(&db_inner, *member_id, &json).await {
-                                                    eprintln!("[room-server] failed to update guest character json: {}", e);
+                                                    dbg_eprintln!("[room-server] failed to update guest character json: {}", e);
                                                 }
                                                 let broadcast_msg = RoomMessage::GuestCharacterUpdated {
                                                     conversation_id,
@@ -1505,7 +1545,7 @@ impl RoomServer {
         let c = self.clients.read().await;
         let count = c.len();
         let msg_type = msg.event_name();
-        eprintln!("[room-server] broadcast_message: type={}, clients={}", msg_type, count);
+        dbg_eprintln!("[room-server] broadcast_message: type={}, clients={}", msg_type, count);
         for (_, handle) in c.iter() {
             let _ = handle.tx.send(msg.clone());
         }
@@ -1583,9 +1623,9 @@ impl RoomClient {
         &mut self,
         app_handle: tauri::AppHandle,
     ) -> Result<RoomJoinSession, String> {
-        eprintln!("[room-client] connecting to {}:{}", self.host_address, self.port);
+        dbg_eprintln!("[room-client] connecting to {}:{}", self.host_address, self.port);
         if self.port == 0 || self.port > 65535 {
-            eprintln!("[room-client] connect error: port {} out of range", self.port);
+            dbg_eprintln!("[room-client] connect error: port {} out of range", self.port);
             return Err(format!(
                 "端口 {} 超出 TCP 有效范围 (1-65535)，当前仅支持标准 TCP 端口",
                 self.port
@@ -1595,7 +1635,7 @@ impl RoomClient {
         let mut stream = TcpStream::connect((self.host_address.as_str(), tcp_port))
             .await
             .map_err(|e| {
-                eprintln!("[room-client] connect error: {}", e);
+                dbg_eprintln!("[room-client] connect error: {}", e);
                 format!("连接失败: {}", e)
             })?;
 
@@ -1607,7 +1647,7 @@ impl RoomClient {
         write_frame(&mut stream, &join_msg)
             .await
             .map_err(|e| {
-                eprintln!("[room-client] connect error: {}", e);
+                dbg_eprintln!("[room-client] connect error: {}", e);
                 e
             })?;
 
@@ -1665,23 +1705,23 @@ impl RoomClient {
                 }
             }
             Ok(Ok(Some(RoomMessage::Error { message, .. }))) => {
-                eprintln!("[room-client] connect error: {}", message);
+                dbg_eprintln!("[room-client] connect error: {}", message);
                 return Err(message);
             }
             Ok(Ok(Some(_))) => {
-                eprintln!("[room-client] connect error: unexpected server response");
+                dbg_eprintln!("[room-client] connect error: unexpected server response");
                 return Err("连接失败：收到意外的服务器响应".to_string());
             }
             Ok(Ok(None)) => {
-                eprintln!("[room-client] connect error: server closed connection");
+                dbg_eprintln!("[room-client] connect error: server closed connection");
                 return Err("连接失败：服务器关闭了连接".to_string());
             }
             Ok(Err(e)) => {
-                eprintln!("[room-client] connect error: {}", e);
+                dbg_eprintln!("[room-client] connect error: {}", e);
                 return Err(format!("连接失败：读取响应错误: {}", e));
             }
             Err(_) => {
-                eprintln!("[room-client] connect timeout");
+                dbg_eprintln!("[room-client] connect timeout");
                 return Err("连接超时：服务器未响应".to_string());
             }
         };
@@ -1698,7 +1738,7 @@ impl RoomClient {
                     result = read_frame_split(&mut read_half) => {
                         match result {
                             Ok(Some(msg)) => {
-                                eprintln!("[room-client] received message: type={}", msg.event_name());
+                                dbg_eprintln!("[room-client] received message: type={}", msg.event_name());
                                 if let Some(payload) = msg.event_payload() {
                                     let _ = app_handle_clone.emit(msg.event_name(), payload);
                                 } else {
@@ -1706,12 +1746,12 @@ impl RoomClient {
                                 }
                             }
                             Ok(None) => {
-                                eprintln!("[room-client] peer closed connection");
+                                dbg_eprintln!("[room-client] peer closed connection");
                                 let _ = app_handle_clone.emit("room:disconnected", ());
                                 break;
                             }
                             Err(e) => {
-                                eprintln!("[room-client] read error: {}", e);
+                                dbg_eprintln!("[room-client] read error: {}", e);
                                 let _ = app_handle_clone.emit("room:error", serde_json::json!({
                                     "code": "READ_ERROR",
                                     "message": format!("读取错误: {}", e),
@@ -1729,7 +1769,7 @@ impl RoomClient {
 
         self.stream = Some(write_half);
 
-        eprintln!(
+        dbg_eprintln!(
             "[room-client] connected, room_id={:?}, member_id={:?}, messages={}, members={}",
             join_session.room_id,
             join_session.member_id,
@@ -1740,32 +1780,32 @@ impl RoomClient {
     }
 
     pub async fn send_message(&mut self, msg: &RoomMessage) -> Result<(), String> {
-        eprintln!("[room-client] sending frame: type={}", msg.event_name());
+        dbg_eprintln!("[room-client] sending frame: type={}", msg.event_name());
         if let Some(ref mut write_half) = self.stream {
             match write_frame_split(write_half, msg).await {
                 Ok(()) => {
-                    eprintln!("[room-client] frame sent");
+                    dbg_eprintln!("[room-client] frame sent");
                     Ok(())
                 }
                 Err(e) => {
-                    eprintln!("[room-client] send error: {}", e);
+                    dbg_eprintln!("[room-client] send error: {}", e);
                     Err(e)
                 }
             }
         } else {
-            eprintln!("[room-client] send error: 未连接到房间");
+            dbg_eprintln!("[room-client] send error: 未连接到房间");
             Err("未连接到房间".to_string())
         }
     }
 
     pub async fn disconnect(&mut self) {
-        eprintln!("[room-client] disconnecting");
+        dbg_eprintln!("[room-client] disconnecting");
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;
         }
         if let Some(mut write_half) = self.stream.take() {
             let _ = write_half.shutdown().await;
         }
-        eprintln!("[room-client] disconnected");
+        dbg_eprintln!("[room-client] disconnected");
     }
 }

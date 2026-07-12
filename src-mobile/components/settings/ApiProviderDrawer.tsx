@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect, For, Show } from 'solid-js';
 import { Save, Trash2, X, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-solid';
 import { ApiProviderSummary, providersCreate, providersUpdate, providersDelete, providersTest, providersFetchModels } from '../../../src/lib/backend';
+import { showToast, showConfirm } from '../Toast';
 
 interface ApiProviderDrawerProps {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
 
   const handleSave = async () => {
     if (!name().trim()) {
-      window.alert('档案名称不能为空');
+      showToast('档案名称不能为空', 'warning');
       return;
     }
     
@@ -68,7 +69,7 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
       await props.onRefresh();
       props.onClose();
     } catch (e) {
-      window.alert(`保存失败: ${e instanceof Error ? e.message : String(e)}`);
+      showToast(`保存失败: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -76,7 +77,10 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
 
   const handleDelete = async () => {
     if (!props.provider) return;
-    if (!window.confirm(`确定要删除档案「${props.provider.name}」吗？`)) return;
+    const confirmed = await showConfirm({
+      message: `确定要删除档案「${props.provider.name}」吗？`,
+    });
+    if (!confirmed) return;
     
     setIsSaving(true);
     try {
@@ -84,7 +88,7 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
       await props.onRefresh();
       props.onClose();
     } catch (e) {
-      window.alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
+      showToast(`删除失败: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -123,7 +127,7 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
 
   const handleFetchModels = async () => {
     if (!props.provider) {
-      window.alert('请先保存档案后再拉取模型');
+      showToast('请先保存档案后再拉取模型', 'warning');
       return;
     }
     
@@ -137,10 +141,10 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
           setModelName(newModels[0]);
         }
       } else {
-        window.alert('未拉取到模型列表');
+        showToast('未拉取到模型列表', 'warning');
       }
     } catch (e) {
-      window.alert(`拉取模型失败: ${e instanceof Error ? e.message : String(e)}`);
+      showToast(`拉取模型失败: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsFetching(false);
     }

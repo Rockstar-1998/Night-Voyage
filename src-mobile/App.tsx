@@ -6,6 +6,7 @@ import { SessionList } from './components/SessionList';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { CharacterGallery } from './components/characters/CharacterGallery';
+import { NotificationContainer, showToast } from './components/Toast';
 import {
     conversationsList,
     characterCardsList,
@@ -120,7 +121,7 @@ function App() {
             }
         } catch (error) {
             console.error('[App] delete conversation error:', error);
-            window.alert('删除会话失败');
+            showToast('删除会话失败', 'error');
         }
     };
 
@@ -207,7 +208,7 @@ function App() {
                                         setActiveView('chat');
                                     }}
                                     onNewChat={() => setIsNewChatModalOpen(true)}
-                                    onJoinRoom={() => window.alert('移动端加入房间功能开发中')}
+                                    onJoinRoom={() => showToast('移动端加入房间功能开发中', 'info')}
                                     onDeleteConversation={handleDeleteConversation}
                                 />
                             </Show>
@@ -258,15 +259,15 @@ function App() {
                 </Show>
 
                 <NewChatModal
-                    isOpen={isNewChatModalOpen()}
-                    onClose={() => setIsNewChatModalOpen(false)}
-                    npcCharacters={npcCharacters}
-                    playerCharacters={playerCharacters}
-                    worldBooks={worldBooks}
-                    providers={providers}
-                    presetSummaries={presetSummaries}
-                    onCreateConversation={handleCreateConversation}
-                    creating={creatingConversation()}
+                isOpen={isNewChatModalOpen()}
+                onClose={() => setIsNewChatModalOpen(false)}
+                npcCharacters={npcCharacters}
+                playerCharacters={playerCharacters}
+                worldBooks={worldBooks}
+                providers={providers}
+                presetSummaries={presetSummaries}
+                onCreateConversation={handleCreateConversation}
+                creating={creatingConversation()}
                 />
             </main>
 
@@ -278,6 +279,7 @@ function App() {
                     <NavButton id="kb" icon={Book} label="世界书" />
                 </nav>
             </Show>
+            <NotificationContainer />
         </div>
     );
 }

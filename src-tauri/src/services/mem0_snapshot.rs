@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use sqlx::SqlitePool;
+use crate::dbg_eprintln;
 
 /// Resolve snapshot directory for a given conversation.
 pub fn snapshot_dir(conversation_id: i64) -> Result<PathBuf, String> {
@@ -122,7 +123,7 @@ pub async fn create_snapshot(
         }
     }
 
-    eprintln!(
+    dbg_eprintln!(
         "[mem0-snapshot] created snapshot for conversation {conversation_id} round {round_index}: {}",
         snap_path.display()
     );
