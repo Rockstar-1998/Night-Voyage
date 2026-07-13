@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::{
-    llm::ChatMessage,
     models::{TokenLayerUsage, TokenUsageReport},
     services::{
         memory_service::MemoryService,
@@ -15,7 +14,6 @@ use crate::{
             load_completed_plot_summary_round_ids_before, load_plot_summary_blocks,
             load_plot_summary_mode, PLOT_SUMMARY_MODE_DISABLED,
         },
-        provider_adapter::adapt_prompt_compile_result_to_openai_messages,
         world_book_matcher::{
             load_triggered_world_book_entries, WorldBookTriggerSource, WorldBookTriggerSourceKind,
         },
@@ -27,7 +25,6 @@ use crate::dbg_eprintln;
 pub enum PromptCompileMode {
     ClassicChat,
     ClassicRegenerate,
-    AgentDirectorPlaceholder,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -183,12 +180,6 @@ pub struct CompiledSamplingParams {
     pub context_included_keys: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PresetCompilePreviewData {
-    pub system_blocks: Vec<PromptBlock>,
-    pub params: CompiledSamplingParams,
-}
-
 #[derive(Debug, Clone, Default)]
 struct LoadedPresetCompilerData {
     blocks: Vec<PromptBlock>,
@@ -225,9 +216,7 @@ pub(crate) struct CompiledOutputValidator {
     mode: OutputValidationMode,
     pattern: String,
     error_message: String,
-    regex: Regex,
     title: Option<String>,
-    source: PromptBlockSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -468,9 +457,6 @@ pub async fn compile_prompt(
 ) -> Result<PromptCompileResult, String> {
     match input.mode {
         PromptCompileMode::ClassicChat | PromptCompileMode::ClassicRegenerate => {}
-        PromptCompileMode::AgentDirectorPlaceholder => {
-            return Err("Prompt Compiler V1 does not support director_agents yet".to_string());
-        }
     }
 
     dbg_eprintln!("[prompt-compiler] compile_prompt: step=load_conversation_compile_context conversation_id={}", input.conversation_id);
@@ -766,41 +752,6 @@ pub async fn compile_prompt(
     Ok(result)
 }
 
-pub async fn compile_chat_messages(
-    db: &SqlitePool,
-    conversation_id: i64,
-    exclude_message_id: i64,
-) -> Result<Vec<ChatMessage>, String> {
-    let target_round_id = sqlx::query_scalar(
-        "SELECT round_id FROM messages WHERE id = ? AND conversation_id = ? LIMIT 1",
-    )
-    .bind(exclude_message_id)
-    .bind(conversation_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|err| err.to_string())?
-    .flatten();
-
-    let provider_kind = load_compiler_wrapper_provider_kind(db, conversation_id).await?;
-    let input = PromptCompileInput {
-        conversation_id,
-        mode: if target_round_id.is_some() {
-            PromptCompileMode::ClassicRegenerate
-        } else {
-            PromptCompileMode::ClassicChat
-        },
-        target_round_id,
-        provider_kind: provider_kind.clone(),
-        model_name: String::new(),
-        include_streaming_seed: false,
-        budget: PromptBudget::default(),
-        log_dir: None,
-    };
-
-    let mut result = compile_prompt(db, &input, exclude_message_id, None).await?;
-    adapt_prompt_compile_result_to_openai_messages(&mut result, &provider_kind)
-}
-
 pub async fn compile_token_usage_report(
     db: &SqlitePool,
     conversation_id: i64,
@@ -927,28 +878,6 @@ pub async fn compile_token_usage_report(
         layers,
         total_estimated_tokens,
         total_actual_tokens,
-    })
-}
-
-pub async fn compile_preset_preview_data(
-    db: &SqlitePool,
-    preset_id: i64,
-    provider_kind: Option<&str>,
-) -> Result<PresetCompilePreviewData, String> {
-    let mut debug = PromptCompileDebugReport::default();
-    let render_context = build_preview_template_render_context(preset_id, provider_kind);
-    let preset_compiler_data = load_preset_compiler_data(
-        db,
-        Some(preset_id),
-        provider_kind,
-        &render_context,
-        &mut debug,
-    )
-    .await?;
-
-    Ok(PresetCompilePreviewData {
-        system_blocks: preset_compiler_data.blocks,
-        params: preset_compiler_data.params,
     })
 }
 
@@ -1244,42 +1173,6 @@ fn build_runtime_template_render_context(
     }
 }
 
-fn build_preview_template_render_context(
-    preset_id: i64,
-    provider_kind: Option<&str>,
-) -> PromptTemplateRenderContext {
-    PromptTemplateRenderContext {
-        conversation: PromptTemplateConversationContext {
-            id: 0,
-            host_character_id: None,
-            world_book_id: None,
-            preset_id: Some(preset_id),
-            target_round_id: None,
-        },
-        provider: PromptTemplateProviderContext {
-            kind: provider_kind.unwrap_or("preview_provider").to_string(),
-            model_name: "preview-model".to_string(),
-        },
-        current_user: PromptTemplateCurrentUserContext {
-            role: "user".to_string(),
-            content: "Preview user input".to_string(),
-            message_id: 0,
-        },
-        character: Some(PromptTemplateCharacterContext {
-            id: 0,
-            name: "Preview Character".to_string(),
-            description: "Preview character description".to_string(),
-            tags: vec!["preview".to_string()],
-            base_sections: vec![PromptTemplateCharacterBaseSectionContext {
-                section_key: "identity".to_string(),
-                title: None,
-                content: "Preview character identity".to_string(),
-            }],
-        }),
-        player_character: None,
-    }
-}
-
 async fn load_conversation_compile_context(
     db: &SqlitePool,
     conversation_id: i64,
@@ -1558,10 +1451,6 @@ async fn load_preset_compiler_data(
                     mode,
                     config,
                     title,
-                    PromptBlockSource::Preset {
-                        preset_id,
-                        block_id: Some(block_id),
-                    },
                     &descriptor,
                 )?);
             }
@@ -1691,19 +1580,15 @@ fn build_output_validator(
     mode: OutputValidationMode,
     config: OutputValidatorConfig,
     title: Option<String>,
-    source: PromptBlockSource,
     descriptor: &str,
 ) -> Result<CompiledOutputValidator, String> {
-    let regex = Regex::new(&config.pattern)
-        .map_err(|err| format!("{descriptor} regex pattern is invalid: {err}"))?;
+    Regex::new(&config.pattern).map_err(|err| format!("{descriptor} regex pattern is invalid: {err}"))?;
 
     Ok(CompiledOutputValidator {
         mode,
         pattern: config.pattern,
         error_message: config.error_message,
-        regex,
         title,
-        source,
     })
 }
 
@@ -2730,278 +2615,8 @@ fn source_message_id(source: &PromptBlockSource) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_character_system_message, build_preview_template_render_context,
-        compile_preset_preview_data, load_preset_compiler_data, CharacterBaseSectionCompileData,
-        CharacterCompileData, PromptCompileDebugReport,
+        build_character_system_message, CharacterBaseSectionCompileData, CharacterCompileData,
     };
-    use serde_json::json;
-    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-
-    fn run_async_test<F>(test: F)
-    where
-        F: std::future::Future<Output = ()>,
-    {
-        tauri::async_runtime::block_on(test);
-    }
-
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite");
-
-        sqlx::query(
-            "CREATE TABLE presets (
-                id INTEGER PRIMARY KEY,
-                temperature REAL,
-                max_output_tokens INTEGER,
-                top_p REAL,
-                top_k INTEGER,
-                presence_penalty REAL,
-                frequency_penalty REAL,
-                response_mode TEXT,
-                thinking_enabled INTEGER,
-                thinking_budget_tokens INTEGER,
-                beta_features TEXT,
-                structured_output_schema TEXT DEFAULT 'basic',
-                structured_output_display TEXT DEFAULT NULL
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create presets");
-
-        sqlx::query(
-            "CREATE TABLE preset_prompt_blocks (
-                id INTEGER PRIMARY KEY,
-                preset_id INTEGER NOT NULL,
-                block_type TEXT NOT NULL,
-                title TEXT,
-                content TEXT NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                priority INTEGER NOT NULL DEFAULT 100,
-                is_enabled INTEGER NOT NULL DEFAULT 1
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create preset_prompt_blocks");
-
-        sqlx::query(
-            "CREATE TABLE preset_stop_sequences (
-                id INTEGER PRIMARY KEY,
-                preset_id INTEGER NOT NULL,
-                stop_text TEXT NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create preset_stop_sequences");
-
-        sqlx::query(
-            "CREATE TABLE preset_provider_overrides (
-                id INTEGER PRIMARY KEY,
-                preset_id INTEGER NOT NULL,
-                provider_kind TEXT NOT NULL,
-                temperature_override REAL,
-                max_output_tokens_override INTEGER,
-                top_p_override REAL,
-                top_k_override INTEGER,
-                presence_penalty_override REAL,
-                frequency_penalty_override REAL,
-                response_mode_override TEXT,
-                stop_sequences_override TEXT,
-                disabled_block_types TEXT,
-                thinking_enabled_override INTEGER,
-                thinking_budget_tokens_override INTEGER,
-                beta_features_override TEXT,
-                structured_output_schema_override TEXT,
-                structured_output_display_override TEXT
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create preset_provider_overrides");
-
-        pool
-    }
-
-    #[test]
-    fn preview_applies_provider_override_penalties_and_filters_disabled_blocks() {
-        run_async_test(async {
-            let pool = create_test_pool().await;
-
-            sqlx::query(
-                "INSERT INTO presets (
-                    id, temperature, max_output_tokens, top_p, presence_penalty, frequency_penalty,
-                    response_mode
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(1_i64)
-            .bind(0.7_f64)
-            .bind(200_i64)
-            .bind(0.9_f64)
-            .bind(1.1_f64)
-            .bind(0.6_f64)
-            .bind("pseudo_xml")
-            .execute(&pool)
-            .await
-            .expect("insert preset");
-
-            sqlx::query(
-                "INSERT INTO preset_prompt_blocks (
-                    id, preset_id, block_type, title, content, sort_order, priority, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(10_i64)
-            .bind(1_i64)
-            .bind("style")
-            .bind("Style")
-            .bind("Keep the narration concise.")
-            .bind(0_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert enabled block");
-
-            sqlx::query(
-                "INSERT INTO preset_prompt_blocks (
-                    id, preset_id, block_type, title, content, sort_order, priority, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(11_i64)
-            .bind(1_i64)
-            .bind("internal")
-            .bind("Internal")
-            .bind("This block should be disabled by provider override.")
-            .bind(1_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert disabled block candidate");
-
-            sqlx::query(
-                "INSERT INTO preset_stop_sequences (id, preset_id, stop_text, sort_order)
-                 VALUES (?, ?, ?, ?), (?, ?, ?, ?)",
-            )
-            .bind(31_i64)
-            .bind(1_i64)
-            .bind("END")
-            .bind(0_i64)
-            .bind(32_i64)
-            .bind(1_i64)
-            .bind("###")
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert stop sequences");
-
-            sqlx::query(
-                "INSERT INTO preset_provider_overrides (
-                    id, preset_id, provider_kind, temperature_override, max_output_tokens_override,
-                    top_p_override, presence_penalty_override, frequency_penalty_override,
-                    response_mode_override, stop_sequences_override, disabled_block_types
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(41_i64)
-            .bind(1_i64)
-            .bind("openai_compatible")
-            .bind(0.3_f64)
-            .bind(120_i64)
-            .bind(0.85_f64)
-            .bind(0.4_f64)
-            .bind(-0.2_f64)
-            .bind("pseudo_xml")
-            .bind(json!(["STOP"]).to_string())
-            .bind(json!(["internal"]).to_string())
-            .execute(&pool)
-            .await
-            .expect("insert provider override");
-
-            let preview = compile_preset_preview_data(&pool, 1, Some("openai_compatible"))
-                .await
-                .expect("compile preview");
-
-            assert_eq!(preview.system_blocks.len(), 1);
-            assert_eq!(preview.system_blocks[0].title.as_deref(), Some("Style"));
-            assert_eq!(preview.params.temperature, Some(0.3));
-            assert_eq!(preview.params.max_output_tokens, Some(120));
-            assert_eq!(preview.params.top_p, Some(0.85));
-            assert_eq!(preview.params.presence_penalty, Some(0.4));
-            assert_eq!(preview.params.frequency_penalty, Some(-0.2));
-            assert_eq!(preview.params.response_mode.as_deref(), Some("pseudo_xml"));
-            assert_eq!(preview.params.stop_sequences, vec!["STOP".to_string()]);
-        });
-    }
-
-    #[test]
-    fn preset_compiler_extracts_prefill_and_output_validators() {
-        run_async_test(async {
-            let pool = create_test_pool().await;
-
-            sqlx::query(
-                "INSERT INTO presets (
-                    id, temperature, max_output_tokens, top_p, presence_penalty, frequency_penalty,
-                    response_mode
-                 ) VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL)",
-            )
-            .bind(2_i64)
-            .execute(&pool)
-            .await
-            .expect("insert preset");
-
-            sqlx::query(
-                "INSERT INTO preset_prompt_blocks (
-                    id, preset_id, block_type, title, content, sort_order, priority, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(51_i64)
-            .bind(2_i64)
-            .bind("template:style")
-            .bind("Style")
-            .bind("Use model {{ provider.model_name }} for {{ character.name }}.")
-            .bind(0_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .bind(53_i64)
-            .bind(2_i64)
-            .bind("compiler:regex:must_not_match")
-            .bind("Regex")
-            .bind(r#"{"pattern":"forbidden","errorMessage":"bad output"}"#)
-            .bind(2_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert compiler blocks");
-
-            let render_context =
-                build_preview_template_render_context(2, Some("openai_compatible"));
-            let mut debug = PromptCompileDebugReport::default();
-            let compiled = load_preset_compiler_data(
-                &pool,
-                Some(2),
-                Some("openai_compatible"),
-                &render_context,
-                &mut debug,
-            )
-            .await
-            .expect("load compiler data");
-
-            assert_eq!(compiled.blocks.len(), 1);
-            assert_eq!(
-                compiled.blocks[0].content,
-                "Use model preview-model for Preview Character."
-            );
-            assert_eq!(compiled.output_validators.len(), 1);
-            assert!(compiled.output_validators[0].regex.is_match("forbidden"));
-            assert!(!compiled.output_validators[0].regex.is_match("allowed"));
-        });
-    }
 
     #[test]
     fn character_base_message_prefers_structured_sections_over_legacy_description() {
@@ -3046,59 +2661,5 @@ mod tests {
         assert!(message.contains("Character Name: Mina"));
         assert!(message.contains("Character Tags: scholar"));
         assert!(message.contains("Character Description: An observant archivist."));
-    }
-
-    #[test]
-    fn preview_filters_template_blocks_by_normalized_disabled_type() {
-        run_async_test(async {
-            let pool = create_test_pool().await;
-
-            sqlx::query(
-                "INSERT INTO presets (
-                    id, temperature, max_output_tokens, top_p, presence_penalty, frequency_penalty,
-                    response_mode
-                 ) VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL)",
-            )
-            .bind(3_i64)
-            .execute(&pool)
-            .await
-            .expect("insert preset");
-
-            sqlx::query(
-                "INSERT INTO preset_prompt_blocks (
-                    id, preset_id, block_type, title, content, sort_order, priority, is_enabled
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(61_i64)
-            .bind(3_i64)
-            .bind("template:style")
-            .bind("Style")
-            .bind("Template content for {{ current_user.content }}")
-            .bind(0_i64)
-            .bind(100_i64)
-            .bind(1_i64)
-            .execute(&pool)
-            .await
-            .expect("insert template block");
-
-            sqlx::query(
-                "INSERT INTO preset_provider_overrides (
-                    id, preset_id, provider_kind, disabled_block_types
-                 ) VALUES (?, ?, ?, ?)",
-            )
-            .bind(62_i64)
-            .bind(3_i64)
-            .bind("openai_compatible")
-            .bind(json!(["style"]).to_string())
-            .execute(&pool)
-            .await
-            .expect("insert provider override");
-
-            let preview = compile_preset_preview_data(&pool, 3, Some("openai_compatible"))
-                .await
-                .expect("compile preview");
-
-            assert!(preview.system_blocks.is_empty());
-        });
     }
 }

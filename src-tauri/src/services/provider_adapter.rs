@@ -213,14 +213,6 @@ pub fn build_provider_http_request(
     }
 }
 
-pub fn adapt_prompt_compile_result_to_openai_messages(
-    result: &mut PromptCompileResult,
-    provider_kind: &str,
-) -> Result<Vec<ChatMessage>, String> {
-    let request = build_llm_chat_request(result, provider_kind, "", false, None, None)?;
-    flatten_request_to_legacy_chat_messages(&request)
-}
-
 fn validate_prompt_for_provider(
     result: &mut PromptCompileResult,
     capabilities: &ProviderCapabilityMatrix,
@@ -756,10 +748,7 @@ fn build_anthropic_messages_url(base_url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        adapt_prompt_compile_result_to_openai_messages, build_llm_chat_request,
-        build_provider_http_request,
-    };
+    use super::{build_llm_chat_request, build_provider_http_request};
     use crate::{
         llm::{LlmChatRequest, LlmContentPart, LlmMessage, LlmRole},
         services::prompt_compiler::{
@@ -790,51 +779,6 @@ mod tests {
             params: CompiledSamplingParams::default(),
             debug: PromptCompileDebugReport::default(),
         }
-    }
-
-    #[test]
-    fn adapter_keeps_history_outside_system() {
-        let mut result = PromptCompileResult {
-            system_blocks: vec![
-                block(PromptBlockKind::PresetRule, PromptRole::System, "system-a"),
-                block(PromptBlockKind::CharacterBase, PromptRole::System, "system-b"),
-            ],
-            history_blocks: vec![
-                block(PromptBlockKind::RecentHistory, PromptRole::User, "user-old"),
-                block(PromptBlockKind::RecentHistory, PromptRole::Assistant, "assistant-old"),
-            ],
-            current_user_block: block(PromptBlockKind::CurrentUser, PromptRole::User, "current-user"),
-            output_validators: vec![],
-            params: CompiledSamplingParams::default(),
-            debug: PromptCompileDebugReport::default(),
-        };
-
-        let messages =
-            adapt_prompt_compile_result_to_openai_messages(&mut result, "openai_compatible")
-                .expect("adapter should succeed");
-
-        assert_eq!(messages.len(), 4);
-        assert_eq!(messages[0].role, "system");
-        assert_eq!(messages[0].content, "system-a\n\nsystem-b");
-        assert_eq!(messages[1].role, "user");
-        assert_eq!(messages[1].content, "user-old");
-        assert_eq!(messages[2].role, "assistant");
-        assert_eq!(messages[2].content, "assistant-old");
-        assert_eq!(messages[3].role, "user");
-        assert_eq!(messages[3].content, "current-user");
-    }
-
-    #[test]
-    fn adapter_empty_system_produces_no_system_message() {
-        let mut result = empty_result();
-
-        let messages =
-            adapt_prompt_compile_result_to_openai_messages(&mut result, "openai_compatible")
-                .expect("adapter should succeed");
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].content, "当前输入");
     }
 
     #[test]
