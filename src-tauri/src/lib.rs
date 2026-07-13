@@ -161,7 +161,9 @@ pub fn run() {
             commands::mem0::mem0_delete_all,
             commands::mem0_snapshot::mem0_snapshot_list,
             commands::mem0_snapshot::mem0_snapshot_window_set,
-            commands::mem0::mem0_init_status
+            commands::mem0::mem0_init_status,
+            commands::utils::format_timestamp,
+            commands::utils::format_timestamps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

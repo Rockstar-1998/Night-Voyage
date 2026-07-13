@@ -114,11 +114,8 @@ impl StructuredOutputParser {
 
             match self.phase {
                 Phase::BeforeObject => {
-                    match ch {
-                        '{' => {
-                            self.phase = Phase::ExpectKeyOrEnd;
-                        }
-                        _ => {}
+                    if ch == '{' {
+                        self.phase = Phase::ExpectKeyOrEnd;
                     }
                     self.pos += ch_len;
                 }

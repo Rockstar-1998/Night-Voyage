@@ -1,5 +1,5 @@
-import { Component, For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
-import { X, CheckCircle2, ChevronDown, User, Users, Check, AlertTriangle, Book, Link as LinkIcon, Radio } from 'lucide-solid';
+import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { CheckCircle2, ChevronDown, User, Users, AlertTriangle } from 'lucide-solid';
 import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, PresetSummary } from '../../src/lib/backend';
 import { showToast } from './Toast';
 

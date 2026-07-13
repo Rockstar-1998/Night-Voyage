@@ -747,7 +747,7 @@ pub async fn compile_prompt(
     .await?;
     system_blocks.extend(retrieved_detail_blocks);
 
-    system_blocks.sort_by(|left, right| left.priority.cmp(&right.priority));
+    system_blocks.sort_by_key(|left| left.priority);
 
     let mut result = PromptCompileResult {
         system_blocks,
@@ -1937,7 +1937,7 @@ async fn load_world_book_blocks(
         blocks.push(block);
     }
 
-    blocks.sort_by(|left, right| left.priority.cmp(&right.priority));
+    blocks.sort_by_key(|left| left.priority);
     Ok(blocks)
 }
 
@@ -2541,7 +2541,7 @@ fn parse_optional_json_string_array(
         return Ok(None);
     }
 
-    let parsed = serde_json::from_str::<Vec<String>>(&raw)
+    let parsed = serde_json::from_str::<Vec<String>>(raw)
         .map_err(|err| format!("{field_name} JSON parse failed: {err}"))?;
 
     let mut values = Vec::with_capacity(parsed.len());

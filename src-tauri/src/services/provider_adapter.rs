@@ -460,11 +460,10 @@ fn build_openai_http_request(
 fn inject_additional_properties_false(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            if map.get("type").and_then(|v| v.as_str()) == Some("object") {
-                if !map.contains_key("additionalProperties") {
+            if map.get("type").and_then(|v| v.as_str()) == Some("object")
+                && !map.contains_key("additionalProperties") {
                     map.insert("additionalProperties".to_string(), Value::Bool(false));
                 }
-            }
             for (_, child) in map.iter_mut() {
                 inject_additional_properties_false(child);
             }
@@ -926,7 +925,7 @@ mod tests {
                 .expect("anthropic http request should build");
 
         assert!(http_request.url.ends_with("/v1/messages"));
-        assert_eq!(http_request.stream, true);
+        assert!(http_request.stream);
         let system_array = http_request
             .body
             .get("system")

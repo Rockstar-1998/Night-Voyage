@@ -12,6 +12,22 @@ use crate::{
 };
 use crate::dbg_eprintln;
 
+/// Row type returned when loading the source conversation fields needed to fork
+/// a conversation: `title`, `host_character_id`, `world_book_id`, `preset_id`,
+/// `provider_id`, `conversation_type`, `chat_mode`, `agent_provider_policy`,
+/// `memory_mode`.
+type ConversationForkOriginal = (
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    String,
+    String,
+    Option<String>,
+    String,
+);
+
 #[tauri::command]
 pub async fn conversations_list(
     state: tauri::State<'_, AppState>,
@@ -1066,7 +1082,7 @@ pub async fn conversations_fork(
     );
     // 能力校验：fork 不需要 member_id 区分（single 直接放行，online 全 6 变体矩阵保证 Block）
     capability_guard::resolve_and_check(&state.db, conversation_id, None, Operation::Fork).await?;
-    let original: (Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, String, String, Option<String>, String) = sqlx::query_as(
+    let original: ConversationForkOriginal = sqlx::query_as(
         "SELECT title, host_character_id, world_book_id, preset_id, provider_id, conversation_type, chat_mode, agent_provider_policy, memory_mode FROM conversations WHERE id = ?"
     )
     .bind(conversation_id)

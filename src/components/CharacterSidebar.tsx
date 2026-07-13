@@ -4,7 +4,6 @@ import { Download, Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } 
 import { IconButton } from './ui/IconButton';
 import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 import {
-  importManagedImageFile,
   resolveImageSrc,
   type ApiProviderSummary,
   type CharacterBaseSectionInput,
@@ -13,6 +12,7 @@ import {
   type CharacterCardType,
   type WorldBookSummary,
 } from '../lib/backend';
+import { handleImportFile, importImage } from '../lib/sidebarFileImport';
 
 interface CharacterSidebarProps {
   npcCharacters: CharacterCard[];
@@ -102,14 +102,6 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
   let fileInputRef: HTMLInputElement | undefined;
   let importInputRef: HTMLInputElement | undefined;
 
-  const handleImportFile = async (event: Event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    await props.onImportExchange(file);
-  };
-
   const currentCharacters = createMemo(() =>
     activeTab() === 'player' ? props.playerCharacters : props.npcCharacters,
   );
@@ -153,17 +145,6 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
       setFormData({ ...EMPTY_FORM });
     }
     setIsModalOpen(true);
-  };
-
-  const importImage = async (file?: File) => {
-    if (!file) return;
-    setUploadingImage(true);
-    try {
-      const imported = await importManagedImageFile(file);
-      setFormData({ ...formData(), imagePath: imported.storedPath });
-    } finally {
-      setUploadingImage(false);
-    }
   };
 
   const previewSrc = createMemo(() =>
@@ -214,7 +195,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
               type="file"
               accept="application/json,.json"
               class="hidden"
-              onChange={(e) => void handleImportFile(e)}
+              onChange={(e) => void handleImportFile(e, props.onImportExchange)}
             />
             <IconButton onClick={() => importInputRef?.click()} label="导入角色卡" tone="neutral" size="lg">
               <Upload size={18} />
@@ -451,13 +432,13 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                   type="file"
                   accept="image/*"
                   class="hidden"
-                  onChange={(e) => void importImage(e.currentTarget.files?.[0])}
+                  onChange={(e) => void importImage(e.currentTarget.files?.[0], setUploadingImage, (path) => setFormData({ ...formData(), imagePath: path }))}
                 />
                 <div
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
-                    void importImage(e.dataTransfer?.files?.[0]);
+                    void importImage(e.dataTransfer?.files?.[0], setUploadingImage, (path) => setFormData({ ...formData(), imagePath: path }));
                   }}
                   class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >

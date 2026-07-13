@@ -1,5 +1,5 @@
 import { Component, createSignal, For, Show, createMemo } from 'solid-js';
-import { Search, Plus } from 'lucide-solid';
+import { Plus } from 'lucide-solid';
 import { CharacterCard, CharacterCardType, resolveImageSrc, WorldBookSummary, ApiProviderSummary } from '../../../src/lib/backend';
 import { CharacterDrawer } from './CharacterDrawer';
 
@@ -14,7 +14,7 @@ interface CharacterGalleryProps {
 
 export const CharacterGallery: Component<CharacterGalleryProps> = (props) => {
   const [activeTab, setActiveTab] = createSignal<CharacterCardType>('npc');
-  const [search, setSearch] = createSignal('');
+  const [search] = createSignal('');
   
   const [isDrawerOpen, setIsDrawerOpen] = createSignal(false);
   const [editingCharacter, setEditingCharacter] = createSignal<CharacterCard | null>(null);

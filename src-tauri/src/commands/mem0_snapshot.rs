@@ -26,7 +26,7 @@ pub async fn mem0_snapshot_window_set(
     conversation_id: i64,
     window: i64,
 ) -> Result<(), String> {
-    if window < 1 || window > 1000 {
+    if !(1..=1000).contains(&window) {
         return Err("快照窗口必须在 1-1000 之间".to_string());
     }
     sqlx::query(

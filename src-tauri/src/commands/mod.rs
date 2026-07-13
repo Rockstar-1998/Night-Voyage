@@ -10,4 +10,5 @@ pub mod presets;
 pub mod providers;
 pub mod rooms;
 pub mod settings;
+pub mod utils;
 pub mod world_books;

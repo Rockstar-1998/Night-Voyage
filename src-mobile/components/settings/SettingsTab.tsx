@@ -1,6 +1,6 @@
 import { Component, createSignal, For, Show } from 'solid-js';
-import { ChevronRight, Globe, Palette, Plus, ChevronLeft, Save, Trash2, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-solid';
-import { ApiProviderSummary, ProviderKind, providersCreate, providersUpdate, providersDelete, providersTest } from '../../../src/lib/backend';
+import { ChevronRight, Globe, Palette, Plus, ChevronLeft } from 'lucide-solid';
+import { ApiProviderSummary } from '../../../src/lib/backend';
 import { ApiProviderDrawer } from './ApiProviderDrawer';
 
 interface SettingsTabProps {
@@ -132,7 +132,7 @@ export const SettingsTab: Component<SettingsTabProps> = (props) => {
                     </div>
                     
                     <div class="flex flex-col gap-1 w-full relative z-10">
-                      <span class="text-[13px] text-mist-solid/80 truncate">{provider.models.join(', ') || '未配置模型'}</span>
+                      <span class="text-[13px] text-mist-solid/80 truncate">{provider.modelName || '未配置模型'}</span>
                       <span class="text-[10px] text-mist-solid/40 font-mono truncate">{provider.baseUrl || '•••• (无 Base URL)'}</span>
                     </div>
                   </button>

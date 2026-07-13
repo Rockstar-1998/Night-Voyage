@@ -38,8 +38,6 @@ struct StreamResponseData {
     full_content: String,
     thinking_content: Option<String>,
     stop_reason: Option<String>,
-    prompt_tokens: Option<i64>,
-    completion_tokens: Option<i64>,
 }
 
 fn map_structured_field_part_type(key: &str) -> &'static str {
@@ -831,8 +829,6 @@ async fn stream_openai_text_response(
                     full_content: structured_json_content.unwrap_or(full_content),
                     thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                     stop_reason: finish_reason,
-                    prompt_tokens,
-                    completion_tokens,
                 });
             }
 
@@ -1039,8 +1035,6 @@ async fn stream_openai_text_response(
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                 stop_reason: finish_reason,
-                prompt_tokens,
-                completion_tokens,
             });
         }
         return Err("LLM 响应为空".to_string());
@@ -1061,8 +1055,6 @@ async fn stream_openai_text_response(
         full_content: structured_json_content.unwrap_or(full_content),
         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
         stop_reason: finish_reason,
-        prompt_tokens,
-        completion_tokens,
     })
 }
 
@@ -1641,8 +1633,6 @@ async fn stream_anthropic_text_response(
                         full_content: structured_json_content.unwrap_or(full_content),
                         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                         stop_reason: latest_stop_reason.clone(),
-                        prompt_tokens,
-                        completion_tokens,
                     });
                 }
                 "content_block_stop" => {
@@ -1664,17 +1654,15 @@ async fn stream_anthropic_text_response(
                         None,
                     )?;
                 }
-                "ping" | "message_start" => {
-                    if event_type == "message_start" {
-                        if prompt_tokens.is_none() {
+                "ping" | "message_start"
+                    if event_type == "message_start"
+                        && prompt_tokens.is_none() => {
                             prompt_tokens = value
                                 .get("message")
                                 .and_then(|msg| msg.get("usage"))
                                 .and_then(|usage| usage.get("input_tokens"))
                                 .and_then(|v| v.as_i64());
                         }
-                    }
-                }
                 _ => {}
             }
 
@@ -1765,8 +1753,6 @@ async fn stream_anthropic_text_response(
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                 stop_reason: latest_stop_reason.clone(),
-                prompt_tokens,
-                completion_tokens,
             });
         }
         return Err("LLM 响应为空".to_string());
@@ -1787,8 +1773,6 @@ async fn stream_anthropic_text_response(
         full_content: structured_json_content.unwrap_or(full_content),
         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
         stop_reason: latest_stop_reason.clone(),
-        prompt_tokens,
-        completion_tokens,
     })
 }
 

@@ -1,12 +1,12 @@
 import { Component, For, Show, createSignal } from 'solid-js';
 import { BookOpen, Download, Plus, Pencil, Save, Search, Trash2, Upload, X } from '../lib/icons';
 import {
-  importManagedImageFile,
   resolveImageSrc,
   type UpsertWorldBookEntryPayload,
   type WorldBookEntryRecord,
   type WorldBookSummary,
 } from '../lib/backend';
+import { handleImportFile, importImage } from '../lib/sidebarFileImport';
 import { WorldBookEntryArea } from './WorldBookEntryArea';
 import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 import { Switch, Match } from 'solid-js';
@@ -48,14 +48,6 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
   let fileInputRef: HTMLInputElement | undefined;
   let importInputRef: HTMLInputElement | undefined;
 
-  const handleImportFile = async (event: Event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    await props.onImportExchange(file);
-  };
-
   const activeBook = () => props.worldBooks.find((book) => book.id === selectedBookId());
   const filteredBooks = () => {
     const query = search().trim().toLowerCase();
@@ -76,17 +68,6 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
       setFormData({ ...EMPTY_FORM });
     }
     setIsModalOpen(true);
-  };
-
-  const importImage = async (file?: File) => {
-    if (!file) return;
-    setUploadingImage(true);
-    try {
-      const imported = await importManagedImageFile(file);
-      setFormData({ ...formData(), imagePath: imported.storedPath });
-    } finally {
-      setUploadingImage(false);
-    }
   };
 
   const handleSave = async () => {
@@ -142,7 +123,7 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                   type="file"
                   accept="application/json,.json"
                   class="hidden"
-                  onChange={(e) => void handleImportFile(e)}
+                  onChange={(e) => void handleImportFile(e, props.onImportExchange)}
                 />
                 <IconButton onClick={() => importInputRef?.click()} label="导入世界书" tone="neutral" size="lg">
                   <Upload size={18} />
@@ -267,13 +248,13 @@ export const WorldBookSidebar: Component<WorldBookSidebarProps> = (props) => {
                   type="file"
                   accept="image/*"
                   class="hidden"
-                  onChange={(e) => void importImage(e.currentTarget.files?.[0])}
+                  onChange={(e) => void importImage(e.currentTarget.files?.[0], setUploadingImage, (path) => setFormData({ ...formData(), imagePath: path }))}
                 />
                 <div
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
-                    void importImage(e.dataTransfer?.files?.[0]);
+                    void importImage(e.dataTransfer?.files?.[0], setUploadingImage, (path) => setFormData({ ...formData(), imagePath: path }));
                   }}
                   class="border-b border-dashed border-white/20 pb-4 flex flex-col gap-3"
                 >

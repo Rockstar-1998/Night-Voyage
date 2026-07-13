@@ -16,3 +16,4 @@ export * from './backend/exchange';
 export * from './backend/settings';
 export * from './backend/events';
 export * from './backend/rooms';
+export * from './backend/utils';

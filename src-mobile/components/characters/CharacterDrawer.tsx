@@ -1,9 +1,8 @@
 import { Component, createSignal, createEffect, For, Show, createMemo } from 'solid-js';
 import { Save, Trash2, X, Upload, Plus, ChevronDown, ChevronUp } from 'lucide-solid';
 import { 
-  CharacterCard, 
+  CharacterCard,
   CharacterCardType,
-  CharacterBaseSectionInput,
   CharacterBaseSectionKey,
   ApiProviderSummary,
   WorldBookSummary,

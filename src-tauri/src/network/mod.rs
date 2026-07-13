@@ -44,7 +44,7 @@ pub enum RoomMessage {
     JoinSuccess {
         room_id: i64,
         member_id: i64,
-        conversation: ConversationListItem,
+        conversation: Box<ConversationListItem>,
         members: Vec<ConversationMember>,
         #[serde(alias = "recentMessages")]
         full_messages: Vec<UiMessage>,
@@ -791,7 +791,7 @@ async fn rollback_joined_member(
 pub struct RoomJoinSession {
     pub room_id: i64,
     pub member_id: i64,
-    pub conversation: ConversationListItem,
+    pub conversation: Box<ConversationListItem>,
     pub members: Vec<ConversationMember>,
     pub full_messages: Vec<UiMessage>,
     pub round_state: RoundState,
@@ -937,17 +937,13 @@ pub async fn read_frame(stream: &mut TcpStream) -> Result<Option<RoomMessage>, S
 #[derive(Clone)]
 struct ClientHandle {
     tx: mpsc::UnboundedSender<RoomMessage>,
-    display_name: String,
-    db_member_id: i64,
 }
 
 pub struct RoomServer {
     pub room_id: i64,
     pub port: u32,
     clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
-    next_client_id: Arc<Mutex<i64>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    db: SqlitePool,
     schema_toggle_state: Arc<Mutex<HashMap<String, bool>>>,
 }
 
@@ -992,9 +988,7 @@ impl RoomServer {
             room_id,
             port,
             clients: clients.clone(),
-            next_client_id: next_client_id.clone(),
             shutdown_tx: Some(shutdown_tx),
-            db: db.clone(),
             schema_toggle_state: schema_toggle_state.clone(),
         }));
 
@@ -1340,7 +1334,7 @@ impl RoomServer {
                             let success_msg = RoomMessage::JoinSuccess {
                                 room_id: room_id_inner,
                                 member_id: db_member_id,
-                                conversation,
+                                conversation: Box::new(conversation),
                                 members: member_profiles,
                                 full_messages,
                                 round_state,
@@ -1369,7 +1363,7 @@ impl RoomServer {
 
                             {
                                 let mut c = clients.write().await;
-                                c.insert(client_id, ClientHandle { tx: tx.clone(), display_name: display_name.clone(), db_member_id });
+                                c.insert(client_id, ClientHandle { tx: tx.clone() });
                             }
 
                             // Build and unicast a full `ContextSnapshot` to the freshly joined client only.

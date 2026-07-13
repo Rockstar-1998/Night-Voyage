@@ -12,23 +12,10 @@ const STATUS_ABORTED: &str = "aborted";
 
 #[derive(Debug, Clone)]
 pub struct RetrySnapshotRecord {
-    pub round_id: i64,
-    pub conversation_id: i64,
     pub assistant_message_id: i64,
     pub provider_id: i64,
-    pub provider_kind: String,
-    pub model_name: String,
-    pub response_mode: Option<String>,
-    pub request: ProviderHttpRequest,
-    pub validation_rules: Vec<RetryOutputValidatorSnapshot>,
     pub status: String,
     pub attempt_count: i64,
-    pub last_error: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub last_started_at: Option<i64>,
-    pub last_succeeded_at: Option<i64>,
-    pub last_aborted_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,10 +74,7 @@ impl RetrySnapshotRepository {
         round_id: i64,
     ) -> Result<Option<RetrySnapshotRecord>, String> {
         let row = sqlx::query(
-            "SELECT round_id, conversation_id, assistant_message_id, provider_id, provider_kind,
-                    model_name, response_mode, request_snapshot_json, validation_snapshot_json,
-                    status, attempt_count, last_error, created_at, updated_at,
-                    last_started_at, last_succeeded_at, last_aborted_at
+            "SELECT assistant_message_id, provider_id, status, attempt_count
              FROM llm_retry_snapshots
              WHERE round_id = ?
              LIMIT 1",
@@ -251,31 +235,11 @@ impl RetrySnapshotRepository {
     }
 
     fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<RetrySnapshotRecord, String> {
-        let request_snapshot_json: String = row.try_get("request_snapshot_json").map_err(|err| err.to_string())?;
-        let validation_snapshot_json: String = row.try_get("validation_snapshot_json").map_err(|err| err.to_string())?;
-        let request: ProviderHttpRequest = serde_json::from_str(&request_snapshot_json)
-            .map_err(|err| format!("failed to decode retry request snapshot: {err}"))?;
-        let validation_rules: Vec<RetryOutputValidatorSnapshot> = serde_json::from_str(&validation_snapshot_json)
-            .map_err(|err| format!("failed to decode retry validation snapshot: {err}"))?;
-
         Ok(RetrySnapshotRecord {
-            round_id: row.try_get("round_id").map_err(|err| err.to_string())?,
-            conversation_id: row.try_get("conversation_id").map_err(|err| err.to_string())?,
             assistant_message_id: row.try_get("assistant_message_id").map_err(|err| err.to_string())?,
             provider_id: row.try_get("provider_id").map_err(|err| err.to_string())?,
-            provider_kind: row.try_get("provider_kind").map_err(|err| err.to_string())?,
-            model_name: row.try_get("model_name").map_err(|err| err.to_string())?,
-            response_mode: row.try_get("response_mode").ok(),
-            request,
-            validation_rules,
             status: row.try_get("status").map_err(|err| err.to_string())?,
             attempt_count: row.try_get("attempt_count").map_err(|err| err.to_string())?,
-            last_error: row.try_get("last_error").ok(),
-            created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
-            updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
-            last_started_at: row.try_get("last_started_at").ok(),
-            last_succeeded_at: row.try_get("last_succeeded_at").ok(),
-            last_aborted_at: row.try_get("last_aborted_at").ok(),
         })
     }
 }

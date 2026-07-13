@@ -45,3 +45,6 @@ export * from './events';
 
 // Rooms (multiplayer)
 export * from './rooms';
+
+// Shared utilities (timestamp formatting, etc.)
+export { formatTimestamp, formatTimestamps } from './utils';

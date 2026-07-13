@@ -1,6 +1,6 @@
-import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, createMemo, createResource, createSignal } from 'solid-js';
 import { Search, Plus, UserPlus, Users, User, Trash2 } from '../lib/icons';
-import { CharacterCard, ConversationListItem, ConversationMember, resolveImageSrc } from '../lib/backend';
+import { CharacterCard, ConversationListItem, ConversationMember, formatTimestamps, resolveImageSrc } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 import { showConfirm } from './Toast';
 
@@ -19,14 +19,6 @@ interface SessionSidebarProps {
   onCloseRoom?: (conversationId: number) => void;
 }
 
-const formatTime = (timestamp: number) =>
-  new Date(timestamp * 1000).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
 export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
   const [search, setSearch] = createSignal('');
   const [expandedRoomId, setExpandedRoomId] = createSignal<number | null>(null);
@@ -41,6 +33,22 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
     single: filteredSessions().filter((session) => session.conversationType === 'single'),
     online: filteredSessions().filter((session) => session.conversationType === 'online'),
   }));
+
+  // Batch pre-format all session timestamps via the Rust `format_timestamps`
+  // command. Refetches only when the sessions array reference changes (parent
+  // reload), not on every search keystroke, so search filtering stays cheap
+  // and the rendering hot path remains synchronous map lookups.
+  const [formattedTimes] = createResource(
+    () => props.sessions,
+    async (sessions) => {
+      if (sessions.length === 0) return new Map<number, string>();
+      const timestamps = sessions.map((s) => s.updatedAt);
+      const formatted = await formatTimestamps(timestamps);
+      const lookup = new Map<number, string>();
+      timestamps.forEach((ts, idx) => lookup.set(ts, formatted[idx]));
+      return lookup;
+    },
+  );
 
   const getSessionImage = (session: ConversationListItem) => {
     const boundCharacter = props.npcCharacters.find((character) => character.id === session.hostCharacterId);
@@ -118,7 +126,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                             </p>
                           </div>
                           <div class="flex items-center gap-1">
-                            <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">{formatTime(session.updatedAt)}</span>
+                            <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">{formattedTimes()?.get(session.updatedAt) ?? ''}</span>
                             <button
                               type="button"
                               class="p-1.5 rounded-lg hover:bg-red-500/20 text-mist-solid/30 hover:text-red-300 transition-colors opacity-0 group-hover:opacity-100 transition-opacity"
@@ -258,7 +266,7 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                           <p class="text-[11px] text-mist-solid/40 mt-1 transition-transform duration-500 delay-75 group-hover:translate-x-1">个人航行</p>
                         </div>
                         <div class="flex items-center gap-1">
-                          <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">{formatTime(session.updatedAt)}</span>
+                          <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">{formattedTimes()?.get(session.updatedAt) ?? ''}</span>
                           <span
                             role="button"
                             tabindex={0}

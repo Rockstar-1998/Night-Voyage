@@ -1,6 +1,7 @@
-import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, createMemo, createResource, createSignal } from 'solid-js';
 import { Search, Plus, UserPlus, Trash2, Users } from 'lucide-solid';
 import { CharacterCard, ConversationListItem, resolveImageSrc } from '../../src/lib/backend';
+import { formatTimestamps } from '../lib/backend/utils';
 import { showConfirm } from './Toast';
 
 interface SessionListProps {
@@ -13,14 +14,6 @@ interface SessionListProps {
   onDeleteConversation?: (id: number) => void;
 }
 
-const formatTime = (timestamp: number) =>
-  new Date(timestamp * 1000).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
 export const SessionList: Component<SessionListProps> = (props) => {
   const [search, setSearch] = createSignal('');
 
@@ -29,6 +22,22 @@ export const SessionList: Component<SessionListProps> = (props) => {
     if (!query) return props.sessions;
     return props.sessions.filter((session) => (session.title ?? '').toLowerCase().includes(query));
   });
+
+  // Batch pre-format all session timestamps via the Rust `format_timestamps`
+  // command. Refetches only when the sessions array reference changes (parent
+  // reload), not on every search keystroke, so search filtering stays cheap
+  // and the rendering hot path remains synchronous map lookups.
+  const [formattedTimes] = createResource(
+    () => props.sessions,
+    async (sessions) => {
+      if (sessions.length === 0) return new Map<number, string>();
+      const timestamps = sessions.map((s) => s.updatedAt);
+      const formatted = await formatTimestamps(timestamps);
+      const lookup = new Map<number, string>();
+      timestamps.forEach((ts, idx) => lookup.set(ts, formatted[idx]));
+      return lookup;
+    },
+  );
 
   const getSessionImage = (session: ConversationListItem) => {
     const boundCharacter = props.npcCharacters.find((character) => character.id === session.hostCharacterId);
@@ -96,7 +105,7 @@ export const SessionList: Component<SessionListProps> = (props) => {
                     <div class="flex-1 min-w-0 flex flex-col justify-center">
                       <div class="flex items-start justify-between gap-2">
                         <h3 class="text-base font-bold text-white truncate">{session.title ?? '未命名会话'}</h3>
-                        <span class="text-[10px] text-mist-solid/40 shrink-0 whitespace-nowrap mt-1">{formatTime(session.updatedAt)}</span>
+                        <span class="text-[10px] text-mist-solid/40 shrink-0 whitespace-nowrap mt-1">{formattedTimes()?.get(session.updatedAt) ?? ''}</span>
                       </div>
                       
                       <div class="flex items-center justify-between mt-1">

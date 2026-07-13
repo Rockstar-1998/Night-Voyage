@@ -84,10 +84,11 @@ pub async fn load_triggered_world_book_entries(
         let is_constant = trigger_mode == "always";
 
         // Always entries are unconditionally included regardless of trigger sources.
+        // Pick the highest-priority source kind (if any) to tag the entry for sorting.
         let matched_source_kind = if is_constant {
             let best = normalized_sources
                 .iter()
-                .filter_map(|(kind, _)| Some(*kind))
+                .map(|(kind, _)| *kind)
                 .min_by_key(|kind| kind.priority())
                 .unwrap_or(WorldBookTriggerSourceKind::CurrentUser);
             Some(best)

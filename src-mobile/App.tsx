@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show, createMemo } from 'solid-js';
+import { createSignal, onMount, Show } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 import { MessageSquare, Settings, Users, Book, LayoutGrid } from 'lucide-solid';
@@ -46,8 +46,11 @@ function App() {
     
     // Modal states
     const [isNewChatModalOpen, setIsNewChatModalOpen] = createSignal(false);
+    // 暂留：联机加入房间 modal，待 implement-multiplayer-room-mode spec 接线
     const [isJoinRoomModalOpen, setIsJoinRoomModalOpen] = createSignal(false);
-    
+    void isJoinRoomModalOpen;
+    void setIsJoinRoomModalOpen;
+
     // Selected states
     const [selectedConversationId, setSelectedConversationId] = createSignal<number | null>(null);
 

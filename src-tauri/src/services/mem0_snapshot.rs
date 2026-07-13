@@ -168,7 +168,7 @@ pub fn list_snapshots(conversation_id: i64) -> Result<Vec<SnapshotInfo>, String>
     }
 
     // Sort by round_index descending
-    snapshots.sort_by(|a, b| b.round_index.cmp(&a.round_index));
+    snapshots.sort_by_key(|s| std::cmp::Reverse(s.round_index));
     Ok(snapshots)
 }
 
@@ -181,7 +181,7 @@ pub fn prune_old_snapshots(conversation_id: i64, window: usize) -> Result<usize,
     }
 
     // Sort ascending so oldest are first
-    snapshots.sort_by(|a, b| a.round_index.cmp(&b.round_index));
+    snapshots.sort_by_key(|a| a.round_index);
     let to_remove = snapshots.len() - window;
     let snap_dir = snapshot_dir(conversation_id)?;
     let mut removed = 0;

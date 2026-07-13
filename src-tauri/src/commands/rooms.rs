@@ -242,7 +242,7 @@ pub async fn room_join(
                 message: "连接成功".to_string(),
                 room_id: Some(session.room_id),
                 member_id: Some(session.member_id),
-                conversation: Some(session.conversation),
+                conversation: Some(*session.conversation),
                 members: session.members,
                 full_messages: session.full_messages,
                 round_state: Some(session.round_state),

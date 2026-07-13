@@ -204,7 +204,7 @@ pub const MODE_CAPABILITIES: [ModeCapabilities; 9] = [
 /// 9 个模式的 snake_case 字符串表，下标与 `ConversationMode` 枚举序对齐。
 ///
 /// 用于跨 IPC 传递模式标识，与前端 `ConversationMode` 类型字面量一致。
-const MODE_STRINGS: [&'static str; 9] = [
+const MODE_STRINGS: [&str; 9] = [
     "single_stateless",
     "single_legacy",
     "single_mem0",

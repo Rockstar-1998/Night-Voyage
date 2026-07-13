@@ -1,5 +1,5 @@
 import { Component, createSignal, createEffect, For, Show } from 'solid-js';
-import { Save, Trash2, X, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-solid';
+import { Save, Trash2, X, RefreshCw } from 'lucide-solid';
 import { ApiProviderSummary, providersCreate, providersUpdate, providersDelete, providersTest, providersFetchModels } from '../../../src/lib/backend';
 import { showToast, showConfirm } from '../Toast';
 
@@ -50,21 +50,39 @@ export const ApiProviderDrawer: Component<ApiProviderDrawerProps> = (props) => {
       showToast('档案名称不能为空', 'warning');
       return;
     }
-    
+    const trimmedBaseUrl = baseUrl().trim();
+    if (!trimmedBaseUrl) {
+      showToast('接口地址 (Base URL) 不能为空', 'warning');
+      return;
+    }
+    const trimmedApiKey = apiKey().trim();
+    if (!props.provider && !trimmedApiKey) {
+      showToast('API Key 不能为空', 'warning');
+      return;
+    }
+
     setIsSaving(true);
     try {
-      const payload = {
-        name: name().trim(),
-        providerKind: providerKind(),
-        baseUrl: baseUrl().trim() || undefined,
-        apiKey: apiKey().trim() || undefined,
-        modelName: modelName().trim() || '<empty>',
-      };
-      
+      const trimmedName = name().trim();
+      const trimmedModelName = modelName().trim() || '<empty>';
+
       if (props.provider) {
-        await providersUpdate({ id: props.provider.id, ...payload });
+        await providersUpdate({
+          id: props.provider.id,
+          name: trimmedName,
+          providerKind: providerKind(),
+          baseUrl: trimmedBaseUrl,
+          modelName: trimmedModelName,
+          apiKey: trimmedApiKey || undefined,
+        });
       } else {
-        await providersCreate(payload);
+        await providersCreate({
+          name: trimmedName,
+          providerKind: providerKind(),
+          baseUrl: trimmedBaseUrl,
+          apiKey: trimmedApiKey,
+          modelName: trimmedModelName,
+        });
       }
       await props.onRefresh();
       props.onClose();
