@@ -149,3 +149,23 @@ pub async fn presets_delete(state: tauri::State<'_, AppState>, id: i64) -> Resul
     let service = PresetService::new(&state.db);
     service.delete(id).await
 }
+
+#[tauri::command]
+pub async fn presets_rename(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    new_name: String,
+) -> Result<PresetDetail, String> {
+    let service = PresetService::new(&state.db);
+    service.rename(id, new_name).await
+}
+
+#[tauri::command]
+pub async fn presets_duplicate(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    new_name: String,
+) -> Result<PresetDetail, String> {
+    let service = PresetService::new(&state.db);
+    service.duplicate(id, new_name).await
+}

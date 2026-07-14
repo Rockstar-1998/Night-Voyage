@@ -350,12 +350,19 @@ pub fn normalize_temperature_impl(value: Option<f64>) -> Result<Option<f64>, Str
 
 pub fn normalize_max_output_tokens_impl(value: Option<i64>) -> Result<Option<i64>, String> {
     match value {
-        Some(tokens) => {
-            if tokens <= 0 {
-                return Err("maxOutputTokens 必须大于 0".to_string());
-            }
-            Ok(Some(tokens))
+        // A `0` from the renderer side is the legacy "unset" sentinel that
+        // the Blueprint editor used to write before numeric normalization
+        // was introduced. Treat it as "user did not set a value" rather
+        // than an error, and log the rewrite so the data drift remains
+        // visible to the operator (C2: no silent swallows — every rewrite
+        // is observable via `dbg_eprintln!`).
+        Some(tokens) if tokens <= 0 => {
+            dbg_eprintln!(
+                "[preset_validator] normalize_max_output_tokens_impl: rewriting legacy zero sentinel ({tokens}) to NULL"
+            );
+            Ok(None)
         }
+        Some(tokens) => Ok(Some(tokens)),
         None => Ok(None),
     }
 }
@@ -374,12 +381,15 @@ pub fn normalize_top_p_impl(value: Option<f64>) -> Result<Option<f64>, String> {
 
 pub fn normalize_top_k_impl(value: Option<i64>) -> Result<Option<i64>, String> {
     match value {
-        Some(top_k) => {
-            if top_k <= 0 {
-                return Err("topK 必须大于 0".to_string());
-            }
-            Ok(Some(top_k))
+        // Same legacy-sentinel handling as `normalize_max_output_tokens_impl`:
+        // treat `<= 0` as "unset" and log the rewrite for observability.
+        Some(top_k) if top_k <= 0 => {
+            dbg_eprintln!(
+                "[preset_validator] normalize_top_k_impl: rewriting legacy zero sentinel ({top_k}) to NULL"
+            );
+            Ok(None)
         }
+        Some(top_k) => Ok(Some(top_k)),
         None => Ok(None),
     }
 }
@@ -390,6 +400,18 @@ pub fn normalize_thinking_enabled_impl(value: Option<bool>) -> Result<Option<boo
 
 pub fn normalize_thinking_budget_tokens_impl(value: Option<i64>) -> Result<Option<i64>, String> {
     match value {
+        // Same legacy-sentinel handling as `normalize_max_output_tokens_impl`:
+        // the Blueprint editor used to write `0` (or negative values) to mean
+        // "unset" before numeric normalization existed. Treat `<= 0` as
+        // "user did not set a value" and log the rewrite for observability
+        // (C2: no silent swallows — every rewrite is observable via
+        // `dbg_eprintln!`).
+        Some(budget) if budget <= 0 => {
+            dbg_eprintln!(
+                "[preset_validator] normalize_thinking_budget_tokens_impl: rewriting legacy zero sentinel ({budget}) to NULL"
+            );
+            Ok(None)
+        }
         Some(budget) => {
             if budget < 128 {
                 return Err("thinkingBudgetTokens 必须 >= 128".to_string());

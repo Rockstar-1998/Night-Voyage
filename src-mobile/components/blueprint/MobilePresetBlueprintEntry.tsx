@@ -38,9 +38,13 @@ import {
   PresetSummary,
   presetsGet,
   presetsList,
+  presetsCreate,
+  presetsDelete,
+  presetsRename,
+  presetsDuplicate,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
-import { showToast } from '../Toast';
+import { showToast, showConfirm } from '../Toast';
 
 // ─── Props ───
 
@@ -135,6 +139,22 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [editingPreset, setEditingPreset] = createSignal<{ graph: BlueprintGraph; title: string } | null>(null);
   const [migrating, setMigrating] = createSignal<number | null>(null);
+  const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
+  const [renamingValue, setRenamingValue] = createSignal('');
+  const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
+
+  const refreshPresets = async () => {
+    try {
+      const list = await presetsList();
+      setPresets(list);
+    } catch (err) {
+      showToast(
+        `刷新预设列表失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    }
+  };
 
   onMount(async () => {
     try {
@@ -148,6 +168,8 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   });
 
   const handleOpenPreset = async (preset: PresetSummary) => {
+    if (renamingPresetId() === preset.id) return;
+    if (presetBusy() !== null) return;
     setMigrating(preset.id);
     try {
       const detail = await presetsGet(preset.id);
@@ -171,6 +193,100 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
 
   const handleNewBlueprint = () => {
     setEditingPreset({ graph: createEmptyGraph(), title: '新建空白蓝图' });
+  };
+
+  const handleCreatePreset = async () => {
+    if (presetBusy() !== null) return;
+    try {
+      const stamp = Date.now();
+      await presetsCreate({ name: `新预设 ${stamp}` });
+      showToast('已新建预设', 'success');
+      await refreshPresets();
+    } catch (err) {
+      showToast(
+        `新建预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    }
+  };
+
+  const handleDuplicatePreset = async (preset: PresetSummary) => {
+    if (presetBusy() !== null) return;
+    setPresetBusy(preset.id);
+    try {
+      await presetsDuplicate(preset.id, `${preset.name} 副本`);
+      showToast('已复制预设', 'success');
+      await refreshPresets();
+    } catch (err) {
+      showToast(
+        `复制预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleStartRename = (preset: PresetSummary) => {
+    if (presetBusy() !== null) return;
+    setRenamingPresetId(preset.id);
+    setRenamingValue(preset.name);
+  };
+
+  const handleCancelRename = () => {
+    setRenamingPresetId(null);
+    setRenamingValue('');
+  };
+
+  const handleCommitRename = async (id: number) => {
+    const newName = renamingValue().trim();
+    if (!newName) {
+      showToast('预设名称不能为空', 'warning');
+      return;
+    }
+    setPresetBusy(id);
+    try {
+      await presetsRename(id, newName);
+      setRenamingPresetId(null);
+      setRenamingValue('');
+      showToast('已重命名预设', 'success');
+      await refreshPresets();
+    } catch (err) {
+      showToast(
+        `重命名预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleDeletePreset = async (preset: PresetSummary) => {
+    if (presetBusy() !== null) return;
+    const ok = await showConfirm({
+      title: '删除预设',
+      message: `确定删除预设「${preset.name}」吗？此操作不可撤销。`,
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    setPresetBusy(preset.id);
+    try {
+      await presetsDelete(preset.id);
+      showToast('已删除预设', 'success');
+      await refreshPresets();
+    } catch (err) {
+      showToast(
+        `删除预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
   };
 
   const handleSaveGraph = (graph: BlueprintGraph) => {
@@ -224,6 +340,21 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
               </div>
             </button>
 
+            {/* 新建预设（持久化到后端） */}
+            <button
+              onClick={handleCreatePreset}
+              disabled={presetBusy() !== null}
+              class="w-full mb-4 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 flex items-center gap-3 active:scale-[0.99] transition-transform disabled:opacity-50"
+            >
+              <div class="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-300">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15h6"/></svg>
+              </div>
+              <div class="flex-1 text-left">
+                <div class="text-[14px] font-bold text-emerald-200">新建预设</div>
+                <div class="text-[11px] text-emerald-300/60">创建一个空白预设并保存到后端</div>
+              </div>
+            </button>
+
             {/* 说明卡 */}
             <div class="mb-4 p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-mist-solid/55 leading-relaxed">
               点击下方预设自动迁移为蓝图并打开编辑器。旧 preset 的 blocks / schema / semanticGroups / 采样参数会被映射为对应节点。
@@ -251,32 +382,107 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
               <div class="flex flex-col gap-2">
                 <For each={presets()}>
                   {(preset) => (
-                    <button
+                    <div
+                      class="relative w-full p-3.5 rounded-xl bg-white/5 border border-white/10 flex items-center gap-3 text-left active:scale-[0.99] transition-transform"
                       onClick={() => handleOpenPreset(preset)}
-                      disabled={migrating() !== null}
-                      class="w-full p-3.5 rounded-xl bg-white/5 border border-white/10 flex items-center gap-3 text-left active:scale-[0.99] transition-transform disabled:opacity-50"
                     >
                       <div class="w-9 h-9 rounded-lg bg-accent/15 flex items-center justify-center text-accent shrink-0">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><path d="M9 9h6v6H9z"/></svg>
                       </div>
                       <div class="flex-1 min-w-0">
-                        <div class="text-[14px] font-semibold text-white truncate">{preset.name}</div>
-                        <div class="text-[11px] text-mist-solid/45 truncate">
-                          {preset.category} · {preset.isBuiltin ? '内置' : '自定义'}
-                        </div>
+                        <Show
+                          when={renamingPresetId() === preset.id}
+                          fallback={
+                            <>
+                              <div class="text-[14px] font-semibold text-white truncate">{preset.name}</div>
+                              <div class="text-[11px] text-mist-solid/45 truncate">
+                                {preset.category} · {preset.isBuiltin ? '内置' : '自定义'}
+                              </div>
+                            </>
+                          }
+                        >
+                          <input
+                            type="text"
+                            class="w-full bg-xuanqing/80 border border-emerald-500/40 rounded px-2 py-1 text-[14px] font-semibold text-white focus:outline-none focus:border-emerald-500/70"
+                            value={renamingValue()}
+                            onClick={(e) => e.stopPropagation()}
+                            onInput={(e) => setRenamingValue(e.currentTarget.value)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void handleCommitRename(preset.id);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                handleCancelRename();
+                              }
+                            }}
+                            onBlur={() => {
+                              if (renamingPresetId() === preset.id) {
+                                void handleCommitRename(preset.id);
+                              }
+                            }}
+                          />
+                          <div class="text-[10px] text-mist-solid/40 mt-1">Enter 保存 · Esc 取消</div>
+                        </Show>
                       </div>
-                      <Show when={migrating() === preset.id}>
-                        <div class="text-[11px] text-accent animate-pulse">迁移中…</div>
+                      <Show when={renamingPresetId() !== preset.id}>
+                        <div class="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            class="p-1.5 rounded-lg text-mist-solid/50 hover:text-emerald-300 hover:bg-emerald-500/15 transition-colors"
+                            aria-label="复制预设"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDuplicatePreset(preset);
+                            }}
+                            disabled={presetBusy() !== null}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            class="p-1.5 rounded-lg text-mist-solid/50 hover:text-sky-300 hover:bg-sky-500/15 transition-colors"
+                            aria-label="重命名预设"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartRename(preset);
+                            }}
+                            disabled={presetBusy() !== null}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            class="p-1.5 rounded-lg text-mist-solid/50 hover:text-red-300 hover:bg-red-500/15 transition-colors"
+                            aria-label="删除预设"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeletePreset(preset);
+                            }}
+                            disabled={presetBusy() !== null}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                          </button>
+                        </div>
                       </Show>
-                      <Show when={migrating() !== preset.id}>
+                      <Show when={migrating() === preset.id}>
+                        <div class="text-[11px] text-accent animate-pulse shrink-0">迁移中…</div>
+                      </Show>
+                      <Show when={migrating() !== preset.id && renamingPresetId() !== preset.id}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-mist-solid/40 shrink-0"><path d="m9 18 6-6-6-6"/></svg>
                       </Show>
-                    </button>
+                      <Show when={presetBusy() === preset.id}>
+                        <div class="absolute inset-0 rounded-xl bg-xuanqing/40 backdrop-blur-[1px] flex items-center justify-center">
+                          <div class="text-[11px] text-mist-solid/60 animate-pulse">处理中…</div>
+                        </div>
+                      </Show>
+                    </div>
                   )}
                 </For>
                 <Show when={presets().length === 0}>
                   <div class="py-8 text-center text-[13px] text-mist-solid/40">
-                    暂无预设。请新建空白蓝图或在桌面端创建预设。
+                    暂无预设。请新建空白蓝图或上方新建预设。
                   </div>
                 </Show>
               </div>

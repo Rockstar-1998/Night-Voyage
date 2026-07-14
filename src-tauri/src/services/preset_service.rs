@@ -407,6 +407,21 @@ impl<'a> PresetService<'a> {
         Ok(())
     }
 
+    pub async fn rename(&self, id: i64, new_name: String) -> Result<PresetDetail, String> {
+        let now = now_ts();
+        let renamed = PresetRepository::rename(self.db, id, &new_name, now).await?;
+        if !renamed {
+            return Err("指定预设不存在".to_string());
+        }
+        self.get_by_id(id).await
+    }
+
+    pub async fn duplicate(&self, id: i64, new_name: String) -> Result<PresetDetail, String> {
+        let json = self.export(id).await?;
+        let detail = self.import(json).await?;
+        self.rename(detail.preset.id, new_name).await
+    }
+
     async fn ensure_locked_blocks_preserved(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         preset_id: i64,
@@ -556,6 +571,524 @@ impl<'a> PresetService<'a> {
             structured_output_schema_override: provider_override.structured_output_schema_override,
             structured_output_display_override: provider_override.structured_output_display_override,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::blueprint::{
+        BlueprintExecutionContext, BlueprintGraph, BlueprintNode, BlueprintEdge, NodeConfig,
+        Position, PromptConfig, SchemaFieldConfig, SamplingParamsConfig, ModeSwitchConfig,
+    };
+    use crate::services::blueprint_executor::execute_blueprint;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Build an in-memory SQLite database with all migrations applied.
+    /// This is the "backdoor" that lets us test the full preset ↔
+    /// blueprint chain without running the Tauri app.
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite::memory:");
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    /// A minimal valid blueprint graph: Start → ModeSwitch → End.
+    /// ModeSwitch's three outlets all connect directly to End.
+    fn minimal_graph_json() -> String {
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    config: NodeConfig::Start,
+                    position: Position { x: 0.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_mode".to_string(),
+                    config: NodeConfig::ModeSwitch(ModeSwitchConfig {
+                        label: "记忆模式分支".to_string(),
+                    }),
+                    position: Position { x: 200.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    config: NodeConfig::End,
+                    position: Position { x: 400.0, y: 300.0 },
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_mode".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_mode".to_string(),
+                    source_port: "out_legacy".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e3".to_string(),
+                    source: "n_mode".to_string(),
+                    source_port: "out_mem0".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e4".to_string(),
+                    source: "n_mode".to_string(),
+                    source_port: "out_stateless".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+            ],
+        };
+        serde_json::to_string(&graph).expect("serialize graph")
+    }
+
+    /// A graph with a Prompt node and a SchemaField node:
+    /// Start → Prompt → SchemaField → End
+    fn full_graph_json() -> String {
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    config: NodeConfig::Start,
+                    position: Position { x: 0.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_prompt".to_string(),
+                    config: NodeConfig::Prompt(PromptConfig {
+                        identifier: "role_def".to_string(),
+                        block_type: "system".to_string(),
+                        content: "You are a narrator.".to_string(),
+                        priority: Some(10),
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 200.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_schema".to_string(),
+                    config: NodeConfig::SchemaField(SchemaFieldConfig {
+                        field_name: "world_variables".to_string(),
+                        field_type: "object".to_string(),
+                        description: "世界状态".to_string(),
+                        sub_schema: None,
+                        db_mapping: Some("world_variables".to_string()),
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 400.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_sampling".to_string(),
+                    config: NodeConfig::SamplingParams(SamplingParamsConfig {
+                        temperature: Some(0.8),
+                        max_tokens: Some(4096),
+                        top_p: Some(0.95),
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        is_locked: false,
+                    }),
+                    position: Position { x: 600.0, y: 300.0 },
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    config: NodeConfig::End,
+                    position: Position { x: 800.0, y: 300.0 },
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_prompt".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_prompt".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_schema".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e3".to_string(),
+                    source: "n_schema".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_sampling".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e4".to_string(),
+                    source: "n_sampling".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+            ],
+        };
+        serde_json::to_string(&graph).expect("serialize graph")
+    }
+
+    /// Create a preset with all nullable fields set to `None` except `name`
+    /// and `blueprint_graph`. This simulates the "new empty preset" scenario
+    /// that was failing in the Blueprint editor.
+    async fn create_test_preset(
+        svc: &PresetService<'_>,
+        name: &str,
+        graph_json: Option<String>,
+    ) -> PresetDetail {
+        svc.create(
+            name.to_string(),
+            None,           // description
+            Some("test".to_string()), // category
+            None,           // temperature
+            None,           // max_output_tokens (NULL, not 0)
+            None,           // top_p
+            None,           // top_k
+            None,           // presence_penalty
+            None,           // frequency_penalty
+            None,           // response_mode
+            None,           // thinking_enabled
+            None,           // thinking_budget_tokens
+            None,           // beta_features
+            None,           // structured_output_schema
+            None,           // structured_output_display
+            None,           // context_included_keys
+            graph_json,     // blueprint_graph
+            None,           // blocks
+            None,           // stop_sequences
+            None,           // provider_overrides
+            None,           // semantic_groups
+        )
+        .await
+        .expect("create preset must succeed")
+    }
+
+    // ─── Test 1: Create preset with blueprint_graph, load it back ───
+
+    #[tokio::test]
+    async fn test_create_and_load_blueprint_graph() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        let graph_json = minimal_graph_json();
+        let detail = create_test_preset(&svc, "test_preset_1", Some(graph_json.clone())).await;
+
+        // The loaded graph must match what we saved.
+        assert_eq!(
+            detail.preset.blueprint_graph.as_deref(),
+            Some(graph_json.as_str()),
+            "loaded blueprint_graph must match saved value"
+        );
+    }
+
+    // ─── Test 2: Create preset without graph, update with graph ───
+
+    #[tokio::test]
+    async fn test_create_without_graph_then_update_with_graph() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        // Create without graph (simulates "new empty preset" button).
+        let detail = create_test_preset(&svc, "test_preset_2", None).await;
+        assert!(
+            detail.preset.blueprint_graph.is_none(),
+            "new preset should have no blueprint_graph"
+        );
+
+        // Now update with a graph (simulates editor auto-migration save).
+        let graph_json = minimal_graph_json();
+        let updated = svc
+            .update(
+                detail.preset.id,
+                detail.preset.name,
+                detail.preset.description,
+                Some(detail.preset.category),
+                detail.preset.temperature,
+                detail.preset.max_output_tokens,
+                detail.preset.top_p,
+                detail.preset.top_k,
+                detail.preset.presence_penalty,
+                detail.preset.frequency_penalty,
+                detail.preset.response_mode,
+                detail.preset.thinking_enabled,
+                detail.preset.thinking_budget_tokens,
+                detail.preset.beta_features,
+                detail.preset.structured_output_schema,
+                detail.preset.structured_output_display,
+                detail.preset.context_included_keys,
+                Some(graph_json.clone()),
+                None, // blocks
+                None, // stop_sequences
+                None, // provider_overrides
+                None, // semantic_groups
+            )
+            .await
+            .expect("update must succeed");
+
+        assert_eq!(
+            updated.preset.blueprint_graph.as_deref(),
+            Some(graph_json.as_str()),
+            "updated blueprint_graph must match"
+        );
+    }
+
+    // ─── Test 3: max_output_tokens = Some(0) is normalized to None ───
+
+    #[tokio::test]
+    async fn test_legacy_zero_max_output_tokens_normalized() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        // Create with max_output_tokens = Some(0) — the legacy sentinel.
+        // The validator should normalize it to None, not reject it.
+        let detail = svc
+            .create(
+                "test_legacy_zero".to_string(),
+                None,
+                Some("test".to_string()),
+                None,
+                Some(0),         // max_output_tokens = 0 (legacy sentinel)
+                None,            // top_p
+                Some(0),         // top_k = 0 (legacy sentinel)
+                None,            // presence_penalty
+                None,            // frequency_penalty
+                None,            // response_mode
+                None,            // thinking_enabled
+                None,            // thinking_budget_tokens
+                None,            // beta_features
+                None,            // structured_output_schema
+                None,            // structured_output_display
+                None,            // context_included_keys
+                Some(minimal_graph_json()),
+                None,            // blocks
+                None,            // stop_sequences
+                None,            // provider_overrides
+                None,            // semantic_groups
+            )
+            .await
+            .expect("create with legacy zero sentinel must succeed");
+
+        // The stored value must be NULL (normalized from 0).
+        assert!(
+            detail.preset.max_output_tokens.is_none(),
+            "max_output_tokens=0 must be normalized to NULL, got {:?}",
+            detail.preset.max_output_tokens
+        );
+        assert!(
+            detail.preset.top_k.is_none(),
+            "top_k=0 must be normalized to NULL, got {:?}",
+            detail.preset.top_k
+        );
+    }
+
+    // ─── Test 4: Update preset with legacy zero values + graph ───
+    // This is the exact scenario that was blocking the Blueprint editor:
+    // an old preset with max_output_tokens=0 being saved with a new graph.
+
+    #[tokio::test]
+    async fn test_update_with_legacy_zero_and_graph() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        // First create a preset with zero sentinels.
+        let detail = svc
+            .create(
+                "test_update_legacy".to_string(),
+                None,
+                Some("test".to_string()),
+                None,
+                Some(0),  // max_output_tokens = 0
+                None,
+                Some(0),  // top_k = 0
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,     // no blueprint_graph yet
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("create must succeed");
+
+        // Now simulate the Blueprint editor's save: echo back all fields
+        // (including the 0 that was loaded from DB) + new graph.
+        let graph_json = full_graph_json();
+        let updated = svc
+            .update(
+                detail.preset.id,
+                detail.preset.name.clone(),
+                detail.preset.description.clone(),
+                Some(detail.preset.category.clone()),
+                detail.preset.temperature,
+                detail.preset.max_output_tokens,  // None after normalization
+                detail.preset.top_p,
+                detail.preset.top_k,              // None after normalization
+                detail.preset.presence_penalty,
+                detail.preset.frequency_penalty,
+                detail.preset.response_mode.clone(),
+                detail.preset.thinking_enabled,
+                detail.preset.thinking_budget_tokens,
+                detail.preset.beta_features.clone(),
+                detail.preset.structured_output_schema.clone(),
+                detail.preset.structured_output_display.clone(),
+                detail.preset.context_included_keys.clone(),
+                Some(graph_json.clone()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("update with legacy zero + graph must succeed");
+
+        assert_eq!(
+            updated.preset.blueprint_graph.as_deref(),
+            Some(graph_json.as_str()),
+            "graph must be saved"
+        );
+        assert!(
+            updated.preset.max_output_tokens.is_none(),
+            "max_output_tokens must be NULL after normalization"
+        );
+    }
+
+    // ─── Test 5: Execute a blueprint graph end-to-end ───
+
+    #[tokio::test]
+    async fn test_execute_full_blueprint_graph() {
+        let graph_json = full_graph_json();
+        let graph: BlueprintGraph =
+            serde_json::from_str(&graph_json).expect("parse graph JSON");
+
+        let ctx = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            gate_selections: std::collections::HashMap::new(),
+        };
+
+        let result = execute_blueprint(&graph, &ctx)
+            .await
+            .expect("blueprint execution must succeed");
+
+        // One Prompt block.
+        assert_eq!(result.blocks.len(), 1, "exactly one block expected");
+        assert_eq!(result.blocks[0].identifier, "role_def");
+        assert_eq!(result.blocks[0].block_type, "system");
+        assert_eq!(result.blocks[0].content, "You are a narrator.");
+
+        // One schema property: world_variables.
+        let props = result.structured_output_schema["properties"]
+            .as_object()
+            .expect("properties must be an object");
+        assert_eq!(props.len(), 1, "exactly one property expected");
+        assert!(props.contains_key("world_variables"));
+
+        // db_mapping recorded.
+        assert_eq!(
+            result.db_mappings.get("world_variables").map(|s| s.as_str()),
+            Some("world_variables"),
+            "db_mapping must be recorded"
+        );
+
+        // Sampling params applied.
+        assert_eq!(result.sampling_params.temperature, Some(0.8));
+        assert_eq!(result.sampling_params.max_tokens, Some(4096));
+        assert_eq!(result.sampling_params.top_p, Some(0.95));
+    }
+
+    // ─── Test 6: Create → update graph → execute ───
+    // Full end-to-end: create preset with graph, update graph, execute.
+
+    #[tokio::test]
+    async fn test_full_lifecycle_create_update_execute() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        // Step 1: Create with minimal graph.
+        let detail = create_test_preset(&svc, "lifecycle", Some(minimal_graph_json())).await;
+
+        // Step 2: Update with full graph.
+        let graph_json = full_graph_json();
+        let updated = svc
+            .update(
+                detail.preset.id,
+                detail.preset.name,
+                detail.preset.description,
+                Some(detail.preset.category),
+                detail.preset.temperature,
+                detail.preset.max_output_tokens,
+                detail.preset.top_p,
+                detail.preset.top_k,
+                detail.preset.presence_penalty,
+                detail.preset.frequency_penalty,
+                detail.preset.response_mode,
+                detail.preset.thinking_enabled,
+                detail.preset.thinking_budget_tokens,
+                detail.preset.beta_features,
+                detail.preset.structured_output_schema,
+                detail.preset.structured_output_display,
+                detail.preset.context_included_keys,
+                Some(graph_json.clone()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("update must succeed");
+
+        // Step 3: Load back and execute.
+        let loaded = svc.get_by_id(updated.preset.id).await.expect("get must succeed");
+        let graph_str = loaded.preset.blueprint_graph
+            .as_deref()
+            .expect("graph must be present");
+        let graph: BlueprintGraph =
+            serde_json::from_str(graph_str).expect("parse graph JSON");
+
+        let ctx = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            gate_selections: std::collections::HashMap::new(),
+        };
+
+        let result = execute_blueprint(&graph, &ctx)
+            .await
+            .expect("execution must succeed");
+
+        assert_eq!(result.blocks.len(), 1, "one block from Prompt node");
+        assert_eq!(result.blocks[0].identifier, "role_def");
+        assert!(
+            result.structured_output_schema["properties"]
+                .as_object()
+                .unwrap()
+                .contains_key("world_variables"),
+            "world_variables field must be in schema"
+        );
     }
 }
 

@@ -276,6 +276,16 @@ function buildLegacyPresetForMigration(detail: PresetDetail): LegacyPresetForMig
 
 // ─── Save payload builder ───
 
+/**
+ * Build a full-row update payload from the editor's current `PresetDetail`.
+ *
+ * `presets_update` is a full-row patch (no `COALESCE` semantics) so the
+ * Blueprint editor must echo back every column — even ones the editor
+ * did not touch — to avoid overwriting them with `NULL` / `""`. Field-
+ * level numeric sentinel values (`max_output_tokens = 0`, `top_k = 0`)
+ * are normalized server-side in `preset_validator` to `NULL`, so legacy
+ * presets with the old zero-sentinel round-trip cleanly.
+ */
 function buildBlueprintUpdatePayload(
   detail: PresetDetail,
   blueprintGraph: string,
@@ -288,14 +298,33 @@ function buildBlueprintUpdatePayload(
     temperature: detail.preset.temperature,
     maxOutputTokens: detail.preset.maxOutputTokens,
     topP: detail.preset.topP,
+    topK: detail.preset.topK,
     presencePenalty: detail.preset.presencePenalty,
     frequencyPenalty: detail.preset.frequencyPenalty,
     responseMode: detail.preset.responseMode,
+    thinkingEnabled: detail.preset.thinkingEnabled,
+    thinkingBudgetTokens: detail.preset.thinkingBudgetTokens,
+    betaFeatures: detail.preset.betaFeatures,
     structuredOutputSchema: detail.preset.structuredOutputSchema,
     structuredOutputDisplay: detail.preset.structuredOutputDisplay,
     contextIncludedKeys: detail.preset.contextIncludedKeys,
     blueprintGraph,
   };
+}
+
+// ─── Graph serialization helper ───
+
+/**
+ * Serialize the in-memory `BlueprintGraph` to the JSON string persisted
+ * in `presets.blueprint_graph`. Centralized so that the editor's auto-
+ * migration save and the user-driven save produce byte-identical payloads.
+ */
+function serializeBlueprintGraph(graph: BlueprintGraph): string {
+  return JSON.stringify({
+    version: 2,
+    nodes: graph.nodes,
+    edges: graph.edges,
+  } satisfies BlueprintGraph);
 }
 
 // ─── Component ───
@@ -367,16 +396,11 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             (graph as BlueprintGraph).version = 2;
           }));
           showToast('旧预设已自动迁移为蓝图，正在保存…', 'info');
-          // Auto-save the migrated graph back to the backend.
           try {
-            const json = JSON.stringify({
-              version: 2,
-              nodes: graph.nodes,
-              edges: graph.edges,
-            } satisfies BlueprintGraph);
+            const json = serializeBlueprintGraph(graph);
             const payload = buildBlueprintUpdatePayload(detail, json);
-            await presetsUpdate(payload);
-            // Mark non-dirty: the migrated graph is already persisted.
+            const updated = await presetsUpdate(payload);
+            setPresetDetail(updated);
             setDirty(false);
             showToast('蓝图迁移结果已保存', 'success');
           } catch (saveErr) {
@@ -526,11 +550,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setSaving(true);
     setError(null);
     try {
-      const json = JSON.stringify({
-        version: 2,
-        nodes: graph.nodes,
-        edges: graph.edges,
-      } satisfies BlueprintGraph);
+      const json = serializeBlueprintGraph(graph);
       const payload = buildBlueprintUpdatePayload(detail, json);
       const updated = await presetsUpdate(payload);
       setPresetDetail(updated);

@@ -482,6 +482,27 @@ impl PresetRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn rename(
+        db: &SqlitePool,
+        id: i64,
+        new_name: &str,
+        now: i64,
+    ) -> Result<bool, String> {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return Err("预设名称不能为空".to_string());
+        }
+        let result = sqlx::query("UPDATE presets SET name = ?, updated_at = ? WHERE id = ?")
+            .bind(trimmed)
+            .bind(now)
+            .bind(id)
+            .execute(db)
+            .await
+            .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn name_exists(db: &SqlitePool, name: &str) -> Result<bool, String> {
         let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM presets WHERE name = ?")
             .bind(name)
@@ -919,26 +940,49 @@ impl PresetRepository {
                 .map(|v| v != 0)
                 .unwrap_or(false),
             version: row.try_get::<i64, _>("version").unwrap_or(1),
-            temperature: row.try_get("temperature").ok(),
-            max_output_tokens: row.try_get("max_output_tokens").ok(),
-            top_p: row.try_get("top_p").ok(),
-            top_k: row.try_get("top_k").ok(),
-            presence_penalty: row.try_get("presence_penalty").ok(),
-            frequency_penalty: row.try_get("frequency_penalty").ok(),
+            // Nullable numeric columns must be read as `Option<T>` explicitly.
+            // In sqlx 0.8.0 the `i64`/`f64` decoders for SQLite do NOT error on
+            // NULL — they silently yield `0`/`0.0`. Reading as `Option<T>` makes
+            // NULL → `None` correct (C2: no silent swallows).
+            temperature: row
+                .try_get::<Option<f64>, _>("temperature")
+                .unwrap_or(None),
+            max_output_tokens: row
+                .try_get::<Option<i64>, _>("max_output_tokens")
+                .unwrap_or(None),
+            top_p: row.try_get::<Option<f64>, _>("top_p").unwrap_or(None),
+            top_k: row.try_get::<Option<i64>, _>("top_k").unwrap_or(None),
+            presence_penalty: row
+                .try_get::<Option<f64>, _>("presence_penalty")
+                .unwrap_or(None),
+            frequency_penalty: row
+                .try_get::<Option<f64>, _>("frequency_penalty")
+                .unwrap_or(None),
             response_mode: Self::normalize_optional_response_mode_from_row(
-                row.try_get("response_mode").ok(),
+                row.try_get::<Option<String>, _>("response_mode").unwrap_or(None),
             )?,
-            thinking_enabled: row.try_get("thinking_enabled").ok().flatten(),
-            thinking_budget_tokens: row.try_get("thinking_budget_tokens").ok(),
+            thinking_enabled: row
+                .try_get::<Option<bool>, _>("thinking_enabled")
+                .unwrap_or(None),
+            thinking_budget_tokens: row
+                .try_get::<Option<i64>, _>("thinking_budget_tokens")
+                .unwrap_or(None),
             beta_features: row
-                .try_get("beta_features")
-                .ok()
-                .flatten()
-                .and_then(|s: String| serde_json::from_str::<Vec<String>>(&s).ok()),
-            structured_output_schema: row.try_get("structured_output_schema").ok().flatten(),
-            structured_output_display: row.try_get("structured_output_display").ok().flatten(),
-            context_included_keys: row.try_get("context_included_keys").ok().flatten(),
-            blueprint_graph: row.try_get("blueprint_graph").ok().flatten(),
+                .try_get::<Option<String>, _>("beta_features")
+                .unwrap_or(None)
+                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()),
+            structured_output_schema: row
+                .try_get::<Option<String>, _>("structured_output_schema")
+                .unwrap_or(None),
+            structured_output_display: row
+                .try_get::<Option<String>, _>("structured_output_display")
+                .unwrap_or(None),
+            context_included_keys: row
+                .try_get::<Option<String>, _>("context_included_keys")
+                .unwrap_or(None),
+            blueprint_graph: row
+                .try_get::<Option<String>, _>("blueprint_graph")
+                .unwrap_or(None),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         })
@@ -996,34 +1040,64 @@ impl PresetRepository {
             id: row.try_get("id").unwrap_or_default(),
             preset_id: row.try_get("preset_id").unwrap_or_default(),
             provider_kind: row.try_get("provider_kind").unwrap_or_default(),
-            temperature_override: row.try_get("temperature_override").ok(),
-            max_output_tokens_override: row.try_get("max_output_tokens_override").ok(),
-            top_p_override: row.try_get("top_p_override").ok(),
-            top_k_override: row.try_get("top_k_override").ok(),
-            presence_penalty_override: row.try_get("presence_penalty_override").ok(),
-            frequency_penalty_override: row.try_get("frequency_penalty_override").ok(),
-            response_mode_override: row.try_get("response_mode_override").ok(),
+            // Nullable numeric/text columns: read as `Option<T>` explicitly
+            // to avoid sqlx 0.8.0 silently decoding NULL → 0/0.0/"" (C2).
+            temperature_override: row
+                .try_get::<Option<f64>, _>("temperature_override")
+                .unwrap_or(None),
+            max_output_tokens_override: row
+                .try_get::<Option<i64>, _>("max_output_tokens_override")
+                .unwrap_or(None),
+            top_p_override: row
+                .try_get::<Option<f64>, _>("top_p_override")
+                .unwrap_or(None),
+            top_k_override: row
+                .try_get::<Option<i64>, _>("top_k_override")
+                .unwrap_or(None),
+            presence_penalty_override: row
+                .try_get::<Option<f64>, _>("presence_penalty_override")
+                .unwrap_or(None),
+            frequency_penalty_override: row
+                .try_get::<Option<f64>, _>("frequency_penalty_override")
+                .unwrap_or(None),
+            response_mode_override: row
+                .try_get::<Option<String>, _>("response_mode_override")
+                .unwrap_or(None),
             stop_sequences_override: Self::parse_optional_json_string_array(
-                &row.try_get("stop_sequences_override").ok(),
+                &row
+                    .try_get::<Option<String>, _>("stop_sequences_override")
+                    .unwrap_or(None),
             )
             .ok()
             .flatten()
             .unwrap_or_default(),
             disabled_block_types: Self::parse_optional_json_string_array(
-                &row.try_get("disabled_block_types").ok(),
+                &row
+                    .try_get::<Option<String>, _>("disabled_block_types")
+                    .unwrap_or(None),
             )
             .ok()
             .flatten()
             .unwrap_or_default(),
-            thinking_enabled_override: row.try_get("thinking_enabled_override").ok().flatten(),
-            thinking_budget_tokens_override: row.try_get("thinking_budget_tokens_override").ok(),
+            thinking_enabled_override: row
+                .try_get::<Option<bool>, _>("thinking_enabled_override")
+                .unwrap_or(None),
+            thinking_budget_tokens_override: row
+                .try_get::<Option<i64>, _>("thinking_budget_tokens_override")
+                .unwrap_or(None),
             beta_features_override: Self::parse_optional_json_string_array(
-                &row.try_get("beta_features_override").ok(),
+                &row
+                    .try_get::<Option<String>, _>("beta_features_override")
+                    .unwrap_or(None),
             )
             .ok()
             .flatten(),
-            structured_output_schema_override: row.try_get("structured_output_schema_override").ok().flatten(),
-            structured_output_display_override: row.try_get("structured_output_display_override").ok().flatten(),
+            structured_output_schema_override: row
+                .try_get::<Option<String>, _>("structured_output_schema_override")
+                .unwrap_or(None),
+            structured_output_display_override: row
+                .try_get::<Option<String>, _>("structured_output_display_override")
+                .unwrap_or(None),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         }

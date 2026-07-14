@@ -108,6 +108,8 @@ pub fn run() {
             commands::presets::presets_create,
             commands::presets::presets_update,
             commands::presets::presets_delete,
+            commands::presets::presets_rename,
+            commands::presets::presets_duplicate,
             commands::chat::messages_list,
             commands::chat::send_message,
             commands::chat::chat_submit_input,

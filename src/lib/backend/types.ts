@@ -170,9 +170,13 @@ export interface PresetSummary {
   temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
+  topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
   responseMode?: 'pseudo_xml' | 'structured_json' | string;
+  thinkingEnabled?: boolean;
+  thinkingBudgetTokens?: number;
+  betaFeatures?: string[];
   structuredOutputSchema?: string;
   structuredOutputDisplay?: string;
   contextIncludedKeys?: string;
@@ -412,9 +416,13 @@ export interface CreatePresetPayload {
   temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
+  topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
   responseMode?: 'pseudo_xml' | 'structured_json' | string;
+  thinkingEnabled?: boolean;
+  thinkingBudgetTokens?: number;
+  betaFeatures?: string[];
   structuredOutputSchema?: string;
   structuredOutputDisplay?: string;
   contextIncludedKeys?: string;

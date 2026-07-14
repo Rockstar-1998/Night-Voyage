@@ -37,3 +37,11 @@ export async function presetsImport(payloadJson: string) {
 export async function presetsDelete(id: number) {
   return invokeCommand<void>('presets_delete', { id });
 }
+
+export async function presetsRename(id: number, newName: string) {
+  return invokeCommand<PresetDetail>('presets_rename', { id, newName });
+}
+
+export async function presetsDuplicate(id: number, newName: string) {
+  return invokeCommand<PresetDetail>('presets_duplicate', { id, newName });
+}

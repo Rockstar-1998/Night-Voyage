@@ -93,8 +93,8 @@ if exist "%RELEASE_EXE%" (
   echo [Night Voyage] Found existing release exe - checking if rebuild needed...
 )
 
-echo [Night Voyage] Building release (unlimited memory)...
-call npm run tauri build
+echo [Night Voyage] Building release (unlimited memory, no bundle)...
+call npm run tauri build -- --no-bundle
 if errorlevel 1 (
   echo [Night Voyage] Release build FAILED.
   popd

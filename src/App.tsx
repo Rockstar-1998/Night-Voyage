@@ -19,7 +19,7 @@ import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
 import { ConfirmDialog } from './components/ConfirmDialog';
-import { NotificationContainer, showToast } from './components/Toast';
+import { NotificationContainer, showToast, showConfirm } from './components/Toast';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
 import { selectProfile, FALLBACK_PROFILE } from './lib/capability-profile';
@@ -60,6 +60,10 @@ import {
   mem0SnapshotWindowSet,
   plotSummariesList,
   presetsList,
+  presetsCreate,
+  presetsDelete,
+  presetsRename,
+  presetsDuplicate,
   providersCreate,
   providersDelete,
   providersFetchModels,
@@ -353,7 +357,94 @@ type DesktopViewProps = {
 const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
   const [editingPresetId, setEditingPresetId] = createSignal<number | null>(null);
+  const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
+  const [renamingValue, setRenamingValue] = createSignal('');
+  const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
+
+  const refreshPresetList = async () => {
+    if (props.onPresetsChanged) {
+      await props.onPresetsChanged();
+    }
+  };
+
+  const handleCreatePreset = async () => {
+    if (presetBusy() !== null) return;
+    try {
+      const stamp = Date.now();
+      await presetsCreate({ name: `新预设 ${stamp}` });
+      showToast('已新建预设', 'success');
+      await refreshPresetList();
+    } catch (err) {
+      showToast(`新建预设失败：${toErrorMessage(err)}`, 'error');
+    }
+  };
+
+  const handleDuplicatePreset = async (id: number, currentName: string) => {
+    if (presetBusy() !== null) return;
+    setPresetBusy(id);
+    try {
+      await presetsDuplicate(id, `${currentName} 副本`);
+      showToast('已复制预设', 'success');
+      await refreshPresetList();
+    } catch (err) {
+      showToast(`复制预设失败：${toErrorMessage(err)}`, 'error');
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleStartRename = (id: number, currentName: string) => {
+    if (presetBusy() !== null) return;
+    setRenamingPresetId(id);
+    setRenamingValue(currentName);
+  };
+
+  const handleCancelRename = () => {
+    setRenamingPresetId(null);
+    setRenamingValue('');
+  };
+
+  const handleCommitRename = async (id: number) => {
+    const newName = renamingValue().trim();
+    if (!newName) {
+      showToast('预设名称不能为空', 'warning');
+      return;
+    }
+    setPresetBusy(id);
+    try {
+      await presetsRename(id, newName);
+      setRenamingPresetId(null);
+      setRenamingValue('');
+      showToast('已重命名预设', 'success');
+      await refreshPresetList();
+    } catch (err) {
+      showToast(`重命名预设失败：${toErrorMessage(err)}`, 'error');
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleDeletePreset = async (id: number, name: string) => {
+    if (presetBusy() !== null) return;
+    const ok = await showConfirm({
+      title: '删除预设',
+      message: `确定删除预设「${name}」吗？此操作不可撤销。`,
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    setPresetBusy(id);
+    try {
+      await presetsDelete(id);
+      showToast('已删除预设', 'success');
+      await refreshPresetList();
+    } catch (err) {
+      showToast(`删除预设失败：${toErrorMessage(err)}`, 'error');
+    } finally {
+      setPresetBusy(null);
+    }
+  };
 
   return (
     <div class="relative h-screen w-full bg-transparent font-sans overflow-hidden text-mist-solid">
@@ -559,37 +650,143 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                         when={editingPresetId()}
                         fallback={
                           <div class="flex-1 flex flex-col min-w-0 h-full">
-                            <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between" data-workspace-title>
-                              <span>预设蓝图</span>
-                              <span class="text-[10px] normal-case tracking-normal text-mist-solid/25">
-                                选择一个预设以编辑其蓝图
-                              </span>
+                            <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between gap-3" data-workspace-title>
+                              <div class="flex items-center gap-3 min-w-0">
+                                <span>预设蓝图</span>
+                                <span class="text-[10px] normal-case tracking-normal text-mist-solid/25 truncate">
+                                  选择一个预设以编辑其蓝图
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                class="shrink-0 px-3 py-1 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+                                onClick={handleCreatePreset}
+                                disabled={presetBusy() !== null}
+                              >
+                                + 新建预设
+                              </button>
                             </div>
                             <div class="flex-1 overflow-auto px-8 pb-8">
                               <Show
                                 when={props.presetSummaries.length > 0}
                                 fallback={
-                                  <div class="flex items-center justify-center h-full text-sm text-mist-solid/30">
-                                    暂无预设
+                                  <div class="flex flex-col items-center justify-center h-full gap-3">
+                                    <div class="text-sm text-mist-solid/30">暂无预设</div>
+                                    <button
+                                      type="button"
+                                      class="px-3 py-1.5 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+                                      onClick={handleCreatePreset}
+                                      disabled={presetBusy() !== null}
+                                    >
+                                      + 新建预设
+                                    </button>
                                   </div>
                                 }
                               >
                                 <div class="grid gap-3" style={{ "grid-template-columns": "repeat(auto-fill, minmax(280px, 1fr))" }}>
                                   <For each={props.presetSummaries}>
                                     {(preset) => (
-                                      <button
-                                        type="button"
-                                        class="group text-left p-4 rounded-xl border border-white/5 bg-night-water/30 hover:bg-night-water/60 hover:border-white/15 transition-all"
-                                        onClick={() => setEditingPresetId(preset.id)}
+                                      <div
+                                        class="group relative text-left p-4 rounded-xl border border-white/5 bg-night-water/30 hover:bg-night-water/60 hover:border-white/15 transition-all cursor-pointer"
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                          if (renamingPresetId() === preset.id) return;
+                                          if (presetBusy() !== null) return;
+                                          setEditingPresetId(preset.id);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            if (renamingPresetId() === preset.id) return;
+                                            if (presetBusy() !== null) return;
+                                            setEditingPresetId(preset.id);
+                                          }
+                                        }}
                                       >
-                                        <div class="flex items-center gap-2">
-                                          <div class="text-sm font-bold text-mist-solid truncate flex-1">
-                                            {preset.name}
+                                        <div class="flex items-start justify-between gap-2">
+                                          <div class="flex items-center gap-2 min-w-0 flex-1">
+                                            <Show
+                                              when={renamingPresetId() === preset.id}
+                                              fallback={
+                                                <div class="text-sm font-bold text-mist-solid truncate flex-1">
+                                                  {preset.name}
+                                                </div>
+                                              }
+                                            >
+                                              <input
+                                                type="text"
+                                                class="flex-1 min-w-0 bg-xuanqing/80 border border-emerald-500/40 rounded px-1.5 py-0.5 text-sm font-bold text-mist-solid focus:outline-none focus:border-emerald-500/70"
+                                                value={renamingValue()}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onInput={(e) => setRenamingValue(e.currentTarget.value)}
+                                                onKeyDown={(e) => {
+                                                  e.stopPropagation();
+                                                  if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    void handleCommitRename(preset.id);
+                                                  } else if (e.key === 'Escape') {
+                                                    e.preventDefault();
+                                                    handleCancelRename();
+                                                  }
+                                                }}
+                                                onBlur={() => {
+                                                  if (renamingPresetId() === preset.id) {
+                                                    void handleCommitRename(preset.id);
+                                                  }
+                                                }}
+                                              />
+                                            </Show>
+                                            <Show when={preset.blueprintGraph}>
+                                              <span class="shrink-0 text-[9px] uppercase tracking-widest text-emerald-300/70 border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
+                                                蓝图
+                                              </span>
+                                            </Show>
                                           </div>
-                                          <Show when={preset.blueprintGraph}>
-                                            <span class="text-[9px] uppercase tracking-widest text-emerald-300/70 border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
-                                              蓝图
-                                            </span>
+                                          <Show
+                                            when={renamingPresetId() !== preset.id}
+                                          >
+                                            <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <button
+                                                type="button"
+                                                class="p-1 rounded text-mist-solid/40 hover:text-emerald-300 hover:bg-emerald-500/15 transition-colors"
+                                                title="复制"
+                                                aria-label="复制预设"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  void handleDuplicatePreset(preset.id, preset.name);
+                                                }}
+                                                disabled={presetBusy() !== null}
+                                              >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                              </button>
+                                              <button
+                                                type="button"
+                                                class="p-1 rounded text-mist-solid/40 hover:text-sky-300 hover:bg-sky-500/15 transition-colors"
+                                                title="重命名"
+                                                aria-label="重命名预设"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleStartRename(preset.id, preset.name);
+                                                }}
+                                                disabled={presetBusy() !== null}
+                                              >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                              </button>
+                                              <button
+                                                type="button"
+                                                class="p-1 rounded text-mist-solid/40 hover:text-red-300 hover:bg-red-500/15 transition-colors"
+                                                title="删除"
+                                                aria-label="删除预设"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  void handleDeletePreset(preset.id, preset.name);
+                                                }}
+                                                disabled={presetBusy() !== null}
+                                              >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                              </button>
+                                            </div>
                                           </Show>
                                         </div>
                                         <Show when={preset.description}>
@@ -597,10 +794,24 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                             {preset.description}
                                           </div>
                                         </Show>
-                                        <div class="mt-3 text-[10px] uppercase tracking-widest text-mist-solid/30 group-hover:text-mist-solid/60 transition-colors">
-                                          点击编辑蓝图
-                                        </div>
-                                      </button>
+                                        <Show
+                                          when={renamingPresetId() !== preset.id}
+                                          fallback={
+                                            <div class="mt-3 text-[10px] uppercase tracking-widest text-mist-solid/40 flex items-center gap-2">
+                                              <span>Enter 保存 · Esc 取消</span>
+                                            </div>
+                                          }
+                                        >
+                                          <div class="mt-3 text-[10px] uppercase tracking-widest text-mist-solid/30 group-hover:text-mist-solid/60 transition-colors">
+                                            点击编辑蓝图
+                                          </div>
+                                        </Show>
+                                        <Show when={presetBusy() === preset.id}>
+                                          <div class="absolute inset-0 rounded-xl bg-xuanqing/40 backdrop-blur-[1px] flex items-center justify-center">
+                                            <div class="text-[11px] text-mist-solid/60 animate-pulse">处理中…</div>
+                                          </div>
+                                        </Show>
+                                      </div>
                                     )}
                                   </For>
                                 </div>
