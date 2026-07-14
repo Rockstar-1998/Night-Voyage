@@ -578,7 +578,8 @@ impl<'a> PresetService<'a> {
 mod tests {
     use super::*;
     use crate::models::blueprint::{
-        BlueprintExecutionContext, BlueprintGraph, BlueprintNode, BlueprintEdge, NodeConfig,
+        BlueprintExecutionContext, BlueprintGraph, BlueprintNode, BlueprintEdge, GateOption,
+        GroupGateConfig, MutexGateConfig, NodeConfig,
         Position, PromptConfig, SchemaFieldConfig, SamplingParamsConfig, ModeSwitchConfig,
     };
     use crate::services::blueprint_executor::execute_blueprint;
@@ -1089,6 +1090,269 @@ mod tests {
                 .contains_key("world_variables"),
             "world_variables field must be in schema"
         );
+    }
+
+    // ─── Test 7: MutexGate graph through full DB lifecycle ───
+    // Start → MutexGate(opt_a/opt_b) → PromptA/PromptB → End
+    // Validates: create with MutexGate graph → save to DB → load back →
+    // execute with gate_selections produces only the selected branch.
+
+    fn mutex_gate_graph_json() -> String {
+        let g = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    config: NodeConfig::Start,
+                    position: Position { x: 0.0, y: 0.0 },
+                },
+                BlueprintNode {
+                    id: "n_gate".to_string(),
+                    config: NodeConfig::MutexGate(MutexGateConfig {
+                        gate_id: "g1".to_string(),
+                        label: "mutex".to_string(),
+                        options: vec![
+                            GateOption { key: "opt_a".to_string(), label: "A".to_string() },
+                            GateOption { key: "opt_b".to_string(), label: "B".to_string() },
+                        ],
+                    }),
+                    position: Position { x: 200.0, y: 0.0 },
+                },
+                BlueprintNode {
+                    id: "n_pa".to_string(),
+                    config: NodeConfig::Prompt(PromptConfig {
+                        identifier: "block_a".to_string(),
+                        block_type: "system".to_string(),
+                        content: "content A".to_string(),
+                        priority: None,
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 400.0, y: -100.0 },
+                },
+                BlueprintNode {
+                    id: "n_pb".to_string(),
+                    config: NodeConfig::Prompt(PromptConfig {
+                        identifier: "block_b".to_string(),
+                        block_type: "system".to_string(),
+                        content: "content B".to_string(),
+                        priority: None,
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 400.0, y: 100.0 },
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    config: NodeConfig::End,
+                    position: Position { x: 600.0, y: 0.0 },
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_gate".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_gate".to_string(),
+                    source_port: "out_opt_a".to_string(),
+                    target: "n_pa".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e3".to_string(),
+                    source: "n_gate".to_string(),
+                    source_port: "out_opt_b".to_string(),
+                    target: "n_pb".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e4".to_string(),
+                    source: "n_pa".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e5".to_string(),
+                    source: "n_pb".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+            ],
+        };
+        serde_json::to_string(&g).expect("serialize mutex_gate graph")
+    }
+
+    #[tokio::test]
+    async fn test_mutex_gate_full_lifecycle() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        let graph_json = mutex_gate_graph_json();
+        let detail = create_test_preset(&svc, "mutex_gate", Some(graph_json.clone())).await;
+
+        // Load back and execute with opt_a selected.
+        let loaded = svc.get_by_id(detail.preset.id).await.expect("get must succeed");
+        let graph_str = loaded.preset.blueprint_graph
+            .as_deref()
+            .expect("graph must be present after save");
+        let graph: BlueprintGraph =
+            serde_json::from_str(graph_str).expect("parse graph JSON");
+
+        let mut gates = std::collections::HashMap::new();
+        gates.insert(
+            "g1".to_string(),
+            crate::models::blueprint::GateSelection { keys: vec!["opt_a".to_string()] },
+        );
+        let ctx = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            gate_selections: gates,
+        };
+
+        let result = execute_blueprint(&graph, &ctx)
+            .await
+            .expect("mutex_gate execution must succeed");
+        assert_eq!(result.blocks.len(), 1, "only opt_a branch should produce a block");
+        assert_eq!(result.blocks[0].identifier, "block_a");
+    }
+
+    // ─── Test 8: GroupGate graph through full DB lifecycle ───
+    // Start → GroupGate(a/b) → PromptA/PromptB → End
+    // Validates: create with GroupGate graph → save → load → execute with
+    // multi-select produces both blocks in option declaration order.
+
+    fn group_gate_graph_json() -> String {
+        let g = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    config: NodeConfig::Start,
+                    position: Position { x: 0.0, y: 0.0 },
+                },
+                BlueprintNode {
+                    id: "n_gate".to_string(),
+                    config: NodeConfig::GroupGate(GroupGateConfig {
+                        gate_id: "g2".to_string(),
+                        label: "group".to_string(),
+                        options: vec![
+                            GateOption { key: "a".to_string(), label: "A".to_string() },
+                            GateOption { key: "b".to_string(), label: "B".to_string() },
+                        ],
+                    }),
+                    position: Position { x: 200.0, y: 0.0 },
+                },
+                BlueprintNode {
+                    id: "n_pa".to_string(),
+                    config: NodeConfig::Prompt(PromptConfig {
+                        identifier: "block_a".to_string(),
+                        block_type: "system".to_string(),
+                        content: "content A".to_string(),
+                        priority: None,
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 400.0, y: -100.0 },
+                },
+                BlueprintNode {
+                    id: "n_pb".to_string(),
+                    config: NodeConfig::Prompt(PromptConfig {
+                        identifier: "block_b".to_string(),
+                        block_type: "system".to_string(),
+                        content: "content B".to_string(),
+                        priority: None,
+                        is_locked: false,
+                        lock_reason: None,
+                    }),
+                    position: Position { x: 400.0, y: 100.0 },
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    config: NodeConfig::End,
+                    position: Position { x: 600.0, y: 0.0 },
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_gate".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_gate".to_string(),
+                    source_port: "out_a".to_string(),
+                    target: "n_pa".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e3".to_string(),
+                    source: "n_gate".to_string(),
+                    source_port: "out_b".to_string(),
+                    target: "n_pb".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e4".to_string(),
+                    source: "n_pa".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+                BlueprintEdge {
+                    id: "e5".to_string(),
+                    source: "n_pb".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                },
+            ],
+        };
+        serde_json::to_string(&g).expect("serialize group_gate graph")
+    }
+
+    #[tokio::test]
+    async fn test_group_gate_full_lifecycle() {
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        let graph_json = group_gate_graph_json();
+        let detail = create_test_preset(&svc, "group_gate", Some(graph_json.clone())).await;
+
+        // Load back and execute with both a and b selected.
+        let loaded = svc.get_by_id(detail.preset.id).await.expect("get must succeed");
+        let graph_str = loaded.preset.blueprint_graph
+            .as_deref()
+            .expect("graph must be present after save");
+        let graph: BlueprintGraph =
+            serde_json::from_str(graph_str).expect("parse graph JSON");
+
+        let mut gates = std::collections::HashMap::new();
+        gates.insert(
+            "g2".to_string(),
+            crate::models::blueprint::GateSelection {
+                keys: vec!["a".to_string(), "b".to_string()],
+            },
+        );
+        let ctx = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            gate_selections: gates,
+        };
+
+        let result = execute_blueprint(&graph, &ctx)
+            .await
+            .expect("group_gate execution must succeed");
+        assert_eq!(result.blocks.len(), 2, "both selected branches should produce blocks");
+        assert_eq!(result.blocks[0].identifier, "block_a");
+        assert_eq!(result.blocks[1].identifier, "block_b");
     }
 }
 
