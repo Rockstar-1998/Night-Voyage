@@ -176,6 +176,12 @@ export interface PresetSummary {
   structuredOutputSchema?: string;
   structuredOutputDisplay?: string;
   contextIncludedKeys?: string;
+  /**
+   * 蓝图图 JSON 字符串（BlueprintGraph 序列化，version=2）。
+   * 与后端 `PresetSummary.blueprint_graph` 对齐（serde camelCase）。
+   * 迁移期与旧字段共存：非空时由图执行器运行时执行；为空时回退到旧字段。
+   */
+  blueprintGraph?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -412,6 +418,8 @@ export interface CreatePresetPayload {
   structuredOutputSchema?: string;
   structuredOutputDisplay?: string;
   contextIncludedKeys?: string;
+  /** 蓝图图 JSON 字符串（与后端 `presets_update.blueprint_graph` 对齐，serde camelCase）。 */
+  blueprintGraph?: string;
   blocks?: PresetPromptBlockInput[];
   examples?: PresetExampleInput[];
   stopSequences?: PresetStopSequenceInput[];
@@ -604,6 +612,7 @@ export interface StreamRetryEvent {
   messageId: number;
   error: string;
   attemptCount: number;
+  autoRetryEnabled: boolean;
 }
 
 export interface ChatRoundStateEvent {
@@ -929,6 +938,7 @@ export interface RoomStreamRetryEvent {
   messageId: number;
   error: string;
   attemptCount: number;
+  autoRetryEnabled: boolean;
 }
 
 export interface RoomMessageResetEvent {
@@ -972,4 +982,10 @@ export interface RoomGuestCharacterUpdatedEvent {
   conversationId: number;
   memberId: number;
   character: GuestCharacterCardPayload;
+}
+
+export interface RoomSwipeActivatedEvent {
+  conversationId: number;
+  roundId: number;
+  messageId: number;
 }

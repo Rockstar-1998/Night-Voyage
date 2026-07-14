@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { Maximize2, Minimize2 } from './lib/icons';
 import { TitleBar } from './components/TitleBar';
@@ -15,6 +15,7 @@ import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
 import { AuroraBackground } from './components/AuroraBackground';
 import { CompletionPresetArea } from './components/CompletionPresetArea';
+import { BlueprintEditor } from './components/blueprint/BlueprintEditor';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
@@ -529,6 +530,7 @@ const DesktopView = (props: {
 
 const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
+  const [editingPresetId, setEditingPresetId] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
 
   return (
@@ -731,7 +733,67 @@ const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
                 case 'workspace':
                   return (
                     <div class="flex h-full w-full bg-transparent">
-                      <CompletionPresetArea onPresetsChanged={props.onPresetsChanged} />
+                      <Show
+                        when={editingPresetId()}
+                        fallback={
+                          <div class="flex-1 flex flex-col min-w-0 h-full">
+                            <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between" data-workspace-title>
+                              <span>预设蓝图</span>
+                              <span class="text-[10px] normal-case tracking-normal text-mist-solid/25">
+                                选择一个预设以编辑其蓝图
+                              </span>
+                            </div>
+                            <div class="flex-1 overflow-auto px-8 pb-8">
+                              <Show
+                                when={props.presetSummaries.length > 0}
+                                fallback={
+                                  <div class="flex items-center justify-center h-full text-sm text-mist-solid/30">
+                                    暂无预设
+                                  </div>
+                                }
+                              >
+                                <div class="grid gap-3" style={{ "grid-template-columns": "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                                  <For each={props.presetSummaries}>
+                                    {(preset) => (
+                                      <button
+                                        type="button"
+                                        class="group text-left p-4 rounded-xl border border-white/5 bg-night-water/30 hover:bg-night-water/60 hover:border-white/15 transition-all"
+                                        onClick={() => setEditingPresetId(preset.id)}
+                                      >
+                                        <div class="flex items-center gap-2">
+                                          <div class="text-sm font-bold text-mist-solid truncate flex-1">
+                                            {preset.name}
+                                          </div>
+                                          <Show when={preset.blueprintGraph}>
+                                            <span class="text-[9px] uppercase tracking-widest text-emerald-300/70 border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
+                                              蓝图
+                                            </span>
+                                          </Show>
+                                        </div>
+                                        <Show when={preset.description}>
+                                          <div class="mt-1 text-xs text-mist-solid/50 line-clamp-2">
+                                            {preset.description}
+                                          </div>
+                                        </Show>
+                                        <div class="mt-3 text-[10px] uppercase tracking-widest text-mist-solid/30 group-hover:text-mist-solid/60 transition-colors">
+                                          点击编辑蓝图
+                                        </div>
+                                      </button>
+                                    )}
+                                  </For>
+                                </div>
+                              </Show>
+                            </div>
+                          </div>
+                        }
+                      >
+                        {(id) => (
+                          <BlueprintEditor
+                            presetId={id()}
+                            onClose={() => setEditingPresetId(null)}
+                          />
+                        )}
+                      </Show>
                     </div>
                   );
                 default:
