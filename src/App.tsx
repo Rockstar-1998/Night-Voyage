@@ -14,7 +14,6 @@ import { setSchemaToggleState, clearSchemaToggleState, setAllSchemaToggleState }
 import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
 import { AuroraBackground } from './components/AuroraBackground';
-import { CompletionPresetArea } from './components/CompletionPresetArea';
 import { BlueprintEditor } from './components/blueprint/BlueprintEditor';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
@@ -210,7 +209,7 @@ const toErrorMessage = (error: unknown): string => {
   return String(error);
 };
 
-const DesktopView = (props: {
+type DesktopViewProps = {
   messages: ChatMessage[];
   activeWorkspace: string;
   onWorkspaceChange: (id: string) => void;
@@ -349,186 +348,9 @@ const DesktopView = (props: {
   hostProviderName?: string | null;
   /** Room guest plot summaries (host-side data) — forwarded to RightDrawer. */
   plotSummaries?: PlotSummaryRecord[];
-}) => {
-  const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
-  const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
-
-  return (
-    <div class="relative h-screen w-full bg-transparent font-sans overflow-hidden text-mist-solid">
-      <div class="absolute top-0 left-0 w-full z-50 pointer-events-none">
-        <div class="pointer-events-auto">
-          <TitleBar />
-        </div>
-      </div>
-
-      <div class={`flex h-full w-full overflow-hidden transition-all duration-500 bg-transparent`}>
-        <Show when={!props.isFocusMode}>
-          <WorkspaceSidebar
-            activeWorkspace={props.activeWorkspace}
-            onWorkspaceChange={props.onWorkspaceChange}
-          />
-        </Show>
-
-        <Show when={props.activeWorkspace === 'chat' && !props.isFocusMode}>
-          <div class="flex-none">
-            <SessionSidebar
-              sessions={props.sessions}
-              npcCharacters={props.npcCharacters}
-              selectedConversationId={props.selectedConversationId}
-              selectedConversationMembers={props.selectedConversationMembers}
-              loading={props.sessionsLoading}
-              roomActionLoading={props.roomActionLoading}
-              onSelect={props.onSelectConversation}
-              onNewChat={() => props.setActiveModal('new_chat')}
-              onJoinRoom={() => props.setActiveModal('join_room')}
-              onDeleteConversation={props.onDeleteConversation}
-              onOpenRoom={props.onOpenRoom}
-              onCloseRoom={props.onCloseRoom}
-            />
-          </div>
-        </Show>
-
-        <Show when={props.activeWorkspace === 'settings'}>
-          <div class="flex-none">
-            <SettingsSidebar
-              activeCategory={activeSettingCategory()}
-              onCategoryChange={setActiveSettingCategory}
-            />
-          </div>
-        </Show>
-
-        <div class="flex-1 flex flex-col min-w-0 relative h-full bg-transparent">
-          <Show
-            when={props.activeWorkspace === 'chat'}
-            fallback={
-              <div class="w-full h-full bg-transparent">
-                <Show when={props.activeWorkspace === 'character'}>
-                  <CharacterSidebar
-                    npcCharacters={props.npcCharacters}
-                    playerCharacters={props.playerCharacters}
-                    worldBooks={props.worldBooks}
-                    providers={props.providers}
-                    loading={props.characterLoading}
-                    onCreateCharacter={props.onCreateCharacter}
-                    onUpdateCharacter={props.onUpdateCharacter}
-                    onDeleteCharacter={props.onDeleteCharacter}
-                    onImportExchange={props.onImportExchange}
-                    onExportCharacter={props.onExportCharacter}
-                  />
-                </Show>
-                <Show when={props.activeWorkspace === 'settings'}>
-                  <SettingsArea
-                    activeCategory={activeSettingCategory()}
-                    providers={props.providers}
-                    modelsByProvider={props.providerModels}
-                    loading={props.providersLoading}
-                    fetchingModelsFor={props.fetchingModelsFor}
-                    onFetchModels={props.onFetchModels}
-                    onSaveProvider={props.onSaveProvider}
-                    onDeleteProvider={props.onDeleteProvider}
-                    onTestClaudeNative={props.onTestClaudeNative}
-                    enableDynamicEffects={props.enableDynamicEffects}
-                    onSetEnableDynamicEffects={props.onSetEnableDynamicEffects}
-                    formatConfig={props.formatConfig ?? DEFAULT_FORMAT_CONFIG}
-                    onSetFormatConfig={props.onSetFormatConfig}
-                    mem0InitError={props.mem0InitError}
-                  />
-                </Show>
-                <Show when={props.activeWorkspace === 'kb'}>
-                  <WorldBookSidebar
-                    worldBooks={props.worldBooks}
-                    activeEntries={props.activeWorldBookEntries}
-                    entriesLoading={props.worldBookEntriesLoading}
-                    onLoadEntries={props.onLoadWorldBookEntries}
-                    onCreateWorldBook={props.onCreateWorldBook}
-                    onUpdateWorldBook={props.onUpdateWorldBook}
-                    onDeleteWorldBook={props.onDeleteWorldBook}
-                    onImportExchange={props.onImportExchange}
-                    onExportWorldBook={props.onExportWorldBook}
-                    onUpsertEntry={props.onUpsertWorldBookEntry}
-                    onDeleteEntry={props.onDeleteWorldBookEntry}
-                  />
-                </Show>
-                <Show when={props.activeWorkspace === 'workspace'}>
-                  <div class="flex h-full w-full bg-transparent">
-                    <CompletionPresetArea onPresetsChanged={props.onPresetsChanged} />
-                  </div>
-                </Show>
-              </div>
-            }
-          >
-            <div class="flex-1 flex flex-col relative h-full">
-              <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between">
-                <span>{props.selectedConversationTitle ?? '未选择会话'}</span>
-                <Show when={props.currentRoundState}>
-                  <span>
-                    {props.currentRoundState?.status} · 等待 {props.currentRoundState?.waitingMemberIds.length ?? 0} 人
-                  </span>
-                </Show>
-              </div>
-              <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                <ChatArea messages={props.messages} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
-              </div>
-              <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
-                <div class="max-w-4xl mx-auto">
-                  <ChatInputBar
-                    onSend={props.onSend}
-                    onAbort={props.onAbort}
-                    replyStatus={props.replyStatus}
-                    allowEmptySend={props.allowEmptySend}
-                    disabled={props.sending || !props.selectedConversationId}
-                    placeholder={props.selectedConversationId ? '输入消息，联机会话可留空后发送表示本轮放弃发言' : '请先选择或创建会话'}
-                    isRoomClient={props.isRoomClient}
-                  />
-                </div>
-              </div>
-            </div>
-          </Show>
-        </div>
-
-        <Show when={props.activeWorkspace === 'chat'}>
-          <div class="flex flex-col relative">
-            <button
-              onClick={props.toggleFocusMode}
-              class="fixed top-[45%] right-0 -translate-y-1/2 z-30 bg-black/40 hover:bg-black/60 text-mist-solid/60 hover:text-accent p-2 rounded-l-xl border-l border-y border-white/10 backdrop-blur-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              title={props.isFocusMode ? '退出专注模式' : '进入专注模式'}
-              aria-label={props.isFocusMode ? '退出专注模式' : '进入专注模式'}
-            >
-              <Show when={props.isFocusMode} fallback={<Maximize2 size={18} />}>
-                <Minimize2 size={18} />
-              </Show>
-            </button>
-            <RightDrawer
-              selectedConversationId={props.selectedConversationId}
-              selectedCharacter={props.selectedCharacter}
-              selectedPresetId={props.selectedPresetId ?? null}
-              selectedWorldBookId={props.selectedWorldBookId ?? null}
-              presetSummaries={props.presetSummaries}
-              worldBooks={props.worldBooks}
-              onSaveConversationBindings={props.onSaveConversationBindings}
-              memoryMode={props.memoryMode ?? 'stateless'}
-              mem0SnapshotWindow={props.mem0SnapshotWindow}
-              onSnapshotWindowChange={props.onSnapshotWindowChange}
-              playerCharacters={props.playerCharacters}
-              currentPlayerCharacter={props.currentPlayerCharacter}
-              onSwitchPlayerCharacter={props.onSwitchPlayerCharacter}
-              providers={props.providers}
-              selectedProviderId={props.selectedProviderId ?? null}
-              selectedEmbeddingProviderId={props.selectedEmbeddingProviderId ?? null}
-              isRoomClient={props.isRoomClient}
-              hostPresetName={props.hostPresetName}
-              hostWorldBookName={props.hostWorldBookName}
-              hostProviderName={props.hostProviderName}
-              plotSummaries={props.plotSummaries}
-            />
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
 };
 
-const AnimatedDesktopView = (props: Parameters<typeof DesktopView>[0]) => {
+const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
   const [editingPresetId, setEditingPresetId] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);

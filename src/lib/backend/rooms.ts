@@ -25,6 +25,7 @@ import type {
   RoomStreamObjectFieldCompleteEvent,
   RoomStreamRetryEvent,
   RoomStreamStructuredFieldDeltaEvent,
+  RoomSwipeActivatedEvent,
   RoomTokenUsageEvent,
 } from './types';
 
@@ -359,6 +360,19 @@ export async function listenRoomGuestCharacterUpdated(
       conversationId: event.payload.conversationId,
       memberId: event.payload.memberId,
       characterName: event.payload.character?.name,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomSwipeActivated(
+  handler: (payload: RoomSwipeActivatedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomSwipeActivatedEvent>('room:swipe_activated', (event) => {
+    console.debug('[room-swipe_activated] received', {
+      conversationId: event.payload.conversationId,
+      roundId: event.payload.roundId,
+      messageId: event.payload.messageId,
     });
     handler(event.payload);
   });

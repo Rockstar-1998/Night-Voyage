@@ -10,7 +10,7 @@ use crate::validators::preset_validator::{
     normalize_optional_text_impl, normalize_penalty_impl, normalize_required_impl,
     normalize_response_mode_impl, normalize_temperature_impl,
     normalize_thinking_budget_tokens_impl, normalize_thinking_enabled_impl, normalize_top_k_impl,
-    normalize_top_p_impl, PresetValidator,
+    normalize_top_p_impl, validate_blueprint_graph, PresetValidator,
 };
 use crate::validators::preset_validator::{
     PresetPromptBlockInput, PresetProviderOverrideInput,
@@ -36,6 +36,7 @@ pub struct PortablePresetMeta {
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
     pub context_included_keys: Option<String>,
+    pub blueprint_graph: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -93,6 +94,7 @@ impl<'a> PresetService<'a> {
                 structured_output_schema: detail.preset.structured_output_schema,
                 structured_output_display: detail.preset.structured_output_display,
                 context_included_keys: detail.preset.context_included_keys,
+                blueprint_graph: detail.preset.blueprint_graph,
             },
             semantic_groups: detail
                 .semantic_groups
@@ -147,6 +149,7 @@ impl<'a> PresetService<'a> {
             portable.preset.structured_output_schema,
             portable.preset.structured_output_display,
             portable.preset.context_included_keys,
+            portable.preset.blueprint_graph,
             Some(portable.blocks),
             Some(portable.stop_sequences),
             Some(portable.provider_overrides),
@@ -173,6 +176,7 @@ impl<'a> PresetService<'a> {
         structured_output_schema: Option<String>,
         structured_output_display: Option<String>,
         context_included_keys: Option<String>,
+        blueprint_graph: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
@@ -194,6 +198,11 @@ impl<'a> PresetService<'a> {
         let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
         let structured_output_display = normalize_optional_text_impl(structured_output_display);
         let context_included_keys = normalize_optional_text_impl(context_included_keys);
+        let blueprint_graph = normalize_optional_text_impl(blueprint_graph);
+        blueprint_graph
+            .as_deref()
+            .map(validate_blueprint_graph)
+            .transpose()?;
         let direct_blocks = PresetValidator::validate_blocks(blocks)?;
         let semantic_groups = PresetValidator::validate_semantic_groups(semantic_groups)?;
         let stop_sequences = PresetValidator::validate_stop_sequences(stop_sequences)?;
@@ -223,6 +232,7 @@ impl<'a> PresetService<'a> {
             structured_output_schema.as_deref(),
             structured_output_display.as_deref(),
             context_included_keys.as_deref(),
+            blueprint_graph.as_deref(),
             now,
         )
         .await?;
@@ -265,6 +275,7 @@ impl<'a> PresetService<'a> {
         structured_output_schema: Option<String>,
         structured_output_display: Option<String>,
         context_included_keys: Option<String>,
+        blueprint_graph: Option<String>,
         blocks: Option<Vec<PresetPromptBlockInput>>,
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
@@ -286,6 +297,11 @@ impl<'a> PresetService<'a> {
         let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
         let structured_output_display = normalize_optional_text_impl(structured_output_display);
         let context_included_keys = normalize_optional_text_impl(context_included_keys);
+        let blueprint_graph = normalize_optional_text_impl(blueprint_graph);
+        blueprint_graph
+            .as_deref()
+            .map(validate_blueprint_graph)
+            .transpose()?;
         let direct_blocks_input = match blocks {
             Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks))?),
             None => None,
@@ -358,6 +374,7 @@ impl<'a> PresetService<'a> {
             structured_output_schema.as_deref(),
             structured_output_display.as_deref(),
             context_included_keys.as_deref(),
+            blueprint_graph.as_deref(),
             now,
         )
         .await?;

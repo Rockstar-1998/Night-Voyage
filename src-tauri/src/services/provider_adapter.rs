@@ -778,6 +778,7 @@ mod tests {
             output_validators: vec![],
             params: CompiledSamplingParams::default(),
             debug: PromptCompileDebugReport::default(),
+            db_mappings: std::collections::HashMap::new(),
         }
     }
 

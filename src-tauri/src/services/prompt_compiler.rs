@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use minijinja::{Environment, UndefinedBehavior};
@@ -7,8 +7,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::{
-    models::{TokenLayerUsage, TokenUsageReport},
+    models::{
+        blueprint::{BlueprintExecutionContext, BlueprintGraph, CompiledBlock, GateSelection},
+        TokenLayerUsage, TokenUsageReport,
+    },
+    repositories::conversation_gate_repository::ConversationGateRepository,
     services::{
+        blueprint_executor::execute_blueprint,
         memory_service::MemoryService,
         plot_summaries::{
             load_completed_plot_summary_round_ids_before, load_plot_summary_blocks,
@@ -82,7 +87,6 @@ pub enum PromptBlockKind {
     CharacterBase,
     PlayerBase,
     WorldBookMatch,
-    // TODO: WorldVariable layer is not yet implemented. PlotSummary layer already covers its functionality to some extent.
     WorldVariable,
     PlotSummary,
     RetrievedDetail,
@@ -185,6 +189,9 @@ struct LoadedPresetCompilerData {
     blocks: Vec<PromptBlock>,
     output_validators: Vec<CompiledOutputValidator>,
     params: CompiledSamplingParams,
+    /// 蓝图图 JSON 字符串。`Some(non-empty)` 时由图执行器运行时执行；
+    /// `None` 时回退到旧字段（blocks / structured_output_schema）。
+    blueprint_graph: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -368,6 +375,12 @@ pub struct PromptCompileResult {
     pub(crate) output_validators: Vec<CompiledOutputValidator>,
     pub params: CompiledSamplingParams,
     pub debug: PromptCompileDebugReport,
+    /// SchemaField 节点声明的 db 字段映射（field_name → db_column）。
+    ///
+    /// 蓝图激活时由 `execute_blueprint` 产出；蓝图未激活时为空 `HashMap`。
+    /// `stream_processor` 解析 structured_output 后查此映射提取需持久化的字段
+    /// （如 `world_variables` / `plot_summary`）写入 `message_rounds`。
+    pub db_mappings: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -522,7 +535,7 @@ pub async fn compile_prompt(
         "[prompt-compiler] compile_prompt: step=load_preset_compiler_data preset_id={:?}",
         context.preset_id
     );
-    let preset_compiler_data = load_preset_compiler_data(
+    let mut preset_compiler_data = load_preset_compiler_data(
         db,
         context.preset_id,
         Some(&input.provider_kind),
@@ -553,6 +566,94 @@ pub async fn compile_prompt(
     let memory_mode = load_memory_mode(db, input.conversation_id).await;
     let mem0_active = memory_mode == MEMORY_MODE_MEM0;
     let is_legacy = memory_mode == MEMORY_MODE_LEGACY;
+
+    // 蓝图执行：preset.blueprint_graph 必须存在且非空。图执行器产出
+    // blocks / structured_output_schema / sampling_params / db_mappings，
+    // 替换旧字段读取结果。三模式分支由 ModeSwitch 节点决定，compile_prompt
+    // 不再做基于 memory_mode 的 Prompt block 硬编码分支（动态内存层
+    // WorldVariable / PlotSummary / RecentHistory / RetrievedDetail 仍按
+    // memory_mode 加载——这些不是蓝图可控能力，见 spec 能力边界）。
+    // 无 blueprint_graph 的旧 preset 须先在蓝图编辑器中迁移（C2 零回退）。
+    let blueprint_graph_str = preset_compiler_data
+        .blueprint_graph
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "preset has no blueprint_graph; open preset in the blueprint editor to migrate. conversation_id={}",
+                input.conversation_id
+            )
+        })?;
+    dbg_eprintln!(
+        "[prompt-compiler] compile_prompt: step=execute_blueprint conversation_id={}",
+        input.conversation_id
+    );
+    let gate_selections_raw =
+        ConversationGateRepository::load_by_conversation(db, input.conversation_id)
+            .await
+            .map_err(|err| err.replace('\\', "/"))?;
+    let mut gate_selections: HashMap<String, GateSelection> = HashMap::new();
+    for sel in gate_selections_raw {
+        gate_selections.insert(sel.gate_id, GateSelection { keys: sel.selected_keys });
+    }
+    let exec_context = BlueprintExecutionContext {
+        memory_mode: memory_mode.clone(),
+        gate_selections,
+    };
+
+    let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_str).map_err(|err| {
+        format!(
+            "blueprint_graph JSON invalid: {}",
+            err.to_string().replace('\\', "/")
+        )
+    })?;
+    let blueprint_result = execute_blueprint(&graph, &exec_context)
+        .await
+        .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    // 1. blocks: 蓝图产出的 CompiledBlock 转换为 PromptBlock，替换
+    //    preset_prompt_blocks 表加载的旧 blocks（已在 system_blocks 中）。
+    //    仅替换来源于 preset 的 PresetRule blocks——保留 online 模式注入的
+    //    MultiplayerProtocol（蓝图不控制多人协议，见 spec 能力边界）。
+    let multiplayer_block_index = system_blocks
+        .iter()
+        .position(|b| b.kind == PromptBlockKind::MultiplayerProtocol);
+    let multiplayer_block = multiplayer_block_index.map(|idx| system_blocks.remove(idx));
+    let blueprint_blocks: Vec<PromptBlock> = blueprint_result
+        .blocks
+        .iter()
+        .map(compiled_block_to_prompt_block)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.replace('\\', "/"))?;
+    system_blocks = blueprint_blocks;
+    if let Some(block) = multiplayer_block {
+        system_blocks.push(block);
+    }
+
+    // 2. structured_output_schema: 蓝图产出的 JSON Value 序列化为字符串
+    //    塞入 CompiledSamplingParams.structured_output_schema
+    let schema_string = serde_json::to_string(&blueprint_result.structured_output_schema)
+        .map_err(|err| {
+            format!(
+                "failed to serialize structured_output_schema: {}",
+                err.to_string().replace('\\', "/")
+            )
+        })?;
+    preset_compiler_data.params.structured_output_schema = Some(schema_string);
+
+    // 3. sampling_params: 蓝图产出的采样参数覆盖旧字段（仅 Some / 非空覆盖）
+    apply_blueprint_sampling_params(
+        &mut preset_compiler_data.params,
+        &blueprint_result.sampling_params,
+    );
+
+    // 4. db_mappings: 传给 stream_processor 供持久化使用
+    let db_mappings: HashMap<String, String> = blueprint_result.db_mappings;
+
+    debug
+        .input_sources
+        .push(format!("preset:blueprint_graph:{}", input.conversation_id));
 
     // Three-mode gating:
     // - mem0: Mem0 is sole dynamic memory authority; no PlotSummary/WorldVariable/RecentHistory.
@@ -742,6 +843,7 @@ pub async fn compile_prompt(
         output_validators: preset_compiler_data.output_validators,
         params: preset_compiler_data.params,
         debug,
+        db_mappings,
     };
 
     result.debug.total_token_estimate_before_trim = total_estimated_tokens(&result);
@@ -1304,7 +1406,7 @@ async fn load_preset_compiler_data(
     let row = sqlx::query(
         "SELECT temperature, max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
          thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, \
-         context_included_keys \
+         context_included_keys, blueprint_graph \
          FROM presets WHERE id = ? LIMIT 1",
     )
     .bind(preset_id)
@@ -1350,6 +1452,7 @@ async fn load_preset_compiler_data(
     let structured_output_schema: Option<String> = row.try_get("structured_output_schema").ok().flatten();
     let structured_output_display: Option<String> = row.try_get("structured_output_display").ok().flatten();
     let context_included_keys: Option<String> = row.try_get("context_included_keys").ok().flatten();
+    let blueprint_graph: Option<String> = row.try_get("blueprint_graph").ok().flatten();
     let base_stop_sequences = load_preset_stop_sequences(db, preset_id).await?;
     let provider_override =
         load_preset_provider_override_data(db, preset_id, provider_kind, debug).await?;
@@ -1490,6 +1593,7 @@ async fn load_preset_compiler_data(
             structured_output_display: provider_override.structured_output_display_override.or(structured_output_display),
             context_included_keys,
         },
+        blueprint_graph,
     })
 }
 
@@ -2373,6 +2477,80 @@ fn build_block(
         content,
         source,
         required,
+    }
+}
+
+/// Map a blueprint Prompt node's `block_type` string to the host's `PromptBlockKind`.
+///
+/// Unknown strings are rejected (C2 zero-fallback) rather than silently coerced
+/// to a default kind.
+fn block_type_to_prompt_block_kind(block_type: &str) -> Result<PromptBlockKind, String> {
+    match block_type {
+        "system" => Ok(PromptBlockKind::PresetRule),
+        "character" => Ok(PromptBlockKind::CharacterBase),
+        "player" => Ok(PromptBlockKind::PlayerBase),
+        "world_book" => Ok(PromptBlockKind::WorldBookMatch),
+        "world_variable" => Ok(PromptBlockKind::WorldVariable),
+        "plot_summary" => Ok(PromptBlockKind::PlotSummary),
+        "recent_history" => Ok(PromptBlockKind::RecentHistory),
+        "current_user" => Ok(PromptBlockKind::CurrentUser),
+        "multiplayer_protocol" => Ok(PromptBlockKind::MultiplayerProtocol),
+        "retrieved_detail" => Ok(PromptBlockKind::RetrievedDetail),
+        _ => Err(format!(
+            "blueprint block_type `{block_type}` is not a known PromptBlockKind"
+        )),
+    }
+}
+
+/// Convert a blueprint-executor-produced [`CompiledBlock`] into a host
+/// [`PromptBlock`]. `is_locked` becomes `required`; `priority` falls back to
+/// the kind's default when the blueprint node omits it.
+fn compiled_block_to_prompt_block(compiled: &CompiledBlock) -> Result<PromptBlock, String> {
+    let kind = block_type_to_prompt_block_kind(&compiled.block_type)?;
+    let priority = compiled.priority.unwrap_or_else(|| kind.priority());
+    let title = if compiled.identifier.trim().is_empty() {
+        None
+    } else {
+        Some(compiled.identifier.clone())
+    };
+    Ok(PromptBlock {
+        kind,
+        priority,
+        role: PromptRole::System,
+        title,
+        content: compiled.content.clone(),
+        source: PromptBlockSource::Compiler,
+        token_cost_estimate: Some(estimate_token_cost(&compiled.content)),
+        required: compiled.is_locked,
+    })
+}
+
+/// Merge blueprint-executor-produced sampling params into the host
+/// [`CompiledSamplingParams`]. Only `Some` / non-empty values from the
+/// blueprint override the existing values, mirroring the executor's own
+/// `merge_sampling_params` semantics (latter-overrides-former is already
+/// resolved inside the executor).
+fn apply_blueprint_sampling_params(
+    params: &mut CompiledSamplingParams,
+    blueprint_params: &crate::models::blueprint::CompiledSamplingParams,
+) {
+    if let Some(value) = blueprint_params.temperature {
+        params.temperature = Some(value);
+    }
+    if let Some(value) = blueprint_params.max_tokens {
+        params.max_output_tokens = Some(value);
+    }
+    if let Some(value) = blueprint_params.top_p {
+        params.top_p = Some(value);
+    }
+    if let Some(value) = blueprint_params.frequency_penalty {
+        params.frequency_penalty = Some(value);
+    }
+    if let Some(value) = blueprint_params.presence_penalty {
+        params.presence_penalty = Some(value);
+    }
+    if !blueprint_params.stop.is_empty() {
+        params.stop_sequences = blueprint_params.stop.clone();
     }
 }
 

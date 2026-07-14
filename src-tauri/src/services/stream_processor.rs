@@ -294,7 +294,7 @@ pub fn spawn_stream_task(
                     // Continue the loop to retry.
                     continue;
                 }
-                Ok(data) => {
+                Ok((data, db_mappings)) => {
                     let _ = RetrySnapshotRepository::mark_succeeded(&db, round_id).await;
                     if !data.full_content.is_empty() {
                         spawn_post_round_tasks(
@@ -304,6 +304,8 @@ pub fn spawn_stream_task(
                             round_id,
                             provider_id,
                             assistant_message_id,
+                            &db_mappings,
+                            &data.full_content,
                         )
                         .await;
                     }
@@ -323,6 +325,12 @@ pub fn spawn_stream_task(
 /// - mem0: only memory extraction
 /// - legacy: plot_summary placeholder + batch processing + world variable generation
 /// - stateless: world variable generation only (preset-gated)
+///
+/// Blueprint `db_mappings` persistence (mode-independent): when the active
+/// preset has a blueprint with SchemaField nodes declaring `db_mapping`,
+/// the AI's structured_output fields are extracted and written to the
+/// corresponding `message_rounds` columns (e.g. `world_variables`).
+/// This runs before the mode-specific tasks and applies to all modes.
 async fn spawn_post_round_tasks(
     app: &AppHandle,
     db: &SqlitePool,
@@ -330,7 +338,23 @@ async fn spawn_post_round_tasks(
     round_id: i64,
     provider_id: i64,
     assistant_message_id: i64,
+    db_mappings: &HashMap<String, String>,
+    structured_content: &str,
 ) {
+    // Blueprint db_mappings persistence: extract declared fields from the
+    // AI's structured_output and write them to message_rounds columns.
+    // Empty db_mappings (no blueprint or blueprint without db_mapping nodes)
+    // is a no-op — preserves compatibility with legacy presets.
+    if !db_mappings.is_empty() {
+        if let Err(err) = persist_db_mapping_fields(db, round_id, db_mappings, structured_content)
+            .await
+        {
+            dbg_eprintln!(
+                "[stream] spawn_post_round_tasks: persist_db_mapping_fields failed: {err}"
+            );
+        }
+    }
+
     let memory_mode =
         crate::services::prompt_compiler::load_memory_mode(db, conversation_id).await;
 
@@ -373,14 +397,79 @@ async fn spawn_post_round_tasks(
                 conversation_id,
                 provider_id,
             );
-
-            // TODO: spawn_world_variable_generation_task (preset-gated)
         }
         _ => {
             // Stateless: only world variable generation (preset-gated).
-            // TODO: spawn_world_variable_generation_task (preset-gated)
         }
     }
+}
+
+/// Extract fields declared in `db_mappings` from the AI's structured_output
+/// JSON and persist them to the corresponding columns on `message_rounds`.
+///
+/// `db_mappings` maps schema field names (e.g. `"world_variables"`) to
+/// `message_rounds` column names (e.g. `"world_variables"`). Only columns
+/// in the validated allowlist are accepted — this prevents SQL injection
+/// via dynamic column names (column identifiers cannot be parameterized).
+///
+/// Empty `db_mappings` is a no-op (legacy preset compatibility). Fields
+/// present in `db_mappings` but absent from the structured_output are
+/// skipped with a debug log (the field may be optional in the schema).
+async fn persist_db_mapping_fields(
+    db: &SqlitePool,
+    round_id: i64,
+    db_mappings: &HashMap<String, String>,
+    structured_content: &str,
+) -> Result<(), String> {
+    let parsed: serde_json::Value = serde_json::from_str(structured_content)
+        .map_err(|err| {
+            format!(
+                "db_mappings persist: structured_output is not valid JSON (len={}): {}",
+                structured_content.len(),
+                err
+            )
+        })?;
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| "db_mappings persist: structured_output is not a JSON object".to_string())?;
+
+    for (field_name, db_column) in db_mappings {
+        if !is_valid_message_rounds_column(db_column) {
+            return Err(format!(
+                "db_mappings persist: db_column `{db_column}` (field `{field_name}`) is not a \
+                 supported message_rounds column. Supported: `world_variables`, `plot_summary`."
+            ));
+        }
+        let Some(value) = obj.get(field_name) else {
+            dbg_eprintln!(
+                "[stream] db_mappings persist: field `{field_name}` (db_column `{db_column}`) \
+                 not present in structured_output, skipping"
+            );
+            continue;
+        };
+        let serialized = serde_json::to_string(value).map_err(|err| {
+            format!("db_mappings persist: failed to serialize field `{field_name}`: {err}")
+        })?;
+        // Safe: db_column is validated against the allowlist above.
+        let sql = format!("UPDATE message_rounds SET {db_column} = ? WHERE id = ?");
+        sqlx::query(&sql)
+            .bind(&serialized)
+            .bind(round_id)
+            .execute(db)
+            .await
+            .map_err(|err| {
+                format!("db_mappings persist: UPDATE message_rounds.{db_column} failed: {err}")
+            })?;
+    }
+    Ok(())
+}
+
+/// Validate that a `db_mapping` column name is a known, existing column on
+/// the `message_rounds` table. This is a security allowlist — column names
+/// cannot be SQL-parameterized, so only allowlisted identifiers are inserted
+/// into the dynamic UPDATE statement.
+fn is_valid_message_rounds_column(column: &str) -> bool {
+    matches!(column, "world_variables" | "plot_summary")
 }
 
 async fn stream_llm_response(
@@ -391,7 +480,7 @@ async fn stream_llm_response(
     provider_id: i64,
     assistant_message_id: i64,
     attachments: Vec<ChatAttachment>,
-) -> Result<StreamResponseData, String> {
+) -> Result<(StreamResponseData, HashMap<String, String>), String> {
     let provider = ConversationRepository::load_provider(&db, provider_id).await?;
 
     dbg_eprintln!(
@@ -659,7 +748,7 @@ async fn stream_llm_response(
         debug_log_dir.as_deref(),
     );
 
-    stream_result
+    stream_result.map(|data| (data, compiled_prompt.db_mappings.clone()))
 }
 
 async fn execute_provider_http_request(

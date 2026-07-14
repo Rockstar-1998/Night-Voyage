@@ -157,6 +157,7 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
   };
 
   const handleSaveContextWindow = async () => {
+    if (isRoomGuest()) return;
     const val = parseInt(contextInput(), 10);
     if (isNaN(val) || val <= 0) return;
     setSaving(true);
@@ -278,6 +279,7 @@ export const TokenIsland: Component<TokenIslandProps> = (props) => {
                   class="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-mist-solid font-mono outline-none focus:border-accent/50 transition-colors min-h-[32px]"
                   placeholder="上下文窗口大小"
                   min="1"
+                  disabled={isRoomGuest()}
                   onClick={(e) => e.stopPropagation()}
                 />
                 <span class="text-[10px] text-mist-solid/30 whitespace-nowrap">tokens</span>

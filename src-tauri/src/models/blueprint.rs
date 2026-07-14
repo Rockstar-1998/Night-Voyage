@@ -1,0 +1,516 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+/// 蓝图节点类型判别枚举，与 [`NodeConfig`] 变体一一对应。
+///
+/// 序列化为 snake_case 字符串，与蓝图 JSON 中节点的 `type` 字段值匹配
+/// （`start` / `end` / `prompt` / `schema_field` / `mutex_gate` / `group_gate`
+/// / `mode_switch` / `sampling_params`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeType {
+    Start,
+    End,
+    Prompt,
+    SchemaField,
+    MutexGate,
+    GroupGate,
+    ModeSwitch,
+    SamplingParams,
+}
+
+/// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
+///
+/// 使用 `#[serde(tag = "type", content = "config")]` 内部标签模式，让单个枚举同时
+/// 承载类型与配置，从结构上消除 `NodeType` 与 `NodeConfig` 变体错配的无效状态。
+/// 单元变体 `Start` / `End` 序列化时不产生 `config` 字段，匹配 spec 中无配置节点
+/// 的格式（`{"type":"start"}`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "config", rename_all = "snake_case")]
+pub enum NodeConfig {
+    Start,
+    End,
+    Prompt(PromptConfig),
+    SchemaField(SchemaFieldConfig),
+    MutexGate(MutexGateConfig),
+    GroupGate(GroupGateConfig),
+    ModeSwitch(ModeSwitchConfig),
+    SamplingParams(SamplingParamsConfig),
+}
+
+impl NodeConfig {
+    /// 返回该配置对应的节点类型判别值。
+    pub fn node_type(&self) -> NodeType {
+        match self {
+            Self::Start => NodeType::Start,
+            Self::End => NodeType::End,
+            Self::Prompt(_) => NodeType::Prompt,
+            Self::SchemaField(_) => NodeType::SchemaField,
+            Self::MutexGate(_) => NodeType::MutexGate,
+            Self::GroupGate(_) => NodeType::GroupGate,
+            Self::ModeSwitch(_) => NodeType::ModeSwitch,
+            Self::SamplingParams(_) => NodeType::SamplingParams,
+        }
+    }
+}
+
+/// 蓝图节点画布坐标。仅编辑器使用，执行器忽略。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Position {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// 蓝图节点。`config` 字段通过 `flatten` 将 `type` 与 `config` 合并到节点 JSON 顶层。
+///
+/// 序列化结果形如：
+/// `{"id":"n_role","type":"prompt","config":{...},"position":{"x":200,"y":300}}`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlueprintNode {
+    pub id: String,
+    #[serde(flatten)]
+    pub config: NodeConfig,
+    pub position: Position,
+}
+
+impl BlueprintNode {
+    /// 返回该节点的类型判别值。
+    pub fn node_type(&self) -> NodeType {
+        self.config.node_type()
+    }
+}
+
+/// 蓝图连线，从源节点输出端口指向目标节点输入端口。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlueprintEdge {
+    pub id: String,
+    pub source: String,
+    pub source_port: String,
+    pub target: String,
+    pub target_port: String,
+}
+
+/// 完整蓝图图，包含版本号、节点列表与连线列表。
+///
+/// 反序列化时强制校验 `version == 2`（v2 运行时执行架构），缺失或非 2 均报错。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlueprintGraph {
+    #[serde(deserialize_with = "deserialize_blueprint_version")]
+    pub version: i32,
+    pub nodes: Vec<BlueprintNode>,
+    pub edges: Vec<BlueprintEdge>,
+}
+
+/// 蓝图版本号反序列化校验：仅接受 v2 运行时执行架构。
+fn deserialize_blueprint_version<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = i32::deserialize(deserializer)?;
+    if value != 2 {
+        return Err(serde::de::Error::custom(format!(
+            "blueprint graph version must be 2 (v2 runtime execution architecture), got {value}"
+        )));
+    }
+    Ok(value)
+}
+
+/// Prompt 节点配置，图执行器产出 [`CompiledBlock`]。
+///
+/// `block_type` 字符串与 `services::prompt_compiler::PromptBlockKind` 对齐
+/// （`system` / `character` / `world_book` / `plot_summary` / `world_variable`
+/// / `recent_history` / `current_user` / etc.）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptConfig {
+    pub identifier: String,
+    pub block_type: String,
+    pub content: String,
+    pub priority: Option<i32>,
+    pub is_locked: bool,
+    pub lock_reason: Option<String>,
+}
+
+/// SchemaField 节点配置，产出 structured_output_schema 字段与可选 db_mapping。
+///
+/// `db_mapping` 为 `Some("world_variables")` / `Some("plot_summary")` 时，
+/// AI 输出中对应字段会被 stream_processor 写入 `message_rounds` 对应列。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SchemaFieldConfig {
+    pub field_name: String,
+    pub field_type: String,
+    pub description: String,
+    pub sub_schema: Option<serde_json::Value>,
+    pub db_mapping: Option<String>,
+    pub is_locked: bool,
+    pub lock_reason: Option<String>,
+}
+
+/// Gate 选项，[`MutexGateConfig`] 与 [`GroupGateConfig`] 共用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateOption {
+    pub key: String,
+    pub label: String,
+}
+
+/// MutexGate 节点配置（互斥单选）。
+///
+/// 运行时选中值不存于图配置，由会话级 `conversation_gate_selections` 表提供。
+/// 端口命名：`in` × 1，`out_{option_key}` × N。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MutexGateConfig {
+    pub gate_id: String,
+    pub label: String,
+    pub options: Vec<GateOption>,
+}
+
+/// GroupGate 节点配置（普通组，多选）。
+///
+/// 端口命名：`in` × 1，`out_{option_key}` × N。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupGateConfig {
+    pub gate_id: String,
+    pub label: String,
+    pub options: Vec<GateOption>,
+}
+
+/// ModeSwitch 节点配置，运行时根据会话 `memory_mode` 走三出口之一。
+///
+/// 出口端口名固定：`out_legacy` / `out_mem0` / `out_stateless`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeSwitchConfig {
+    pub label: String,
+}
+
+/// SamplingParams 节点配置，产出 [`CompiledSamplingParams`]。
+///
+/// 多个 SamplingParams 节点时，图执行器按遍历顺序后者覆盖前者。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SamplingParamsConfig {
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i64>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub stop: Option<Vec<String>>,
+    pub is_locked: bool,
+}
+
+/// Gate 运行时选中状态。
+///
+/// MutexGate：`keys` 长度为 0 或 1；GroupGate：任意长度。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateSelection {
+    pub keys: Vec<String>,
+}
+
+/// 蓝图执行上下文，承载会话级运行时状态。
+///
+/// `memory_mode` 取值：`"legacy"` / `"mem0"` / `"stateless"`。
+/// `gate_selections` 键为 [`MutexGateConfig::gate_id`] / [`GroupGateConfig::gate_id`]。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlueprintExecutionContext {
+    pub memory_mode: String,
+    pub gate_selections: HashMap<String, GateSelection>,
+}
+
+/// 图执行器产出的 prompt block，供 compile_prompt 注入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompiledBlock {
+    pub identifier: String,
+    pub block_type: String,
+    pub content: String,
+    pub priority: Option<i32>,
+    pub is_locked: bool,
+}
+
+/// 图执行器产出的采样参数。
+///
+/// 注意：此类型与 `services::prompt_compiler::CompiledSamplingParams` 字段集不同，
+/// 后者由 Task 2 执行器完成从本类型到 prompt_compiler 类型的转换。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompiledSamplingParams {
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i64>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub stop: Vec<String>,
+}
+
+/// 蓝图执行结果，包含 prompt blocks、structured_output_schema、采样参数与 db 字段映射。
+///
+/// `structured_output_schema` 为 JSON Schema 对象（`{"type":"object","properties":{...}}`）。
+/// `db_mappings` 键为 [`SchemaFieldConfig::field_name`]，值为 `db_mapping` 字段名。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlueprintExecutionResult {
+    pub blocks: Vec<CompiledBlock>,
+    pub structured_output_schema: serde_json::Value,
+    pub sampling_params: CompiledSamplingParams,
+    pub db_mappings: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// spec 中给出的完整蓝图样例 JSON（Start + Prompt + ModeSwitch + SchemaField×2
+    /// + SamplingParams + End + 8 条边）。
+    const SPEC_SAMPLE_JSON: &str = r#"{
+        "version": 2,
+        "nodes": [
+            { "id": "n_start", "type": "start", "position": {"x":0,"y":300} },
+            {
+                "id": "n_role", "type": "prompt", "position": {"x":200,"y":300},
+                "config": {
+                    "identifier": "role_definition",
+                    "block_type": "system",
+                    "content": "你是角色扮演故事叙述者……",
+                    "priority": null,
+                    "is_locked": true,
+                    "lock_reason": "核心角色定义不可改"
+                }
+            },
+            {
+                "id": "n_mode", "type": "mode_switch", "position": {"x":400,"y":300},
+                "config": { "label": "记忆模式分支" }
+            },
+            {
+                "id": "n_thinking", "type": "schema_field", "position": {"x":700,"y":200},
+                "config": {
+                    "field_name": "thinking", "field_type": "string",
+                    "description": "AI 内心思考", "sub_schema": null,
+                    "db_mapping": null, "is_locked": false, "lock_reason": null
+                }
+            },
+            {
+                "id": "n_wv", "type": "schema_field", "position": {"x":900,"y":200},
+                "config": {
+                    "field_name": "world_variables", "field_type": "object",
+                    "description": "当前世界状态",
+                    "sub_schema": { "properties": {"location":{"type":"string"}, "mood":{"type":"string"}} },
+                    "db_mapping": "world_variables",
+                    "is_locked": false, "lock_reason": null
+                }
+            },
+            {
+                "id": "n_params", "type": "sampling_params", "position": {"x":1100,"y":300},
+                "config": { "temperature": 0.8, "max_tokens": 4096, "top_p": 0.95,
+                            "frequency_penalty": null, "presence_penalty": null, "stop": null,
+                            "is_locked": false }
+            },
+            { "id": "n_end", "type": "end", "position": {"x":1300,"y":300} }
+        ],
+        "edges": [
+            {"id":"e1","source":"n_start","source_port":"out","target":"n_role","target_port":"in"},
+            {"id":"e2","source":"n_role","source_port":"out","target":"n_mode","target_port":"in"},
+            {"id":"e3","source":"n_mode","source_port":"out_legacy","target":"n_thinking","target_port":"in"},
+            {"id":"e4","source":"n_mode","source_port":"out_mem0","target":"n_thinking","target_port":"in"},
+            {"id":"e5","source":"n_mode","source_port":"out_stateless","target":"n_thinking","target_port":"in"},
+            {"id":"e6","source":"n_thinking","source_port":"out","target":"n_wv","target_port":"in"},
+            {"id":"e7","source":"n_wv","source_port":"out","target":"n_params","target_port":"in"},
+            {"id":"e8","source":"n_params","source_port":"out","target":"n_end","target_port":"in"}
+        ]
+    }"#;
+
+    #[test]
+    fn deserialize_spec_sample_succeeds() {
+        let graph: BlueprintGraph = serde_json::from_str(SPEC_SAMPLE_JSON)
+            .expect("spec sample JSON must deserialize into BlueprintGraph");
+
+        assert_eq!(graph.version, 2);
+        assert_eq!(graph.nodes.len(), 7, "spec sample has 7 nodes");
+        assert_eq!(graph.edges.len(), 8, "spec sample has 8 edges");
+
+        // 节点顺序与 JSON 一致，逐个验证类型判别
+        let node_types: Vec<NodeType> = graph.nodes.iter().map(|n| n.node_type()).collect();
+        assert_eq!(
+            node_types,
+            vec![
+                NodeType::Start,
+                NodeType::Prompt,
+                NodeType::ModeSwitch,
+                NodeType::SchemaField,
+                NodeType::SchemaField,
+                NodeType::SamplingParams,
+                NodeType::End,
+            ]
+        );
+
+        // Start / End 应为单元变体（无 config 字段）
+        let start = &graph.nodes[0];
+        assert_eq!(start.id, "n_start");
+        assert_eq!(start.position.x, 0.0);
+        assert_eq!(start.position.y, 300.0);
+        assert!(matches!(start.config, NodeConfig::Start));
+
+        // Prompt 节点配置字段
+        let prompt = match &graph.nodes[1].config {
+            NodeConfig::Prompt(cfg) => cfg,
+            other => panic!("expected Prompt, got {other:?}"),
+        };
+        assert_eq!(prompt.identifier, "role_definition");
+        assert_eq!(prompt.block_type, "system");
+        assert_eq!(prompt.content, "你是角色扮演故事叙述者……");
+        assert_eq!(prompt.priority, None);
+        assert!(prompt.is_locked);
+        assert_eq!(prompt.lock_reason.as_deref(), Some("核心角色定义不可改"));
+
+        // ModeSwitch 节点
+        let mode = match &graph.nodes[2].config {
+            NodeConfig::ModeSwitch(cfg) => cfg,
+            other => panic!("expected ModeSwitch, got {other:?}"),
+        };
+        assert_eq!(mode.label, "记忆模式分支");
+
+        // 第二个 SchemaField 带 sub_schema 与 db_mapping
+        let wv = match &graph.nodes[4].config {
+            NodeConfig::SchemaField(cfg) => cfg,
+            other => panic!("expected SchemaField, got {other:?}"),
+        };
+        assert_eq!(wv.field_name, "world_variables");
+        assert_eq!(wv.field_type, "object");
+        assert_eq!(wv.db_mapping.as_deref(), Some("world_variables"));
+        assert!(wv.sub_schema.is_some(), "world_variables sub_schema must be present");
+
+        // SamplingParams 节点
+        let params = match &graph.nodes[5].config {
+            NodeConfig::SamplingParams(cfg) => cfg,
+            other => panic!("expected SamplingParams, got {other:?}"),
+        };
+        assert_eq!(params.temperature, Some(0.8));
+        assert_eq!(params.max_tokens, Some(4096));
+        assert_eq!(params.top_p, Some(0.95));
+        assert_eq!(params.frequency_penalty, None);
+        assert_eq!(params.presence_penalty, None);
+        assert_eq!(params.stop, None);
+        assert!(!params.is_locked);
+
+        // End 节点
+        let end = &graph.nodes[6];
+        assert_eq!(end.id, "n_end");
+        assert!(matches!(end.config, NodeConfig::End));
+
+        // 边字段
+        let e1 = &graph.edges[0];
+        assert_eq!(e1.id, "e1");
+        assert_eq!(e1.source, "n_start");
+        assert_eq!(e1.source_port, "out");
+        assert_eq!(e1.target, "n_role");
+        assert_eq!(e1.target_port, "in");
+    }
+
+    #[test]
+    fn serialize_then_deserialize_is_equivalent() {
+        let original: BlueprintGraph = serde_json::from_str(SPEC_SAMPLE_JSON)
+            .expect("spec sample must deserialize for round-trip test");
+
+        let reserialized = serde_json::to_string(&original)
+            .expect("BlueprintGraph must serialize to JSON string");
+
+        let round_tripped: BlueprintGraph = serde_json::from_str(&reserialized)
+            .expect("serialized JSON must deserialize back into BlueprintGraph");
+
+        assert_eq!(original.version, round_tripped.version);
+        assert_eq!(original.nodes.len(), round_tripped.nodes.len());
+        assert_eq!(original.edges.len(), round_tripped.edges.len());
+
+        // 逐节点对比 id 与类型判别（无法直接 PartialEq 因为 Position 不实现 Eq，f64）
+        for (a, b) in original.nodes.iter().zip(round_tripped.nodes.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.node_type(), b.node_type());
+            assert_eq!(a.position.x, b.position.x);
+            assert_eq!(a.position.y, b.position.y);
+        }
+        assert_eq!(original.edges, round_tripped.edges);
+
+        // 关键：Start/End 序列化后不应含 config 字段
+        let start_json = serde_json::to_string(&original.nodes[0])
+            .expect("Start node must serialize");
+        assert!(
+            !start_json.contains("\"config\""),
+            "Start node must not emit `config` field, got: {start_json}"
+        );
+        assert!(
+            start_json.contains("\"type\":\"start\""),
+            "Start node must emit `type: \"start\"`, got: {start_json}"
+        );
+
+        let end_json = serde_json::to_string(&original.nodes[6])
+            .expect("End node must serialize");
+        assert!(
+            !end_json.contains("\"config\""),
+            "End node must not emit `config` field, got: {end_json}"
+        );
+        assert!(
+            end_json.contains("\"type\":\"end\""),
+            "End node must emit `type: \"end\"`, got: {end_json}"
+        );
+    }
+
+    #[test]
+    fn missing_version_field_is_rejected() {
+        let json = r#"{
+            "nodes": [],
+            "edges": []
+        }"#;
+
+        let err = serde_json::from_str::<BlueprintGraph>(json)
+            .expect_err("missing `version` field must fail deserialization");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("version"),
+            "error message must mention `version`, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn wrong_version_value_is_rejected() {
+        let json = r#"{
+            "version": 1,
+            "nodes": [],
+            "edges": []
+        }"#;
+
+        let err = serde_json::from_str::<BlueprintGraph>(json)
+            .expect_err("version != 2 must fail deserialization");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("version must be 2"),
+            "error message must mention version must be 2, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn node_type_discriminant_matches_config_variant() {
+        let cases = [
+            (NodeConfig::Start, NodeType::Start),
+            (NodeConfig::End, NodeType::End),
+            (
+                NodeConfig::Prompt(PromptConfig {
+                    identifier: "id".to_string(),
+                    block_type: "system".to_string(),
+                    content: String::new(),
+                    priority: None,
+                    is_locked: false,
+                    lock_reason: None,
+                }),
+                NodeType::Prompt,
+            ),
+            (
+                NodeConfig::ModeSwitch(ModeSwitchConfig {
+                    label: "label".to_string(),
+                }),
+                NodeType::ModeSwitch,
+            ),
+        ];
+
+        for (config, expected_type) in cases {
+            assert_eq!(
+                config.node_type(),
+                expected_type,
+                "NodeConfig::node_type() must match variant"
+            );
+        }
+    }
+}

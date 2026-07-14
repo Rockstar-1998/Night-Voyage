@@ -144,7 +144,7 @@ impl MessageRepository {
         message_id: i64,
         content: &str,
     ) -> Result<(), String> {
-        sqlx::query("UPDATE message_content_parts SET text_content = ? WHERE message_id = ? AND content_type = 'text'")
+        sqlx::query("UPDATE message_content_parts SET text_value = ? WHERE message_id = ? AND part_type = 'text'")
             .bind(content)
             .bind(message_id)
             .execute(db)

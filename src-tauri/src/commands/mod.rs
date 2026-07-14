@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod blueprint;
 pub mod characters;
 pub mod chat;
 pub mod conversations;

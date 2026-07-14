@@ -1,3 +1,4 @@
+pub mod conversation_gate_repository;
 pub mod conversation_repository;
 pub mod message_repository;
 pub mod llm_retry_snapshot_repository;

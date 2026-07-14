@@ -6,6 +6,7 @@ import { SessionList } from './components/SessionList';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { CharacterGallery } from './components/characters/CharacterGallery';
+import { MobilePresetBlueprintEntry } from './components/blueprint/MobilePresetBlueprintEntry';
 import { NotificationContainer, showToast } from './components/Toast';
 import {
     conversationsList,
@@ -155,7 +156,7 @@ function App() {
     return (
         <div class="h-[100dvh] max-h-[100dvh] min-h-0 w-full bg-xuanqing flex flex-col relative overflow-hidden safe-area-top safe-area-bottom">
             {/* Conditional header only for non-chat tabs or specific views, excluding settings and characters which have their own */}
-            <Show when={(activeTab() !== 'chat' && activeTab() !== 'settings' && activeTab() !== 'characters') || activeView() === 'chat'}>
+            <Show when={(activeTab() !== 'chat' && activeTab() !== 'settings' && activeTab() !== 'characters' && activeTab() !== 'workspaces') || activeView() === 'chat'}>
                 <header class="h-14 shrink-0 flex items-center justify-between px-4 z-30 bg-xuanqing/80 backdrop-blur-md">
                     <div class="flex items-center gap-3 min-w-0">
                         <Show when={activeTab() === 'chat' && activeView() === 'chat'}>
@@ -240,11 +241,7 @@ function App() {
                         </Show>
 
                         <Show when={activeTab() === 'workspaces'}>
-                            <PlaceholderView
-                                title="工作台"
-                                description="移动端工作台功能正在开发中。请使用桌面版进行预设治理。"
-                                icon={LayoutGrid}
-                            />
+                            <MobilePresetBlueprintEntry onBack={() => setActiveTab('chat')} />
                         </Show>
 
                         <Show when={activeTab() === 'kb'}>
@@ -274,7 +271,7 @@ function App() {
                 />
             </main>
 
-            <Show when={activeTab() !== 'chat' || activeView() === 'sessions'}>
+            <Show when={(activeTab() !== 'chat' && activeTab() !== 'workspaces') || activeView() === 'sessions'}>
                 <nav class="shrink-0 h-16 border-t border-white/5 bg-xuanqing/90 backdrop-blur-md z-30 flex items-center justify-around pb-[env(safe-area-inset-bottom)]">
                     <NavButton id="chat" icon={MessageSquare} label="对话" />
                     <NavButton id="characters" icon={Users} label="角色" />

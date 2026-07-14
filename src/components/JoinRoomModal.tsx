@@ -28,7 +28,7 @@ interface JoinRoomModalProps {
   playerCharacters: CharacterCard[];
   onJoined?: (
     result: RoomJoinResult,
-    connection: { hostAddress: string; port: number; displayName: string },
+    connection: { hostAddress: string; port: number; displayName: string; selectedCharacterId?: number },
   ) => void;
   onLeft?: () => void;
 }
@@ -167,7 +167,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
           memberId: member.id,
           displayName: member.displayName,
         })));
-        props.onJoined?.(result, { hostAddress: addr, port: p, displayName: name });
+        props.onJoined?.(result, { hostAddress: addr, port: p, displayName: name, selectedCharacterId: selectedCharacterId() });
         // Don't add a fake self-entry; the real MemberJoined event from the server
         // will arrive shortly via listenRoomMemberJoined and add the actual member.
       } else {

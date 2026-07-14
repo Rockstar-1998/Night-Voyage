@@ -185,6 +185,7 @@ pub async fn messages_update_content(
 
 #[tauri::command]
 pub async fn messages_switch_swipe(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: i64,
     member_id: i64,
@@ -198,7 +199,7 @@ pub async fn messages_switch_swipe(
         Operation::Edit,
     )
     .await?;
-    ChatService::switch_swipe(&state.db, conversation_id, member_id, round_id, target_message_id)
+    ChatService::switch_swipe(&state.db, &app, conversation_id, member_id, round_id, target_message_id)
         .await
 }
 

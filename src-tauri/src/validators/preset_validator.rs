@@ -227,6 +227,21 @@ impl PresetValidator {
     }
 }
 
+/// 校验蓝图图 JSON 字符串能否反序列化为 [`BlueprintGraph`](crate::models::blueprint::BlueprintGraph)。
+///
+/// 反序列化失败时显式返回错误（C2 零回退），错误信息中的反斜杠替换为正斜杠
+/// 以避免跨 IPC JSON 解析问题。
+pub fn validate_blueprint_graph(graph_json: &str) -> Result<(), String> {
+    let _: crate::models::blueprint::BlueprintGraph = serde_json::from_str(graph_json)
+        .map_err(|err| {
+            format!(
+                "blueprint_graph JSON 无效: {}",
+                err.to_string().replace('\\', "/")
+            )
+        })?;
+    Ok(())
+}
+
 pub fn normalize_required_impl(field_name: &str, value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

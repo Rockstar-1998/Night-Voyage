@@ -1,5 +1,6 @@
 // character_state_overlays removed (migration 0036): table dropped,
 // WorldVariable merged into message_rounds.world_variables.
+pub mod blueprint_executor;
 pub mod chat;
 pub mod chat_service;
 /// Isolated debug log macros — see module docs for cleanup procedure.

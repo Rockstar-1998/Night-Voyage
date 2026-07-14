@@ -1,4 +1,4 @@
-import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { Component, For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { animate } from '../lib/animate';
 import type {
@@ -141,6 +141,18 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
   };
 
   const [isExpanded, setIsExpanded] = createSignal(computeInitialExpanded());
+
+  // Host-side: seed the room server's schema toggle map with each tag's
+  // default expanded state so guests joining later inherit the host's
+  // defaults instead of falling back to their local toggle state.
+  // onSchemaToggle is a no-op for guests (App.tsx gates on roomClientSession)
+  // and single-player (App.tsx gates on conversationType === 'online').
+  onMount(() => {
+    const key = toggleKey();
+    if (userToggleState.get(key) !== undefined) return;
+    userToggleState.set(key, props.defaultExpanded);
+    props.onSchemaToggle?.(key, props.defaultExpanded);
+  });
 
   let contentRef: HTMLDivElement | undefined;
 

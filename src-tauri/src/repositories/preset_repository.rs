@@ -42,7 +42,7 @@ impl PresetRepository {
         let rows = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, blueprint_graph, created_at, updated_at \
              FROM presets ORDER BY updated_at DESC, id DESC",
         )
         .fetch_all(db)
@@ -56,7 +56,7 @@ impl PresetRepository {
         let row = sqlx::query(
             "SELECT id, name, description, category, is_builtin, version, temperature, \
              max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode, \
-             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, created_at, updated_at \
+             thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema, structured_output_display, context_included_keys, blueprint_graph, created_at, updated_at \
              FROM presets WHERE id = ? LIMIT 1",
         )
         .bind(id)
@@ -363,6 +363,7 @@ impl PresetRepository {
         structured_output_schema: Option<&str>,
         structured_output_display: Option<&str>,
         context_included_keys: Option<&str>,
+        blueprint_graph: Option<&str>,
         now: i64,
     ) -> Result<i64, String> {
         let result = sqlx::query(
@@ -370,9 +371,9 @@ impl PresetRepository {
                 name, description, category, is_builtin, version, temperature,
                 max_output_tokens, top_p, top_k, presence_penalty, frequency_penalty, response_mode,
                 thinking_enabled, thinking_budget_tokens, beta_features, structured_output_schema,
-                structured_output_display, context_included_keys,
+                structured_output_display, context_included_keys, blueprint_graph,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
         .bind(&description)
@@ -390,6 +391,7 @@ impl PresetRepository {
         .bind(structured_output_schema)
         .bind(structured_output_display)
         .bind(context_included_keys)
+        .bind(blueprint_graph)
         .bind(now)
         .bind(now)
         .execute(&mut **tx)
@@ -418,6 +420,7 @@ impl PresetRepository {
         structured_output_schema: Option<&str>,
         structured_output_display: Option<&str>,
         context_included_keys: Option<&str>,
+        blueprint_graph: Option<&str>,
         now: i64,
     ) -> Result<(), String> {
         sqlx::query(
@@ -439,6 +442,7 @@ impl PresetRepository {
                 structured_output_schema = ?,
                 structured_output_display = ?,
                 context_included_keys = ?,
+                blueprint_graph = COALESCE(?, blueprint_graph),
                 updated_at = ?
              WHERE id = ?",
         )
@@ -458,6 +462,7 @@ impl PresetRepository {
         .bind(structured_output_schema)
         .bind(structured_output_display)
         .bind(context_included_keys)
+        .bind(blueprint_graph)
         .bind(now)
         .bind(id)
         .execute(&mut **tx)
@@ -933,6 +938,7 @@ impl PresetRepository {
             structured_output_schema: row.try_get("structured_output_schema").ok().flatten(),
             structured_output_display: row.try_get("structured_output_display").ok().flatten(),
             context_included_keys: row.try_get("context_included_keys").ok().flatten(),
+            blueprint_graph: row.try_get("blueprint_graph").ok().flatten(),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         })

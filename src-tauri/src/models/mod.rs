@@ -1,3 +1,5 @@
+pub mod blueprint;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -138,6 +140,12 @@ pub struct PresetSummary {
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
     pub context_included_keys: Option<String>,
+    /// 蓝图图 JSON 字符串（BlueprintGraph 序列化，version=2）。
+    ///
+    /// 迁移期与旧字段共存：当此字段为 `Some` 时由图执行器运行时执行；
+    /// 为 `None` 时回退到旧字段（blocks / structured_output_schema / semantic_groups）。
+    /// 旧字段在 Task 12 删除。
+    pub blueprint_graph: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -378,6 +386,7 @@ pub struct StreamRetryEvent {
     pub message_id: i64,
     pub error: String,
     pub attempt_count: i64,
+    pub auto_retry_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
