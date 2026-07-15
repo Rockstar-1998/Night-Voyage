@@ -11,7 +11,7 @@ use crate::{
         blueprint::{BlueprintExecutionContext, BlueprintGraph, CompiledBlock, GateSelection},
         TokenLayerUsage, TokenUsageReport,
     },
-    repositories::conversation_gate_repository::ConversationGateRepository,
+    repositories::preset_gate_repository::PresetGateRepository,
     services::{
         blueprint_executor::execute_blueprint,
         memory_service::MemoryService,
@@ -589,16 +589,24 @@ pub async fn compile_prompt(
         "[prompt-compiler] compile_prompt: step=execute_blueprint conversation_id={}",
         input.conversation_id
     );
-    let gate_selections_raw =
-        ConversationGateRepository::load_by_conversation(db, input.conversation_id)
+    let gate_selections_raw = {
+        let preset_id = context.preset_id.ok_or_else(|| {
+            format!(
+                "conversation {} has no preset; cannot load gate selections",
+                input.conversation_id
+            )
+        })?;
+        PresetGateRepository::load_by_preset(db, preset_id)
             .await
-            .map_err(|err| err.replace('\\', "/"))?;
-    let mut gate_selections: HashMap<String, GateSelection> = HashMap::new();
-    for sel in gate_selections_raw {
-        gate_selections.insert(sel.gate_id, GateSelection { keys: sel.selected_keys });
-    }
+            .map_err(|err| err.replace('\\', "/"))?
+    };
+    let gate_selections: HashMap<String, GateSelection> = gate_selections_raw
+        .into_iter()
+        .map(|sel| (sel.node_id, GateSelection { keys: sel.selected_keys }))
+        .collect();
     let exec_context = BlueprintExecutionContext {
         memory_mode: memory_mode.clone(),
+        conversation_type: context.conversation_type.clone(),
         gate_selections,
     };
 

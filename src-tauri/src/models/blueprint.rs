@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 序列化为 snake_case 字符串，与蓝图 JSON 中节点的 `type` 字段值匹配
 /// （`start` / `end` / `prompt` / `schema_field` / `mutex_gate` / `group_gate`
-/// / `mode_switch` / `sampling_params`）。
+/// / `mode_switch` / `role_switch` / `sampling_params`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
@@ -17,6 +17,7 @@ pub enum NodeType {
     MutexGate,
     GroupGate,
     ModeSwitch,
+    RoleSwitch,
     SamplingParams,
 }
 
@@ -36,6 +37,7 @@ pub enum NodeConfig {
     MutexGate(MutexGateConfig),
     GroupGate(GroupGateConfig),
     ModeSwitch(ModeSwitchConfig),
+    RoleSwitch(RoleSwitchConfig),
     SamplingParams(SamplingParamsConfig),
 }
 
@@ -50,6 +52,7 @@ impl NodeConfig {
             Self::MutexGate(_) => NodeType::MutexGate,
             Self::GroupGate(_) => NodeType::GroupGate,
             Self::ModeSwitch(_) => NodeType::ModeSwitch,
+            Self::RoleSwitch(_) => NodeType::RoleSwitch,
             Self::SamplingParams(_) => NodeType::SamplingParams,
         }
     }
@@ -147,19 +150,22 @@ pub struct SchemaFieldConfig {
 }
 
 /// Gate 选项，[`MutexGateConfig`] 与 [`GroupGateConfig`] 共用。
+///
+/// `description` 为选项核心字段（选择 UI 中显示的选项说明），旧 JSON 缺失时
+/// 反序列化为 `None`，前端加载时回退为空字符串以保持兼容。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateOption {
     pub key: String,
     pub label: String,
+    pub description: Option<String>,
 }
 
 /// MutexGate 节点配置（互斥单选）。
 ///
-/// 运行时选中值不存于图配置，由会话级 `conversation_gate_selections` 表提供。
-/// 端口命名：`in` × 1，`out_{option_key}` × N。
+/// 运行时选中值不存于图配置，由预设级 `preset_gate_selections` 表按 `node_id` 提供。
+/// 节点 ID 已唯一，不再需要 `gate_id` 字段。端口命名：`in` × 1，`out_{option_key}` × N。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutexGateConfig {
-    pub gate_id: String,
     pub label: String,
     pub options: Vec<GateOption>,
 }
@@ -169,7 +175,6 @@ pub struct MutexGateConfig {
 /// 端口命名：`in` × 1，`out_{option_key}` × N。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupGateConfig {
-    pub gate_id: String,
     pub label: String,
     pub options: Vec<GateOption>,
 }
@@ -179,6 +184,16 @@ pub struct GroupGateConfig {
 /// 出口端口名固定：`out_legacy` / `out_mem0` / `out_stateless`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModeSwitchConfig {
+    pub label: String,
+}
+
+/// RoleSwitch 节点配置，运行时根据会话 `conversation_type` 走对应出口。
+///
+/// 与 [`ModeSwitchConfig`] 对称——把"角色模式轴"独立成节点，与"记忆模式轴"
+/// 在图中串联使用，避免单节点端口膨胀。出口端口名固定：`out_single` / `out_online`
+/// （未来扩展 `out_agent`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleSwitchConfig {
     pub label: String,
 }
 
@@ -206,11 +221,13 @@ pub struct GateSelection {
 
 /// 蓝图执行上下文，承载会话级运行时状态。
 ///
-/// `memory_mode` 取值：`"legacy"` / `"mem0"` / `"stateless"`。
-/// `gate_selections` 键为 [`MutexGateConfig::gate_id`] / [`GroupGateConfig::gate_id`]。
+/// `memory_mode` 取值：`"legacy"` / `"mem0"` / `"stateless"`，驱动 ModeSwitch 节点。
+/// `conversation_type` 取值：`"single"` / `"online"`（未来扩展 `"agent"`），驱动 RoleSwitch 节点。
+/// `gate_selections` 键为 [`BlueprintNode::id`]（节点 ID 已唯一，gate_id 已移除）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlueprintExecutionContext {
     pub memory_mode: String,
+    pub conversation_type: String,
     pub gate_selections: HashMap<String, GateSelection>,
 }
 
@@ -503,6 +520,12 @@ mod tests {
                 }),
                 NodeType::ModeSwitch,
             ),
+            (
+                NodeConfig::RoleSwitch(RoleSwitchConfig {
+                    label: "label".to_string(),
+                }),
+                NodeType::RoleSwitch,
+            ),
         ];
 
         for (config, expected_type) in cases {
@@ -512,5 +535,108 @@ mod tests {
                 "NodeConfig::node_type() must match variant"
             );
         }
+    }
+
+    /// RoleSwitch 节点 + GateOption description 兼容性回归测试。
+    ///
+    /// 锁定 spec §4.1 的关键契约：
+    /// 1. RoleSwitch 节点可序列化为 `{"type":"role_switch","config":{"label":...}}`，
+    ///    反序列化后类型判别为 `NodeType::RoleSwitch`。
+    /// 2. MutexGate/GroupGate 配置不含 `gate_id` 字段（serde 默认忽略旧 JSON 多余字段）。
+    /// 3. GateOption 缺失 `description` 字段时反序列化为 `None`（旧 JSON 兼容）。
+    /// 4. GateOption 显式 `description: null` 同样反序列化为 `None`。
+    #[test]
+    fn role_switch_and_gate_option_description_round_trip() {
+        let json = r#"{
+            "version": 2,
+            "nodes": [
+                { "id": "n_start", "type": "start", "position": {"x":0,"y":0} },
+                {
+                    "id": "n_role", "type": "role_switch", "position": {"x":100,"y":0},
+                    "config": { "label": "角色模式分支" }
+                },
+                {
+                    "id": "n_mutex", "type": "mutex_gate", "position": {"x":200,"y":0},
+                    "config": {
+                        "label": "叙事视角",
+                        "options": [
+                            { "key": "p1", "label": "第一人称", "description": "以「我」叙述" },
+                            { "key": "p3", "label": "第三人称", "description": null }
+                        ]
+                    }
+                },
+                {
+                    "id": "n_group", "type": "group_gate", "position": {"x":300,"y":0},
+                    "config": {
+                        "label": "扰动开关",
+                        "options": [
+                            { "key": "intrude", "label": "允许乱入" }
+                        ]
+                    }
+                },
+                { "id": "n_end", "type": "end", "position": {"x":400,"y":0} }
+            ],
+            "edges": [
+                {"id":"e1","source":"n_start","source_port":"out","target":"n_role","target_port":"in"},
+                {"id":"e2","source":"n_role","source_port":"out_single","target":"n_mutex","target_port":"in"},
+                {"id":"e3","source":"n_role","source_port":"out_online","target":"n_mutex","target_port":"in"},
+                {"id":"e4","source":"n_mutex","source_port":"out_p1","target":"n_group","target_port":"in"},
+                {"id":"e5","source":"n_mutex","source_port":"out_p3","target":"n_group","target_port":"in"},
+                {"id":"e6","source":"n_group","source_port":"out_intrude","target":"n_end","target_port":"in"}
+            ]
+        }"#;
+
+        let graph: BlueprintGraph = serde_json::from_str(json)
+            .expect("RoleSwitch + Gate graph must deserialize");
+
+        // RoleSwitch 节点
+        let role = match &graph.nodes[1].config {
+            NodeConfig::RoleSwitch(cfg) => cfg,
+            other => panic!("expected RoleSwitch, got {other:?}"),
+        };
+        assert_eq!(role.label, "角色模式分支");
+        assert_eq!(graph.nodes[1].node_type(), NodeType::RoleSwitch);
+
+        // MutexGate 配置不含 gate_id；GateOption description 显式有值
+        let mutex = match &graph.nodes[2].config {
+            NodeConfig::MutexGate(cfg) => cfg,
+            other => panic!("expected MutexGate, got {other:?}"),
+        };
+        assert_eq!(mutex.label, "叙事视角");
+        assert_eq!(mutex.options.len(), 2);
+        assert_eq!(mutex.options[0].key, "p1");
+        assert_eq!(mutex.options[0].description.as_deref(), Some("以「我」叙述"));
+        // description: null → None
+        assert_eq!(mutex.options[1].description, None);
+
+        // GroupGate 配置不含 gate_id；GateOption 缺失 description → None
+        let group = match &graph.nodes[3].config {
+            NodeConfig::GroupGate(cfg) => cfg,
+            other => panic!("expected GroupGate, got {other:?}"),
+        };
+        assert_eq!(group.options.len(), 1);
+        assert_eq!(group.options[0].description, None);
+
+        // 序列化后再反序列化，保持等价
+        let reserialized = serde_json::to_string(&graph)
+            .expect("graph with RoleSwitch must serialize");
+        let round_tripped: BlueprintGraph = serde_json::from_str(&reserialized)
+            .expect("round-trip must succeed");
+        assert_eq!(graph.nodes.len(), round_tripped.nodes.len());
+        for (a, b) in graph.nodes.iter().zip(round_tripped.nodes.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.node_type(), b.node_type());
+        }
+
+        // 关键：序列化后的 JSON 不应包含 gate_id 字段
+        assert!(
+            !reserialized.contains("gate_id"),
+            "serialized graph must not contain `gate_id`, got: {reserialized}"
+        );
+        // 关键：RoleSwitch 节点序列化应包含 type:"role_switch"
+        assert!(
+            reserialized.contains("\"type\":\"role_switch\""),
+            "RoleSwitch node must emit `type: \"role_switch\"`, got: {reserialized}"
+        );
     }
 }

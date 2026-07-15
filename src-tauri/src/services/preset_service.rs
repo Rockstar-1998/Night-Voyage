@@ -990,6 +990,7 @@ mod tests {
 
         let ctx = BlueprintExecutionContext {
             memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
         };
 
@@ -1074,6 +1075,7 @@ mod tests {
 
         let ctx = BlueprintExecutionContext {
             memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
         };
 
@@ -1109,11 +1111,10 @@ mod tests {
                 BlueprintNode {
                     id: "n_gate".to_string(),
                     config: NodeConfig::MutexGate(MutexGateConfig {
-                        gate_id: "g1".to_string(),
                         label: "mutex".to_string(),
                         options: vec![
-                            GateOption { key: "opt_a".to_string(), label: "A".to_string() },
-                            GateOption { key: "opt_b".to_string(), label: "B".to_string() },
+                            GateOption { key: "opt_a".to_string(), label: "A".to_string(), description: None },
+                            GateOption { key: "opt_b".to_string(), label: "B".to_string(), description: None },
                         ],
                     }),
                     position: Position { x: 200.0, y: 0.0 },
@@ -1207,11 +1208,12 @@ mod tests {
 
         let mut gates = std::collections::HashMap::new();
         gates.insert(
-            "g1".to_string(),
+            "n_gate".to_string(),
             crate::models::blueprint::GateSelection { keys: vec!["opt_a".to_string()] },
         );
         let ctx = BlueprintExecutionContext {
             memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
             gate_selections: gates,
         };
 
@@ -1239,11 +1241,10 @@ mod tests {
                 BlueprintNode {
                     id: "n_gate".to_string(),
                     config: NodeConfig::GroupGate(GroupGateConfig {
-                        gate_id: "g2".to_string(),
                         label: "group".to_string(),
                         options: vec![
-                            GateOption { key: "a".to_string(), label: "A".to_string() },
-                            GateOption { key: "b".to_string(), label: "B".to_string() },
+                            GateOption { key: "a".to_string(), label: "A".to_string(), description: None },
+                            GateOption { key: "b".to_string(), label: "B".to_string(), description: None },
                         ],
                     }),
                     position: Position { x: 200.0, y: 0.0 },
@@ -1337,13 +1338,14 @@ mod tests {
 
         let mut gates = std::collections::HashMap::new();
         gates.insert(
-            "g2".to_string(),
+            "n_gate".to_string(),
             crate::models::blueprint::GateSelection {
                 keys: vec!["a".to_string(), "b".to_string()],
             },
         );
         let ctx = BlueprintExecutionContext {
             memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
             gate_selections: gates,
         };
 

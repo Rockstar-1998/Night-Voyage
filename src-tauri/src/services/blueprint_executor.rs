@@ -34,7 +34,7 @@ pub enum BlueprintError {
     NoOutgoingEdge { node: String, port: String },
     /// A cycle was detected during DFS traversal at the given node.
     CycleDetected(String),
-    /// The context lacks a gate selection for the given gate_id.
+    /// The context lacks a gate selection for the given node_id.
     MissingGateSelection(String),
     /// A MutexGate selection contains zero keys.
     NoMutexGateSelection(String),
@@ -42,10 +42,10 @@ pub enum BlueprintError {
     DuplicateFieldName(String),
     /// Two Prompt nodes share the same identifier.
     DuplicateIdentifier(String),
-    /// Two MutexGate/GroupGate nodes share the same gate_id.
-    DuplicateGateId(String),
     /// A ModeSwitch node is missing one of out_legacy/out_mem0/out_stateless.
     MissingModeSwitchPort(String, String),
+    /// A RoleSwitch node is missing one of out_single/out_online.
+    MissingRoleSwitchPort(String, String),
     /// End is not reachable from Start.
     UnreachableEnd,
     /// A locked node is not reachable from Start (off main path).
@@ -67,16 +67,18 @@ impl std::fmt::Display for BlueprintError {
             }
             Self::CycleDetected(id) => write!(f, "cycle detected at node {id}"),
             Self::MissingGateSelection(id) => {
-                write!(f, "gate {id} has no selection in context")
+                write!(f, "gate node {id} has no selection in context")
             }
             Self::NoMutexGateSelection(id) => {
-                write!(f, "mutex gate {id} requires exactly one selected key")
+                write!(f, "mutex gate node {id} requires exactly one selected key")
             }
             Self::DuplicateFieldName(name) => write!(f, "duplicate field_name: {name}"),
             Self::DuplicateIdentifier(id) => write!(f, "duplicate identifier: {id}"),
-            Self::DuplicateGateId(id) => write!(f, "duplicate gate_id: {id}"),
             Self::MissingModeSwitchPort(node, port) => {
                 write!(f, "mode_switch node {node} missing required port: {port}")
+            }
+            Self::MissingRoleSwitchPort(node, port) => {
+                write!(f, "role_switch node {node} missing required port: {port}")
             }
             Self::UnreachableEnd => write!(f, "start node not reachable to end"),
             Self::LockedNodeOffMainPath(id) => {
@@ -185,15 +187,15 @@ fn traverse(
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path)?;
         }
-        NodeConfig::MutexGate(cfg) => {
+        NodeConfig::MutexGate(_) => {
             let selection = context
                 .gate_selections
-                .get(&cfg.gate_id)
-                .ok_or_else(|| BlueprintError::MissingGateSelection(cfg.gate_id.clone()))?;
+                .get(node_id)
+                .ok_or_else(|| BlueprintError::MissingGateSelection(node_id.to_string()))?;
             let selected_key = selection
                 .keys
                 .first()
-                .ok_or_else(|| BlueprintError::NoMutexGateSelection(cfg.gate_id.clone()))?;
+                .ok_or_else(|| BlueprintError::NoMutexGateSelection(node_id.to_string()))?;
             let port = format!("out_{selected_key}");
             let branch_target = target_of(graph, node_id, &port)?;
             traverse(graph, &branch_target, context, result, visited, path)?;
@@ -203,8 +205,8 @@ fn traverse(
         NodeConfig::GroupGate(cfg) => {
             let selection = context
                 .gate_selections
-                .get(&cfg.gate_id)
-                .ok_or_else(|| BlueprintError::MissingGateSelection(cfg.gate_id.clone()))?;
+                .get(node_id)
+                .ok_or_else(|| BlueprintError::MissingGateSelection(node_id.to_string()))?;
             for option in &cfg.options {
                 if selection.keys.contains(&option.key) {
                     let port = format!("out_{}", option.key);
@@ -217,6 +219,13 @@ fn traverse(
         }
         NodeConfig::ModeSwitch(_) => {
             let port = format!("out_{}", context.memory_mode);
+            let branch_target = target_of(graph, node_id, &port)?;
+            traverse(graph, &branch_target, context, result, visited, path)?;
+            let merge_node = find_merge_node(graph, node_id)?;
+            traverse(graph, &merge_node, context, result, visited, path)?;
+        }
+        NodeConfig::RoleSwitch(_) => {
+            let port = format!("out_{}", context.conversation_type);
             let branch_target = target_of(graph, node_id, &port)?;
             traverse(graph, &branch_target, context, result, visited, path)?;
             let merge_node = find_merge_node(graph, node_id)?;
@@ -281,20 +290,9 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         }
     }
 
-    // 5. gate_id unique
-    let mut seen_gate_ids: HashSet<String> = HashSet::new();
-    for node in &graph.nodes {
-        let gate_id = match &node.config {
-            NodeConfig::MutexGate(cfg) => Some(&cfg.gate_id),
-            NodeConfig::GroupGate(cfg) => Some(&cfg.gate_id),
-            _ => None,
-        };
-        if let Some(gid) = gate_id {
-            if !seen_gate_ids.insert(gid.clone()) {
-                return Err(BlueprintError::DuplicateGateId(gid.clone()));
-            }
-        }
-    }
+    // 5. gate_id uniqueness check removed — node_id is already unique
+    // (MutexGateConfig/GroupGateConfig no longer carry gate_id; selection key
+    // is the node_id, which is structurally unique by BlueprintNode.id).
 
     // 6. ModeSwitch three ports connected
     for node in &graph.nodes {
@@ -314,7 +312,25 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         }
     }
 
-    // 7. Reachability: Start → End
+    // 7. RoleSwitch two ports connected (out_single / out_online)
+    for node in &graph.nodes {
+        if matches!(node.config, NodeConfig::RoleSwitch(_)) {
+            for port in &["out_single", "out_online"] {
+                let has_edge = graph
+                    .edges
+                    .iter()
+                    .any(|e| e.source == node.id && e.source_port == *port);
+                if !has_edge {
+                    return Err(BlueprintError::MissingRoleSwitchPort(
+                        node.id.clone(),
+                        port.to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    // 8. Reachability: Start → End
     let start_id = graph
         .nodes
         .iter()
@@ -332,7 +348,7 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         return Err(BlueprintError::UnreachableEnd);
     }
 
-    // 8. Locked nodes must be reachable from Start (simplified check per task spec)
+    // 9. Locked nodes must be reachable from Start (simplified check per task spec)
     for node in &graph.nodes {
         let is_locked = match &node.config {
             NodeConfig::Prompt(cfg) => cfg.is_locked,
@@ -572,7 +588,7 @@ mod tests {
     use super::*;
     use crate::models::blueprint::{
         GateOption, GroupGateConfig, ModeSwitchConfig, MutexGateConfig, Position,
-        PromptConfig, SamplingParamsConfig, SchemaFieldConfig,
+        PromptConfig, RoleSwitchConfig, SamplingParamsConfig, SchemaFieldConfig,
     };
     use crate::models::blueprint::{BlueprintEdge, BlueprintGraph, BlueprintNode, NodeConfig};
 
@@ -687,17 +703,33 @@ mod tests {
         }
     }
 
-    fn mutex_gate(id: &str, gate_id: &str, opts: &[(&str, &str)]) -> BlueprintNode {
+    fn role_switch(id: &str) -> BlueprintNode {
+        BlueprintNode {
+            id: id.to_string(),
+            config: NodeConfig::RoleSwitch(RoleSwitchConfig {
+                label: "role".to_string(),
+            }),
+            position: pos(0.0, 0.0),
+        }
+    }
+
+    /// `opts` 形如 `[("option_key", "option label", "option description")]`。
+    /// description 传空字符串表示无说明（与生产路径 GateOption.description = None 等价的测试写法）。
+    fn mutex_gate(id: &str, label: &str, opts: &[(&str, &str, &str)]) -> BlueprintNode {
         BlueprintNode {
             id: id.to_string(),
             config: NodeConfig::MutexGate(MutexGateConfig {
-                gate_id: gate_id.to_string(),
-                label: gate_id.to_string(),
+                label: label.to_string(),
                 options: opts
                     .iter()
-                    .map(|(k, l)| GateOption {
+                    .map(|(k, l, d)| GateOption {
                         key: k.to_string(),
                         label: l.to_string(),
+                        description: if d.is_empty() {
+                            None
+                        } else {
+                            Some(d.to_string())
+                        },
                     })
                     .collect(),
             }),
@@ -705,17 +737,22 @@ mod tests {
         }
     }
 
-    fn group_gate(id: &str, gate_id: &str, opts: &[(&str, &str)]) -> BlueprintNode {
+    /// `opts` 形如 `[("option_key", "option label", "option description")]`。
+    fn group_gate(id: &str, label: &str, opts: &[(&str, &str, &str)]) -> BlueprintNode {
         BlueprintNode {
             id: id.to_string(),
             config: NodeConfig::GroupGate(GroupGateConfig {
-                gate_id: gate_id.to_string(),
-                label: gate_id.to_string(),
+                label: label.to_string(),
                 options: opts
                     .iter()
-                    .map(|(k, l)| GateOption {
+                    .map(|(k, l, d)| GateOption {
                         key: k.to_string(),
                         label: l.to_string(),
+                        description: if d.is_empty() {
+                            None
+                        } else {
+                            Some(d.to_string())
+                        },
                     })
                     .collect(),
             }),
@@ -734,6 +771,15 @@ mod tests {
     fn ctx(memory_mode: &str) -> BlueprintExecutionContext {
         BlueprintExecutionContext {
             memory_mode: memory_mode.to_string(),
+            conversation_type: "single".to_string(),
+            gate_selections: HashMap::new(),
+        }
+    }
+
+    fn ctx_with_role(memory_mode: &str, conversation_type: &str) -> BlueprintExecutionContext {
+        BlueprintExecutionContext {
+            memory_mode: memory_mode.to_string(),
+            conversation_type: conversation_type.to_string(),
             gate_selections: HashMap::new(),
         }
     }
@@ -744,11 +790,12 @@ mod tests {
     ) -> BlueprintExecutionContext {
         BlueprintExecutionContext {
             memory_mode: memory_mode.to_string(),
+            conversation_type: "single".to_string(),
             gate_selections: gates
                 .iter()
-                .map(|(gid, keys)| {
+                .map(|(node_id, keys)| {
                     (
-                        gid.to_string(),
+                        node_id.to_string(),
                         crate::models::blueprint::GateSelection {
                             keys: keys.iter().map(|s| s.to_string()).collect(),
                         },
@@ -863,7 +910,7 @@ mod tests {
         let g = graph(
             vec![
                 start("n_start"),
-                mutex_gate("n_gate", "g1", &[("opt_a", "A"), ("opt_b", "B")]),
+                mutex_gate("n_gate", "叙事视角", &[("opt_a", "A", "选项A说明"), ("opt_b", "B", "")]),
                 prompt("n_pa", "block_a", "system", "content A"),
                 prompt("n_pb", "block_b", "system", "content B"),
                 end("n_end"),
@@ -877,15 +924,15 @@ mod tests {
             ],
         );
 
-        // selected = opt_a → only block_a
-        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("g1", &["opt_a"])]))
+        // selected = opt_a → only block_a；selection key 使用 node_id
+        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("n_gate", &["opt_a"])]))
             .await
             .expect("mutex_gate opt_a must execute");
         assert_eq!(result.blocks.len(), 1, "only opt_a branch should produce a block");
         assert_eq!(result.blocks[0].identifier, "block_a");
 
         // selected = opt_b → only block_b
-        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("g1", &["opt_b"])]))
+        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("n_gate", &["opt_b"])]))
             .await
             .expect("mutex_gate opt_b must execute");
         assert_eq!(result.blocks.len(), 1, "only opt_b branch should produce a block");
@@ -897,7 +944,7 @@ mod tests {
         let g = graph(
             vec![
                 start("n_start"),
-                group_gate("n_gate", "g1", &[("a", "A"), ("b", "B")]),
+                group_gate("n_gate", "扰动开关", &[("a", "A", ""), ("b", "B", "")]),
                 prompt("n_pa", "block_a", "system", "content A"),
                 prompt("n_pb", "block_b", "system", "content B"),
                 end("n_end"),
@@ -912,7 +959,7 @@ mod tests {
         );
 
         // both a and b selected → both blocks, in options order (a then b)
-        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("g1", &["a", "b"])]))
+        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("n_gate", &["a", "b"])]))
             .await
             .expect("group_gate multi must execute");
         assert_eq!(result.blocks.len(), 2, "both selected branches should produce blocks");
@@ -920,7 +967,7 @@ mod tests {
         assert_eq!(result.blocks[1].identifier, "block_b");
 
         // only a selected → one block
-        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("g1", &["a"])]))
+        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("n_gate", &["a"])]))
             .await
             .expect("group_gate single must execute");
         assert_eq!(result.blocks.len(), 1);
@@ -1024,7 +1071,7 @@ mod tests {
         let g = graph(
             vec![
                 start("n_start"),
-                mutex_gate("n_gate", "g1", &[("a", "A"), ("b", "B")]),
+                mutex_gate("n_gate", "叙事视角", &[("a", "A", ""), ("b", "B", "")]),
                 prompt("n_pa", "block_a", "system", "content A"),
                 prompt("n_pb", "block_b", "system", "content B"),
                 end("n_end"),
@@ -1041,7 +1088,8 @@ mod tests {
         let err = execute_blueprint(&g, &ctx("stateless"))
             .await
             .expect_err("missing gate selection must error");
-        assert!(matches!(err, BlueprintError::MissingGateSelection(id) if id == "g1"));
+        // 错误参数现在是 node_id（而非旧的 gate_id）
+        assert!(matches!(err, BlueprintError::MissingGateSelection(id) if id == "n_gate"));
     }
 
     #[tokio::test]
@@ -1097,5 +1145,116 @@ mod tests {
         // stateless branch: PromptShared only (directly converges)
         assert_eq!(result.blocks.len(), 1, "stateless branch should produce 1 block");
         assert_eq!(result.blocks[0].identifier, "shared");
+    }
+
+    #[tokio::test]
+    async fn test_role_switch_single_branch() {
+        // Start → RoleSwitch → (out_single) → PromptSingle → End
+        //                    → (out_online) → PromptOnline → End
+        let g = graph(
+            vec![
+                start("n_start"),
+                role_switch("n_role"),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_online", "online_block", "system", "online content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_role", "in"),
+                edge("e2", "n_role", "out_single", "n_single", "in"),
+                edge("e3", "n_role", "out_online", "n_online", "in"),
+                edge("e4", "n_single", "out", "n_end", "in"),
+                edge("e5", "n_online", "out", "n_end", "in"),
+            ],
+        );
+
+        // conversation_type = "single" → only single_block
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect("role_switch single must execute");
+        assert_eq!(result.blocks.len(), 1, "only single branch should produce a block");
+        assert_eq!(result.blocks[0].identifier, "single_block");
+
+        // conversation_type = "online" → only online_block
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "online"))
+            .await
+            .expect("role_switch online must execute");
+        assert_eq!(result.blocks.len(), 1, "only online branch should produce a block");
+        assert_eq!(result.blocks[0].identifier, "online_block");
+    }
+
+    #[tokio::test]
+    async fn test_role_switch_missing_port_rejected() {
+        // RoleSwitch 缺少 out_online 端口 → validate_graph 应报错
+        let g = graph(
+            vec![
+                start("n_start"),
+                role_switch("n_role"),
+                prompt("n_single", "single_block", "system", "single content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_role", "in"),
+                edge("e2", "n_role", "out_single", "n_single", "in"),
+                edge("e3", "n_single", "out", "n_end", "in"),
+                // 缺少 out_online 边
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect_err("role_switch missing out_online must error");
+        match err {
+            BlueprintError::MissingRoleSwitchPort(node, port) => {
+                assert_eq!(node, "n_role");
+                assert_eq!(port, "out_online");
+            }
+            other => panic!("expected MissingRoleSwitchPort, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_role_switch_then_mode_switch_serial() {
+        // 验证 RoleSwitch 与 ModeSwitch 在图中串联使用，6 种排列组合路径之一。
+        // Start → RoleSwitch → (out_single) → ModeSwitch → (out_stateless) → End
+        //                    → (out_online) → ModeSwitch
+        //                                                              → (out_legacy) → PromptLegacy → End
+        //                                                              → (out_mem0)   → PromptMem0   → End
+        let g = graph(
+            vec![
+                start("n_start"),
+                role_switch("n_role"),
+                mode_switch("n_mode"),
+                prompt("n_legacy", "legacy_block", "system", "legacy content"),
+                prompt("n_mem0", "mem0_block", "system", "mem0 content"),
+                prompt("n_stateless", "stateless_block", "system", "stateless content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_role", "in"),
+                edge("e2", "n_role", "out_single", "n_mode", "in"),
+                edge("e3", "n_role", "out_online", "n_mode", "in"),
+                edge("e4", "n_mode", "out_legacy", "n_legacy", "in"),
+                edge("e5", "n_mode", "out_mem0", "n_mem0", "in"),
+                edge("e6", "n_mode", "out_stateless", "n_stateless", "in"),
+                edge("e7", "n_legacy", "out", "n_end", "in"),
+                edge("e8", "n_mem0", "out", "n_end", "in"),
+                edge("e9", "n_stateless", "out", "n_end", "in"),
+            ],
+        );
+
+        // single + stateless 路径
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect("role+mode serial must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "stateless_block");
+
+        // online + legacy 路径
+        let result = execute_blueprint(&g, &ctx_with_role("legacy", "online"))
+            .await
+            .expect("role+mode serial must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "legacy_block");
     }
 }
