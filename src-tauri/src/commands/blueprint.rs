@@ -103,7 +103,11 @@ pub async fn clear_preset_gate_selection(
 /// 加载某预设蓝图中的全部 Gate 节点定义，供预设详情视图渲染选择 UI。
 ///
 /// 仅返回 MutexGate / GroupGate 节点（kind 分别为 `"mutex"` / `"group"`）。
-/// 蓝图 JSON 缺失或解析失败按 C2 零回退原则显式报错。
+///
+/// 空状态语义：预设尚未创建蓝图（`blueprint_graph` 为 NULL 或空串）是合法
+/// 状态，返回空 vec，由前端渲染空状态提示。这**不是** C2 违规——C2 禁止
+/// 吞掉意外错误，而非把"本就为空"正确表达为空集合。仅当 `blueprint_graph`
+/// 非空但 JSON 解析失败（数据损坏）时才显式报错。
 #[tauri::command]
 pub async fn load_blueprint_gates(
     state: tauri::State<'_, AppState>,
@@ -119,8 +123,13 @@ pub async fn load_blueprint_gates(
 
     let graph_str = blueprint_graph_str
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("preset {preset_id} has no blueprint_graph"))?;
+        .filter(|s| !s.is_empty());
+
+    // 预设无蓝图 → 合法空状态，返回空 vec（非错误）
+    let graph_str = match graph_str {
+        Some(s) => s,
+        None => return Ok(Vec::new()),
+    };
 
     let graph: BlueprintGraph = serde_json::from_str(&graph_str).map_err(|err| {
         format!(
