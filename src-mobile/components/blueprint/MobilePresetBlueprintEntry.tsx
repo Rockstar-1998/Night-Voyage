@@ -26,6 +26,7 @@ import {
   presetsDelete,
   presetsRename,
   presetsDuplicate,
+  presetsUpdate,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
 import { MobilePresetDetailView } from './MobilePresetDetailView';
@@ -63,13 +64,39 @@ function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
   });
 }
 
+/// 序列化 BlueprintGraph 为后端持久化的 JSON 字符串。
+/// Rust serde `#[serde(tag = "type", content = "config")]` 序列化 unit
+/// 变体（Start/End）时不带 `config` 字段，故此处需剥离占位 `config: {}`。
+function serializeBlueprintGraph(graph: BlueprintGraph): string {
+  const nodes = graph.nodes.map((node) => {
+    if (node.type === 'start' || node.type === 'end') {
+      return { type: node.type, id: node.id, position: node.position };
+    }
+    return node;
+  });
+  return JSON.stringify({ version: 2, nodes, edges: graph.edges });
+}
+
+/// 从后端 blueprint_graph JSON 字符串解析为 BlueprintGraph。
+function parseGraph(json: string): BlueprintGraph {
+  const parsed = JSON.parse(json) as BlueprintGraph;
+  if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+    throw new Error('blueprint_graph JSON 结构无效');
+  }
+  return {
+    version: 2,
+    nodes: normalizeLoadedNodes(parsed.nodes),
+    edges: parsed.edges,
+  };
+}
+
 // ─── 组件 ───
 
 export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryProps> = (props) => {
   const [presets, setPresets] = createSignal<PresetSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
-  const [editingPreset, setEditingPreset] = createSignal<{ graph: BlueprintGraph; title: string } | null>(null);
+  const [editingPreset, setEditingPreset] = createSignal<{ presetId: number | null; graph: BlueprintGraph; title: string } | null>(null);
   const [viewingPreset, setViewingPreset] = createSignal<PresetSummary | null>(null);
   const [openingPreset, setOpeningPreset] = createSignal<number | null>(null);
   const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
@@ -112,22 +139,11 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     try {
       const detail = await presetsGet(preset.id);
       const rawGraph = detail.preset.blueprintGraph;
-      let graph: BlueprintGraph;
-      if (rawGraph && rawGraph.trim() !== '') {
-        const parsed = JSON.parse(rawGraph) as BlueprintGraph;
-        if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
-          throw new Error('blueprint_graph JSON 结构无效');
-        }
-        graph = {
-          version: 2,
-          nodes: normalizeLoadedNodes(parsed.nodes),
-          edges: parsed.edges,
-        };
-      } else {
-        graph = createEmptyGraph();
-      }
+      const graph = rawGraph && rawGraph.trim() !== ''
+        ? parseGraph(rawGraph)
+        : createEmptyGraph();
       setViewingPreset(null);
-      setEditingPreset({ graph, title: `编辑：${preset.name}` });
+      setEditingPreset({ presetId: preset.id, graph, title: `编辑：${preset.name}` });
     } catch (err) {
       showToast(
         `加载预设失败：${err instanceof Error ? err.message : String(err)}`,
@@ -140,7 +156,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   };
 
   const handleNewBlueprint = () => {
-    setEditingPreset({ graph: createEmptyGraph(), title: '新建空白蓝图' });
+    setEditingPreset({ presetId: null, graph: createEmptyGraph(), title: '新建空白蓝图' });
   };
 
   const handleCreatePreset = async () => {
@@ -237,16 +253,64 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     }
   };
 
-  const handleSaveGraph = (graph: BlueprintGraph) => {
-    // 后端 blueprint_graph 字段持久化由移动端 BlueprintEditor 自行处理。
-    // 此回调仅用于编辑器关闭前的提示。
-    const json = JSON.stringify(graph);
-    const sizeKb = (new Blob([json]).size / 1024).toFixed(1);
-    showToast(
-      `蓝图已生成（${graph.nodes.length} 节点 / ${graph.edges.length} 连线 / ${sizeKb} KB）`,
-      'info',
-      3000,
-    );
+  const handleSaveGraph = async (graph: BlueprintGraph) => {
+    // 持久化蓝图到后端：加载 PresetDetail → 构建完整更新 payload → presetsUpdate。
+    // 与 PC 端 BlueprintEditor.handleSave 逻辑对齐（presets_update 是全行直接赋值，
+    // 必须回传所有列以避免 NULL 覆盖）。
+    const editing = editingPreset();
+    if (!editing) {
+      showToast('未在编辑预设中，无法保存', 'error');
+      return;
+    }
+    if (editing.presetId === null) {
+      showToast('新建空白蓝图需先创建预设后才能保存，请返回列表点击"新建预设"', 'warning', 4000);
+      return;
+    }
+    setPresetBusy(editing.presetId);
+    try {
+      const detail = await presetsGet(editing.presetId);
+      const json = serializeBlueprintGraph(graph);
+      const updated = await presetsUpdate({
+        id: detail.preset.id,
+        name: detail.preset.name,
+        description: detail.preset.description,
+        category: detail.preset.category,
+        temperature: detail.preset.temperature,
+        maxOutputTokens: detail.preset.maxOutputTokens,
+        topP: detail.preset.topP,
+        topK: detail.preset.topK,
+        presencePenalty: detail.preset.presencePenalty,
+        frequencyPenalty: detail.preset.frequencyPenalty,
+        responseMode: detail.preset.responseMode,
+        thinkingEnabled: detail.preset.thinkingEnabled,
+        thinkingBudgetTokens: detail.preset.thinkingBudgetTokens,
+        betaFeatures: detail.preset.betaFeatures,
+        structuredOutputSchema: detail.preset.structuredOutputSchema,
+        structuredOutputDisplay: detail.preset.structuredOutputDisplay,
+        contextIncludedKeys: detail.preset.contextIncludedKeys,
+        blueprintGraph: json,
+      });
+      // 更新编辑中的图（用保存后的回传图重新解析，确保状态一致）
+      setEditingPreset({
+        presetId: editing.presetId,
+        graph: updated.preset.blueprintGraph ? parseGraph(updated.preset.blueprintGraph) : createEmptyGraph(),
+        title: `编辑：${updated.preset.name}`,
+      });
+      const sizeKb = (new Blob([json]).size / 1024).toFixed(1);
+      showToast(
+        `蓝图已保存（${graph.nodes.length} 节点 / ${graph.edges.length} 连线 / ${sizeKb} KB）`,
+        'success',
+        3000,
+      );
+    } catch (err) {
+      showToast(
+        `保存蓝图失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
   };
 
   const handleBackToEntry = () => {
@@ -355,6 +419,8 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
                             onInput={(e) => setRenamingValue(e.currentTarget.value)}
                             onKeyDown={(e) => {
                               e.stopPropagation();
+                              // IME 组合输入期间不拦截按键
+                              if (e.isComposing) return;
                               if (e.key === 'Enter') {
                                 e.preventDefault();
                                 void handleCommitRename(preset.id);

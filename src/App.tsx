@@ -728,6 +728,8 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                                 onInput={(e) => setRenamingValue(e.currentTarget.value)}
                                                 onKeyDown={(e) => {
                                                   e.stopPropagation();
+                                                  // IME 组合输入期间不拦截按键
+                                                  if (e.isComposing) return;
                                                   if (e.key === 'Enter') {
                                                     e.preventDefault();
                                                     void handleCommitRename(preset.id);

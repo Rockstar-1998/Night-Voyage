@@ -64,6 +64,9 @@ export const ChatInputBar: Component<ChatInputBarProps> = (props) => {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // IME 组合输入期间（如中文拼音选词）不拦截任何按键，否则会取消候选词
+    // 确认并打断输入法。Tauri 2.0 的 WebView2/Chromium 完整支持 isComposing。
+    if (e.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
