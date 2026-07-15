@@ -79,6 +79,7 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   mutex_gate: '#f97316',
   group_gate: '#eab308',
   mode_switch: '#06b6d4',
+  role_switch: '#8b5cf6',
   sampling_params: '#6b7280',
 };
 
@@ -113,6 +114,11 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
         { port: 'out_mem0', label: 'MEM0' },
         { port: 'out_stateless', label: 'Stateless' },
       ];
+    case 'role_switch':
+      return [
+        { port: 'out_single', label: '单人' },
+        { port: 'out_online', label: '多人' },
+      ];
     case 'sampling_params':
       return [{ port: 'out', label: null }];
   }
@@ -132,6 +138,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
+    case 'role_switch':
     case 'sampling_params':
       return [{ port: 'in', label: null }];
   }
@@ -154,6 +161,7 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
+    case 'role_switch':
       return false;
   }
 }
@@ -169,11 +177,13 @@ function computeNodeTitle(node: BlueprintNode): string {
     case 'schema_field':
       return node.config.field_name || 'Schema Field';
     case 'mutex_gate':
-      return node.config.label || node.config.gate_id || 'Mutex Gate';
+      return node.config.label || 'Mutex Gate';
     case 'group_gate':
-      return node.config.label || node.config.gate_id || 'Group Gate';
+      return node.config.label || 'Group Gate';
     case 'mode_switch':
       return node.config.label || 'Mode Switch';
+    case 'role_switch':
+      return node.config.label || 'Role Switch';
     case 'sampling_params':
       return 'Sampling Params';
   }
@@ -190,6 +200,8 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return `${node.config.options.length} options`;
     case 'mode_switch':
       return '3 branches';
+    case 'role_switch':
+      return '2 branches';
     case 'start':
     case 'end':
     case 'sampling_params':

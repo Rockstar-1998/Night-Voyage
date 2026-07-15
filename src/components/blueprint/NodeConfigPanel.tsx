@@ -42,6 +42,7 @@ import { SchemaFieldNode } from './nodes/SchemaFieldNode';
 import { MutexGateNode } from './nodes/MutexGateNode';
 import { GroupGateNode } from './nodes/GroupGateNode';
 import { ModeSwitchNode } from './nodes/ModeSwitchNode';
+import { RoleSwitchNode } from './nodes/RoleSwitchNode';
 import { SamplingParamsNode } from './nodes/SamplingParamsNode';
 
 // ─── Shared prop type for every per-type node config component ───
@@ -70,6 +71,7 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   mutex_gate: 'Mutex Gate',
   group_gate: 'Group Gate',
   mode_switch: 'Mode Switch',
+  role_switch: 'Role Switch',
   sampling_params: 'Sampling Params',
 };
 
@@ -156,6 +158,19 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
             onUpdate={(updates) =>
               props.onUpdate(node.id, {
                 type: 'mode_switch',
+                config: { ...node.config, ...updates },
+              })
+            }
+          />
+        );
+      case 'role_switch':
+        return (
+          <RoleSwitchNode
+            config={node.config}
+            isLocked={locked}
+            onUpdate={(updates) =>
+              props.onUpdate(node.id, {
+                type: 'role_switch',
                 config: { ...node.config, ...updates },
               })
             }

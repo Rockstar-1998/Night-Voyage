@@ -101,24 +101,27 @@ function defaultConfigForType(type: NodeType): NodeConfig {
       return {
         type: 'mutex_gate',
         config: {
-          gate_id: `gate_${Date.now().toString(36)}`,
           label: '互斥组',
-          options: [{ key: 'opt_1', label: '选项 1' }],
+          options: [{ key: 'opt_1', label: '选项 1', description: '' }],
         },
       };
     case 'group_gate':
       return {
         type: 'group_gate',
         config: {
-          gate_id: `group_${Date.now().toString(36)}`,
           label: '普通组',
-          options: [{ key: 'opt_1', label: '选项 1' }],
+          options: [{ key: 'opt_1', label: '选项 1', description: '' }],
         },
       };
     case 'mode_switch':
       return {
         type: 'mode_switch',
         config: { label: '记忆模式分支' },
+      };
+    case 'role_switch':
+      return {
+        type: 'role_switch',
+        config: { label: '角色模式分支' },
       };
     case 'sampling_params':
       return {

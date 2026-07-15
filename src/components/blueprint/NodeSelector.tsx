@@ -39,6 +39,7 @@ const NODE_LABELS: Record<NodeType, string> = {
   mutex_gate: 'Mutex Gate（互斥单选）',
   group_gate: 'Group Gate（普通多选）',
   mode_switch: 'Mode Switch（三模式分支）',
+  role_switch: 'Role Switch（角色模式分支）',
   sampling_params: 'Sampling Params（采样参数）',
 };
 
@@ -50,6 +51,7 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   mutex_gate: '互斥选项组，运行时单选一个分支',
   group_gate: '普通选项组，运行时多选分支',
   mode_switch: '按会话记忆模式三分支（legacy/mem0/stateless）',
+  role_switch: '按会话角色模式分支（single/online），与 ModeSwitch 串联',
   sampling_params: '采样参数（temperature/max_tokens 等）',
 };
 

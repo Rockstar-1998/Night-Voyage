@@ -22,6 +22,7 @@ import type {
   MutexGateConfig,
   NodeConfig,
   PromptConfig,
+  RoleSwitchConfig,
   SamplingParamsConfig,
   SchemaFieldConfig,
   StartConfig,
@@ -335,7 +336,7 @@ const GateForm: Component<{
   };
   const addOption = () => {
     const n = props.config.options.length + 1;
-    const next = [...props.config.options, { key: `opt_${n}`, label: `选项 ${n}` }];
+    const next = [...props.config.options, { key: `opt_${n}`, label: `选项 ${n}`, description: '' }];
     props.onChange({ ...props.config, options: next });
   };
   const removeOption = (idx: number) => {
@@ -346,14 +347,6 @@ const GateForm: Component<{
 
   return (
     <div class="flex flex-col gap-4 px-4">
-      <div>
-        <FieldLabel label="Gate ID" hint="唯一标识" />
-        <TextInput
-          value={props.config.gate_id}
-          placeholder="如 mutex_role"
-          onInput={(v) => props.onChange({ ...props.config, gate_id: v })}
-        />
-      </div>
       <div>
         <FieldLabel label="显示名 (label)" />
         <TextInput
@@ -367,30 +360,39 @@ const GateForm: Component<{
         <div class="flex flex-col gap-2">
           <For each={props.config.options}>
             {(opt, idx) => (
-              <div class="flex gap-2 items-center">
+              <div class="flex flex-col gap-1.5 p-2 rounded-lg bg-white/[0.02] border border-white/5">
+                <div class="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={opt.key}
+                    placeholder="key"
+                    onInput={(e) => updateOption(idx(), { key: e.currentTarget.value })}
+                    class="w-1/3 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[12px] text-mist-solid/80 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={opt.label}
+                    placeholder="显示名"
+                    onInput={(e) => updateOption(idx(), { label: e.currentTarget.value })}
+                    class="flex-1 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[13px] text-mist-solid focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeOption(idx())}
+                    disabled={props.config.options.length <= 1}
+                    class="shrink-0 w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 disabled:opacity-30 flex items-center justify-center"
+                    aria-label="删除选项"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
                 <input
                   type="text"
-                  value={opt.key}
-                  placeholder="key"
-                  onInput={(e) => updateOption(idx(), { key: e.currentTarget.value })}
-                  class="w-1/3 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[12px] text-mist-solid/80 focus:outline-none"
+                  value={opt.description}
+                  placeholder="描述（在预设工作区选择时展示给用户）"
+                  onInput={(e) => updateOption(idx(), { description: e.currentTarget.value })}
+                  class="w-full px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 focus:outline-none"
                 />
-                <input
-                  type="text"
-                  value={opt.label}
-                  placeholder="显示名"
-                  onInput={(e) => updateOption(idx(), { label: e.currentTarget.value })}
-                  class="flex-1 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[13px] text-mist-solid focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeOption(idx())}
-                  disabled={props.config.options.length <= 1}
-                  class="shrink-0 w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 disabled:opacity-30 flex items-center justify-center"
-                  aria-label="删除选项"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
               </div>
             )}
           </For>
@@ -424,6 +426,27 @@ const ModeSwitchForm: Component<{
     </div>
     <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
       ModeSwitch 有三个固定出口：out_legacy / out_mem0 / out_stateless，运行时按会话 memoryMode 走对应分支。三个出口都应连通。
+    </div>
+  </div>
+);
+
+// ─── RoleSwitch 节点表单 ───
+
+const RoleSwitchForm: Component<{
+  config: RoleSwitchConfig;
+  onChange: (c: RoleSwitchConfig) => void;
+}> = (props) => (
+  <div class="flex flex-col gap-4 px-4">
+    <div>
+      <FieldLabel label="显示名 (label)" />
+      <TextInput
+        value={props.config.label}
+        placeholder="如 角色模式分支"
+        onInput={(v) => props.onChange({ ...props.config, label: v })}
+      />
+    </div>
+    <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
+      RoleSwitch 有两个固定出口：out_single / out_online，运行时按会话 conversationType 走对应分支。与 ModeSwitch 串联可实现 6 种排列组合路径。两个出口都应连通。
     </div>
   </div>
 );
@@ -552,6 +575,13 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
           onChange={(c: ModeSwitchConfig) => props.onConfigChange({ type: 'mode_switch', config: c })}
         />
       );
+    case 'role_switch':
+      return (
+        <RoleSwitchForm
+          config={node.config}
+          onChange={(c: RoleSwitchConfig) => props.onConfigChange({ type: 'role_switch', config: c })}
+        />
+      );
     case 'sampling_params':
       return (
         <SamplingParamsForm
@@ -599,11 +629,10 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return {
         type: 'mutex_gate',
         config: {
-          gate_id: `gate_${Date.now().toString(36)}`,
           label: '互斥组',
           options: [
-            { key: 'opt_a', label: '选项 A' },
-            { key: 'opt_b', label: '选项 B' },
+            { key: 'opt_a', label: '选项 A', description: '' },
+            { key: 'opt_b', label: '选项 B', description: '' },
           ],
         },
       };
@@ -611,11 +640,10 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return {
         type: 'group_gate',
         config: {
-          gate_id: `gate_${Date.now().toString(36)}`,
           label: '多选组',
           options: [
-            { key: 'opt_a', label: '选项 A' },
-            { key: 'opt_b', label: '选项 B' },
+            { key: 'opt_a', label: '选项 A', description: '' },
+            { key: 'opt_b', label: '选项 B', description: '' },
           ],
         },
       };
@@ -623,6 +651,11 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return {
         type: 'mode_switch',
         config: { label: '记忆模式分支' },
+      };
+    case 'role_switch':
+      return {
+        type: 'role_switch',
+        config: { label: '角色模式分支' },
       };
     case 'sampling_params':
       return {

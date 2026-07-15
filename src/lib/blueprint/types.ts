@@ -24,6 +24,7 @@ export const NODE_TYPES = [
   'mutex_gate',
   'group_gate',
   'mode_switch',
+  'role_switch',
   'sampling_params',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -69,27 +70,27 @@ export interface SchemaFieldConfig {
 export interface GateOption {
   key: string;
   label: string;
+  description: string;
 }
 
 export interface MutexGateConfig {
-  gate_id: string;
   label: string;
   options: GateOption[];
-  // `selected` is runtime state persisted in conversation_gate_selections,
-  // NOT stored in the graph.
 }
 
 export interface GroupGateConfig {
-  gate_id: string;
   label: string;
   options: GateOption[];
-  // `selected` is runtime state persisted in conversation_gate_selections,
-  // NOT stored in the graph.
 }
 
 export interface ModeSwitchConfig {
   label: string;
   // Three outlet ports are fixed: out_legacy / out_mem0 / out_stateless
+}
+
+export interface RoleSwitchConfig {
+  label: string;
+  // Two outlet ports are fixed: out_single / out_online (future: out_agent)
 }
 
 export interface SamplingParamsConfig {
@@ -112,6 +113,7 @@ export type NodeConfig =
   | { type: 'mutex_gate'; config: MutexGateConfig }
   | { type: 'group_gate'; config: GroupGateConfig }
   | { type: 'mode_switch'; config: ModeSwitchConfig }
+  | { type: 'role_switch'; config: RoleSwitchConfig }
   | { type: 'sampling_params'; config: SamplingParamsConfig };
 
 export type BlueprintNode = NodeConfig & {
@@ -133,6 +135,7 @@ export interface GateSelection {
 
 export interface BlueprintExecutionContext {
   memoryMode: 'legacy' | 'mem0' | 'stateless';
+  conversationType: 'single' | 'online';
   gateSelections: Record<string, GateSelection>;
 }
 

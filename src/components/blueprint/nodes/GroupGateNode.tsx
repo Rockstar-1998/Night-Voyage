@@ -49,7 +49,7 @@ export const GroupGateNode: Component<NodeConfigComponentProps<GroupGateConfig>>
   const addOption = () => {
     const existing = props.config.options;
     const key = generateOptionKey(existing);
-    const newOption: GateOption = { key, label: '' };
+    const newOption: GateOption = { key, label: '', description: '' };
     update({ options: [...existing, newOption] });
     setExpandedKeys((prev) => new Set(prev).add(key));
   };
@@ -69,19 +69,14 @@ export const GroupGateNode: Component<NodeConfigComponentProps<GroupGateConfig>>
     });
   };
 
+  const updateOptionDescription = (key: string, description: string) => {
+    update({
+      options: props.config.options.map((o) => (o.key === key ? { ...o, description } : o)),
+    });
+  };
+
   return (
     <div class="space-y-4">
-      <div class="space-y-1">
-        <label class={LABEL_CLASS}>gate_id（唯一标识）</label>
-        <input
-          type="text"
-          value={props.config.gate_id}
-          onInput={(e) => update({ gate_id: e.currentTarget.value })}
-          class={INPUT_CLASS}
-          placeholder="如 features_toggle"
-        />
-      </div>
-
       <div class="space-y-1">
         <label class={LABEL_CLASS}>label（显示名）</label>
         <input
@@ -137,15 +132,27 @@ export const GroupGateNode: Component<NodeConfigComponentProps<GroupGateConfig>>
                   </button>
                 </div>
                 <Show when={expanded()}>
-                  <div class="px-3 pb-2 pt-2 border-t border-white/10 space-y-1">
-                    <label class={LABEL_CLASS}>label</label>
-                    <input
-                      type="text"
-                      value={option.label}
-                      onInput={(e) => updateOptionLabel(option.key, e.currentTarget.value)}
-                      class={OPTION_LABEL_INPUT_CLASS}
-                      placeholder="选项显示名"
-                    />
+                  <div class="px-3 pb-2 pt-2 border-t border-white/10 space-y-2">
+                    <div class="space-y-1">
+                      <label class={LABEL_CLASS}>label</label>
+                      <input
+                        type="text"
+                        value={option.label}
+                        onInput={(e) => updateOptionLabel(option.key, e.currentTarget.value)}
+                        class={OPTION_LABEL_INPUT_CLASS}
+                        placeholder="选项显示名"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class={LABEL_CLASS}>description（描述）</label>
+                      <textarea
+                        value={option.description}
+                        onInput={(e) => updateOptionDescription(option.key, e.currentTarget.value)}
+                        class={`${OPTION_LABEL_INPUT_CLASS} resize-none min-h-[60px]`}
+                        placeholder="选项描述（在预设工作区选择时展示给用户）"
+                        rows={2}
+                      />
+                    </div>
                   </div>
                 </Show>
               </div>

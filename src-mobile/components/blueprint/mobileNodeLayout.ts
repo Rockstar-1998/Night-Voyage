@@ -84,6 +84,7 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   mutex_gate: '#f97316',
   group_gate: '#eab308',
   mode_switch: '#06b6d4',
+  role_switch: '#8b5cf6',
   sampling_params: '#6b7280',
 };
 
@@ -113,6 +114,11 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
         { port: 'out_mem0', label: 'MEM0' },
         { port: 'out_stateless', label: 'Stateless' },
       ];
+    case 'role_switch':
+      return [
+        { port: 'out_single', label: '单人' },
+        { port: 'out_online', label: '多人' },
+      ];
     case 'sampling_params':
       return [{ port: 'out', label: null }];
   }
@@ -128,6 +134,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
+    case 'role_switch':
     case 'sampling_params':
       return [{ port: 'in', label: null }];
   }
@@ -146,6 +153,7 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
+    case 'role_switch':
       return false;
   }
 }
@@ -161,11 +169,13 @@ function computeNodeTitle(node: BlueprintNode): string {
     case 'schema_field':
       return node.config.field_name || 'Schema Field';
     case 'mutex_gate':
-      return node.config.label || node.config.gate_id || 'Mutex Gate';
+      return node.config.label || 'Mutex Gate';
     case 'group_gate':
-      return node.config.label || node.config.gate_id || 'Group Gate';
+      return node.config.label || 'Group Gate';
     case 'mode_switch':
       return node.config.label || 'Mode Switch';
+    case 'role_switch':
+      return node.config.label || 'Role Switch';
     case 'sampling_params':
       return 'Sampling Params';
   }
@@ -182,6 +192,8 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return `${node.config.options.length} 选项`;
     case 'mode_switch':
       return '3 分支';
+    case 'role_switch':
+      return '2 分支';
     case 'start':
     case 'end':
     case 'sampling_params':
@@ -451,11 +463,10 @@ export function createNode(
         type: 'mutex_gate',
         position,
         config: {
-          gate_id: genNodeId('gid'),
           label: '互斥组',
           options: [
-            { key: 'opt_a', label: '选项 A' },
-            { key: 'opt_b', label: '选项 B' },
+            { key: 'opt_a', label: '选项 A', description: '' },
+            { key: 'opt_b', label: '选项 B', description: '' },
           ],
         },
       };
@@ -465,11 +476,10 @@ export function createNode(
         type: 'group_gate',
         position,
         config: {
-          gate_id: genNodeId('gid'),
           label: '多选组',
           options: [
-            { key: 'opt_a', label: '选项 A' },
-            { key: 'opt_b', label: '选项 B' },
+            { key: 'opt_a', label: '选项 A', description: '' },
+            { key: 'opt_b', label: '选项 B', description: '' },
           ],
         },
       };
@@ -479,6 +489,13 @@ export function createNode(
         type: 'mode_switch',
         position,
         config: { label: '记忆模式分支' },
+      };
+    case 'role_switch':
+      return {
+        id: genNodeId('role'),
+        type: 'role_switch',
+        position,
+        config: { label: '角色模式分支' },
       };
     case 'sampling_params':
       return {
