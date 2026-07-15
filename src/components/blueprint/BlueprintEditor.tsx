@@ -320,11 +320,29 @@ function buildBlueprintUpdatePayload(
  * migration save and the user-driven save produce byte-identical payloads.
  */
 function serializeBlueprintGraph(graph: BlueprintGraph): string {
-  return JSON.stringify({
-    version: 2,
-    nodes: graph.nodes,
-    edges: graph.edges,
-  } satisfies BlueprintGraph);
+  // Rust serde `#[serde(tag = "type", content = "config")]` serializes unit
+  // variants (Start/End) WITHOUT a `config` field — `{"type":"start"}`. The
+  // in-memory TypeScript representation uses `config: {}` as a placeholder
+  // for type narrowing, but the serialized JSON must omit it to match
+  // backend deserialization expectations.
+  const nodes = graph.nodes.map((node) => {
+    if (node.type === 'start' || node.type === 'end') {
+      return { type: node.type, id: node.id, position: node.position };
+    }
+    return node;
+  });
+  return JSON.stringify({ version: 2, nodes, edges: graph.edges });
+}
+
+/// Ensure Start/End nodes have an in-memory `config: {}` placeholder after
+/// loading from DB (the serialized JSON omits it per Rust serde convention).
+function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
+  return nodes.map((n) => {
+    if ((n.type === 'start' || n.type === 'end') && n.config === undefined) {
+      return { ...n, config: {} } as BlueprintNode;
+    }
+    return n;
+  });
 }
 
 // ─── Component ───
@@ -369,13 +387,12 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
             throw new Error('blueprint_graph JSON 结构无效（version/nodes/edges 缺失）');
           }
+          // Normalize Start/End nodes: the serialized JSON omits `config`
+          // per Rust serde convention; add `config: {}` back in memory.
+          const normalizedNodes = normalizeLoadedNodes(parsed.nodes);
           setGraph(produce(() => {
-            // Reassign via produce so the store tracks the new arrays.
-            // We cannot reassign the top-level store object directly; instead
-            // splice+push to keep the same store identity.
-            graph.nodes.splice(0, graph.nodes.length, ...parsed.nodes);
+            graph.nodes.splice(0, graph.nodes.length, ...normalizedNodes);
             graph.edges.splice(0, graph.edges.length, ...parsed.edges);
-            // version is a literal field; assign directly.
             (graph as BlueprintGraph).version = 2;
           }));
         } catch (e) {
@@ -386,41 +403,63 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           // so the user can still see the canvas and re-author the graph.
         }
       } else {
-        // Legacy preset — migrate.
-        const legacy = buildLegacyPresetForMigration(detail);
-        const result = migrateToBlueprint(legacy);
-        if (result.ok) {
+        // No blueprint graph yet. Distinguish between:
+        // - Brand-new empty preset (no blocks, no semantic groups, no schema)
+        //   → use the default empty graph, no migration needed.
+        // - Legacy preset with content but no graph
+        //   → run migrateToBlueprint and persist the result.
+        const hasLegacyContent =
+          detail.blocks.length > 0 ||
+          detail.semanticGroups.length > 0 ||
+          (detail.preset.structuredOutputSchema != null &&
+            detail.preset.structuredOutputSchema.trim() !== '');
+
+        if (!hasLegacyContent) {
+          // Brand-new empty preset — use default Start→End graph directly.
+          const empty = createEmptyGraph();
           setGraph(produce(() => {
-            graph.nodes.splice(0, graph.nodes.length, ...result.graph.nodes);
-            graph.edges.splice(0, graph.edges.length, ...result.graph.edges);
-            (graph as BlueprintGraph).version = 2;
-          }));
-          showToast('旧预设已自动迁移为蓝图，正在保存…', 'info');
-          try {
-            const json = serializeBlueprintGraph(graph);
-            const payload = buildBlueprintUpdatePayload(detail, json);
-            const updated = await presetsUpdate(payload);
-            setPresetDetail(updated);
-            setDirty(false);
-            showToast('蓝图迁移结果已保存', 'success');
-          } catch (saveErr) {
-            const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
-            showToast(`迁移结果保存失败：${msg}`, 'error');
-            setError(`迁移结果保存失败：${msg}`);
-            setDirty(true);
-          }
-        } else {
-          // Migration failed — per spec, fall back to an empty graph and
-          // surface the error (C2 zero-fallback).
-          setError(`旧预设迁移失败：${result.error}`);
-          showToast(`旧预设迁移失败：${result.error}`, 'error');
-          setGraph(produce(() => {
-            const empty = createEmptyGraph();
             graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
             graph.edges.splice(0, graph.edges.length, ...empty.edges);
             (graph as BlueprintGraph).version = 2;
           }));
           setDirty(false);
+        } else {
+          // Legacy preset — migrate.
+          const legacy = buildLegacyPresetForMigration(detail);
+          const result = migrateToBlueprint(legacy);
+          if (result.ok) {
+            setGraph(produce(() => {
+              graph.nodes.splice(0, graph.nodes.length, ...result.graph.nodes);
+              graph.edges.splice(0, graph.edges.length, ...result.graph.edges);
+              (graph as BlueprintGraph).version = 2;
+            }));
+            showToast('旧预设已自动迁移为蓝图，正在保存…', 'info');
+            try {
+              const json = serializeBlueprintGraph(graph);
+              const payload = buildBlueprintUpdatePayload(detail, json);
+              const updated = await presetsUpdate(payload);
+              setPresetDetail(updated);
+              setDirty(false);
+              showToast('蓝图迁移结果已保存', 'success');
+            } catch (saveErr) {
+              const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
+              showToast(`迁移结果保存失败：${msg}`, 'error');
+              setError(`迁移结果保存失败：${msg}`);
+              setDirty(true);
+            }
+          } else {
+            // Migration failed — per spec, fall back to an empty graph and
+            // surface the error (C2 zero-fallback).
+            setError(`旧预设迁移失败：${result.error}`);
+            showToast(`旧预设迁移失败：${result.error}`, 'error');
+            setGraph(produce(() => {
+              const empty = createEmptyGraph();
+              graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
+              graph.edges.splice(0, graph.edges.length, ...empty.edges);
+              (graph as BlueprintGraph).version = 2;
+            }));
+            setDirty(false);
+          }
         }
       }
     } catch (e) {
