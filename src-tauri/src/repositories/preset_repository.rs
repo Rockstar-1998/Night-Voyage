@@ -442,7 +442,7 @@ impl PresetRepository {
                 structured_output_schema = ?,
                 structured_output_display = ?,
                 context_included_keys = ?,
-                blueprint_graph = COALESCE(?, blueprint_graph),
+                blueprint_graph = ?,
                 updated_at = ?
              WHERE id = ?",
         )

@@ -307,9 +307,7 @@ export type ConnectionRejectReason =
   | 'self_loop'
   | 'wrong_direction'
   | 'cycle'
-  | 'duplicate'
-  | 'locked_source'
-  | 'locked_target';
+  | 'duplicate';
 
 export interface ConnectionValidationResult {
   ok: boolean;
@@ -334,12 +332,6 @@ export function validateConnection(
   if (sourceNode.id === targetNode.id) {
     return { ok: false, reason: 'self_loop' };
   }
-  if (isNodeLocked(sourceNode)) {
-    return { ok: false, reason: 'locked_source' };
-  }
-  if (isNodeLocked(targetNode)) {
-    return { ok: false, reason: 'locked_target' };
-  }
   const dup = graph.edges.some(
     (e) =>
       e.source === sourceNode.id &&
@@ -361,8 +353,6 @@ export const CONNECTION_REJECT_MESSAGES: Record<ConnectionRejectReason, string> 
   wrong_direction: '方向错误：连线必须从 output 端口指向 input 端口',
   cycle: '禁止环路：该连线会形成环',
   duplicate: '连线已存在：相同起终点的连线已经画过',
-  locked_source: '起点已锁定：锁定节点的端口不能作为连线起点',
-  locked_target: '终点已锁定：锁定节点的端口不能作为连线终点',
 };
 
 // ─── 连线端点 ───

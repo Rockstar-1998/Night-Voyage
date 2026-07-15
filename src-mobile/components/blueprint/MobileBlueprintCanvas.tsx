@@ -295,10 +295,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
       return;
     }
 
-    if (isNodeLocked(node)) {
-      showToast('节点已锁定，不能从该节点连线', 'warning');
-      return;
-    }
+    // is_locked 只限制内容编辑，不限制连线（与 PC 端 nodeLayout 保持一致）。
 
     const timer = window.setTimeout(() => {
       const cur = interaction();
@@ -795,7 +792,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
                       stroke-width={22}
                       stroke-linecap="round"
                       style={{
-                        cursor: locked ? 'not-allowed' : 'pointer',
+                        cursor: 'pointer',
                       }}
                       onPointerDown={(e) => handleEdgePointerDown(e, edge)}
                     />

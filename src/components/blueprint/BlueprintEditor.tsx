@@ -16,9 +16,9 @@
  *   that notify intent via callbacks.
  * - Save: `JSON.stringify(graph)` → `presetsUpdate({ id, blueprintGraph, ... })`.
  *   The full preset detail is re-fetched before save so the update payload
- *   carries every required field (name / category / etc.). The backend uses
- *   `COALESCE(?, blueprint_graph)` so omitting the field would preserve the
- *   old value; we always send the new graph explicitly.
+ *   carries every required field (name / category / etc.). The backend
+ *   `presets_update` is a direct full-row assignment (no `COALESCE`), so
+ *   every column must be echoed back to avoid overwriting with NULL.
  *
  * Constraints:
  * - C1 Frontend Render-Only: the editor only renders + calls Tauri commands
@@ -32,7 +32,7 @@
  *   editor (Task 13) is a separate implementation under `src-mobile/`.
  */
 
-import { Component, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { Component, Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { ArrowLeft, Eye, Save } from '../../lib/icons';
 import {
@@ -185,11 +185,11 @@ function createEmptyGraph(): BlueprintGraph {
 /**
  * Build a full-row update payload from the editor's current `PresetDetail`.
  *
- * `presets_update` is a full-row patch (no `COALESCE` semantics) so the
+ * `presets_update` is a full-row direct assignment (no `COALESCE`) so the
  * Blueprint editor must echo back every column — even ones the editor
- * did not touch — to avoid overwriting them with `NULL` / `""`. Field-
- * level numeric sentinel values (`max_output_tokens = 0`, `top_k = 0`)
- * are normalized server-side in `preset_validator` to `NULL`, so legacy
+ * did not touch — to avoid overwriting them with `NULL`. Field-level
+ * numeric sentinel values (`max_output_tokens = 0`, `top_k = 0`) are
+ * normalized server-side in `preset_validator` to `NULL`, so legacy
  * presets with the old zero-sentinel round-trip cleanly.
  */
 function buildBlueprintUpdatePayload(
@@ -256,6 +256,7 @@ function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
 export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [graph, setGraph] = createStore<BlueprintGraph>(createEmptyGraph());
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = createSignal<string | null>(null);
   const [hiddenNodeIds, setHiddenNodeIds] = createSignal<Set<string>>(new Set());
   const [viewTransform, setViewTransform] = createStore<ViewTransform>({
     offsetX: 80,
@@ -269,6 +270,30 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
 
   let canvasContainerEl: HTMLDivElement | undefined;
+
+  // Delete key: delete the selected edge (if any). Node deletion is handled
+  // in NodeConfigPanel's delete button (is_locked aware).
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+    const edgeId = selectedEdgeId();
+    if (!edgeId) return;
+    // Avoid hijacking Delete when the user is typing in an input/textarea.
+    const target = e.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return;
+    }
+    e.preventDefault();
+    handleEdgeDelete(edgeId);
+    setSelectedEdgeId(null);
+  };
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+  });
+
+  onCleanup(() => {
+    window.removeEventListener('keydown', handleKeyDown);
+  });
 
   const selectedNode = createMemo<BlueprintNode | null>(() => {
     const id = selectedNodeId();
@@ -553,8 +578,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             graph={graph}
             viewTransform={viewTransform}
             selectedNodeId={selectedNodeId()}
+            selectedEdgeId={selectedEdgeId()}
             hiddenNodeIds={hiddenNodeIds()}
             onNodeSelect={setSelectedNodeId}
+            onEdgeSelect={setSelectedEdgeId}
             onNodeMove={handleNodeMove}
             onEdgeCreate={handleEdgeCreate}
             onEdgeDelete={handleEdgeDelete}

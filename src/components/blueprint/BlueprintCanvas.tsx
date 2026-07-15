@@ -69,9 +69,12 @@ export interface BlueprintCanvasProps {
   /** View transform owned by the parent (survives canvas unmount). */
   viewTransform: ViewTransform;
   selectedNodeId: string | null;
+  /** Currently selected edge ID (for Delete-key deletion). */
+  selectedEdgeId: string | null;
   /** Node IDs in this set are not rendered (but still exist in the graph). */
   hiddenNodeIds: Set<string>;
   onNodeSelect: (nodeId: string | null) => void;
+  onEdgeSelect: (edgeId: string | null) => void;
   onNodeMove: (nodeId: string, position: Position) => void;
   onEdgeCreate: (
     source: string,
@@ -149,6 +152,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     if (e.button !== 0) return;
     e.preventDefault();
     props.onNodeSelect(null);
+    props.onEdgeSelect(null);
     const v = view();
     setInteraction({
       kind: 'pan',
@@ -168,6 +172,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     e.stopPropagation();
     e.preventDefault();
     props.onNodeSelect(node.id);
+    props.onEdgeSelect(null);
     if (isNodeLocked(node)) return;
     setInteraction({
       kind: 'node-drag',
@@ -191,10 +196,8 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
-    if (isNodeLocked(node)) {
-      showToast('节点已锁定，不能从该节点连线', 'warning');
-      return;
-    }
+    // is_locked only restricts content editing, not topology (connections).
+    // Locked nodes can still be connection sources/targets.
     const pos = screenToGraph(e.clientX, e.clientY);
     setInteraction({
       kind: 'connect',
@@ -309,11 +312,9 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
-    if (isEdgeLocked(props.graph, edge)) {
-      showToast('锁定节点的连线不能删除', 'warning');
-      return;
-    }
-    props.onEdgeDelete(edge.id);
+    // Click selects the edge; Delete key removes it (see BlueprintEditor
+    // keydown handler). Direct click-delete was removed to support selection.
+    props.onEdgeSelect(edge.id);
   };
 
   // ─── Eye toggle ───
@@ -389,14 +390,22 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                 const endpoints = getEdgeEndpoints(props.graph, edge);
                 if (!endpoints) return null;
                 const locked = isEdgeLocked(props.graph, edge);
+                const selected = props.selectedEdgeId === edge.id;
                 const d = bezierPath(endpoints.from, endpoints.to);
+                // Selected edges render with a brighter accent + thicker stroke.
+                const strokeColor = selected
+                  ? 'rgba(96,165,250,0.95)'
+                  : locked
+                    ? 'rgba(245,158,11,0.85)'
+                    : 'rgba(245,245,247,0.55)';
+                const strokeWidth = selected ? 2.5 : 1.5;
                 return (
                   <g>
                     <path
                       d={d}
                       fill="none"
-                      stroke={locked ? 'rgba(245,158,11,0.85)' : 'rgba(245,245,247,0.55)'}
-                      stroke-width={1.5}
+                      stroke={strokeColor}
+                      stroke-width={strokeWidth}
                       pointer-events="none"
                     />
                     <path
@@ -406,7 +415,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                       stroke-width={14}
                       stroke-linecap="round"
                       style={{
-                        cursor: locked ? 'not-allowed' : 'pointer',
+                        cursor: 'pointer',
                       }}
                       onPointerDown={(e) => handleEdgePointerDown(e, edge)}
                     />
