@@ -43,6 +43,8 @@ import { MutexGateNode } from './nodes/MutexGateNode';
 import { GroupGateNode } from './nodes/GroupGateNode';
 import { ModeSwitchNode } from './nodes/ModeSwitchNode';
 import { RoleSwitchNode } from './nodes/RoleSwitchNode';
+import { ConstantNode } from './nodes/ConstantNode';
+import { BranchNode } from './nodes/BranchNode';
 import { SamplingParamsNode } from './nodes/SamplingParamsNode';
 
 // ─── Shared prop type for every per-type node config component ───
@@ -72,6 +74,8 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   group_gate: 'Group Gate',
   mode_switch: 'Mode Switch',
   role_switch: 'Role Switch',
+  constant: 'Constant',
+  branch: 'Branch',
   sampling_params: 'Sampling Params',
 };
 
@@ -171,6 +175,32 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
             onUpdate={(updates) =>
               props.onUpdate(node.id, {
                 type: 'role_switch',
+                config: { ...node.config, ...updates },
+              })
+            }
+          />
+        );
+      case 'constant':
+        return (
+          <ConstantNode
+            config={node.config}
+            isLocked={locked}
+            onUpdate={(updates) =>
+              props.onUpdate(node.id, {
+                type: 'constant',
+                config: { ...node.config, ...updates },
+              })
+            }
+          />
+        );
+      case 'branch':
+        return (
+          <BranchNode
+            config={node.config}
+            isLocked={locked}
+            onUpdate={(updates) =>
+              props.onUpdate(node.id, {
+                type: 'branch',
                 config: { ...node.config, ...updates },
               })
             }

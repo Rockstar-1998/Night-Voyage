@@ -39,8 +39,10 @@ const NODE_LABELS: Record<NodeType, string> = {
   mutex_gate: 'Mutex Gate（互斥单选）',
   group_gate: 'Group Gate（普通多选）',
   mode_switch: 'Mode Switch（三模式分支）',
-  role_switch: 'Role Switch（角色模式分支）',
+  role_switch: 'Role Switch（已废弃，建议用常量+分支替代）',
   sampling_params: 'Sampling Params（采样参数）',
+  constant: 'Constant（常量，读取会话属性）',
+  branch: 'Branch（分支，按值走出口）',
 };
 
 const NODE_DESCRIPTIONS: Record<NodeType, string> = {
@@ -51,9 +53,17 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   mutex_gate: '互斥选项组，运行时单选一个分支',
   group_gate: '普通选项组，运行时多选分支',
   mode_switch: '按会话记忆模式三分支（legacy/mem0/stateless）',
-  role_switch: '按会话角色模式分支（single/online），与 ModeSwitch 串联',
+  role_switch: '已废弃：被常量+分支替代，旧图仍可执行',
   sampling_params: '采样参数（temperature/max_tokens 等）',
+  constant: '读取会话属性（如 conversation_type）输出值',
+  branch: '接收上游常量值，按 cases 匹配走对应出口',
 };
+
+/// 选择器中展示的节点类型列表：移除 role_switch（已废弃），
+/// 旧图中的 RoleSwitch 节点仍可加载和执行，但不允许新建。
+const SELECTABLE_NODE_TYPES: NodeType[] = NODE_TYPES.filter(
+  (t) => t !== 'role_switch',
+);
 
 export const NodeSelector: Component<NodeSelectorProps> = (props) => {
   const [open, setOpen] = createSignal(false);
@@ -100,7 +110,7 @@ export const NodeSelector: Component<NodeSelectorProps> = (props) => {
           role="listbox"
           class="absolute z-50 mt-2 w-72 max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-night-water/95 backdrop-blur-xl shadow-2xl custom-scrollbar"
         >
-          <For each={NODE_TYPES}>
+          <For each={SELECTABLE_NODE_TYPES}>
             {(type) => (
               <li>
                 <button

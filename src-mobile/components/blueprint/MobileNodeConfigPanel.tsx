@@ -131,7 +131,9 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
       case 'mutex_gate': return 'MutexGate（互斥组 / 单选）';
       case 'group_gate': return 'GroupGate（多选组）';
       case 'mode_switch': return 'ModeSwitch（三模式分支）';
-      case 'role_switch': return 'RoleSwitch（角色模式分支）';
+      case 'role_switch': return 'RoleSwitch（已废弃）';
+      case 'constant': return 'Constant（常量）';
+      case 'branch': return 'Branch（分支）';
       case 'sampling_params': return 'SamplingParams（采样参数）';
     }
   };

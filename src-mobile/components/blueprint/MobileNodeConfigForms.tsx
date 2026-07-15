@@ -15,6 +15,9 @@
 import { Component, For, Show, createSignal } from 'solid-js';
 import type {
   BlueprintNode,
+  BranchCase,
+  BranchConfig,
+  ConstantConfig,
   EndConfig,
   GateOption,
   GroupGateConfig,
@@ -430,13 +433,16 @@ const ModeSwitchForm: Component<{
   </div>
 );
 
-// ─── RoleSwitch 节点表单 ───
+// ─── RoleSwitch 节点表单（已废弃，仍可编辑旧图）───
 
 const RoleSwitchForm: Component<{
   config: RoleSwitchConfig;
   onChange: (c: RoleSwitchConfig) => void;
 }> = (props) => (
   <div class="flex flex-col gap-4 px-4">
+    <div class="px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[12px] text-amber-300/80 leading-relaxed">
+      RoleSwitch 已废弃，建议迁移为 Constant + Branch 节点。旧图仍可执行。
+    </div>
     <div>
       <FieldLabel label="显示名 (label)" />
       <TextInput
@@ -450,6 +456,138 @@ const RoleSwitchForm: Component<{
     </div>
   </div>
 );
+
+// ─── Constant 节点表单（spec 里程碑 C）───
+
+const ConstantForm: Component<{
+  config: ConstantConfig;
+  onChange: (c: ConstantConfig) => void;
+}> = (props) => (
+  <div class="flex flex-col gap-4 px-4">
+    <div>
+      <FieldLabel label="显示名 (label)" />
+      <TextInput
+        value={props.config.label}
+        placeholder="如 会话角色"
+        onInput={(v) => props.onChange({ ...props.config, label: v })}
+      />
+    </div>
+    <div>
+      <FieldLabel label="source（会话属性键名）" />
+      <select
+        class="w-full h-12 px-3 rounded-xl bg-night-deep/80 border border-white/10 text-sm text-mist-solid focus:outline-none focus:border-accent/40"
+        value={props.config.source}
+        onChange={(e) => props.onChange({ ...props.config, source: e.currentTarget.value })}
+      >
+        <option value="conversation_type">conversation_type（single / online）</option>
+        <option value="memory_mode">memory_mode（stateless / legacy / mem0）</option>
+      </select>
+    </div>
+    <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
+      运行时读取会话对应属性值，输出到 out 端口供下游 Branch 节点按值匹配走分支。
+    </div>
+  </div>
+);
+
+// ─── Branch 节点表单（spec 里程碑 C）───
+
+const BranchForm: Component<{
+  config: BranchConfig;
+  onChange: (c: BranchConfig) => void;
+}> = (props) => {
+  const handleAddCase = () => {
+    const nextIndex = props.config.cases.length;
+    const newCase: BranchCase = {
+      match_value: '',
+      port: `out_${nextIndex + 1}`,
+    };
+    props.onChange({ ...props.config, cases: [...props.config.cases, newCase] });
+  };
+
+  const handleRemoveCase = (index: number) => {
+    props.onChange({ ...props.config, cases: props.config.cases.filter((_, i) => i !== index) });
+  };
+
+  const handleUpdateCase = (index: number, updates: Partial<BranchCase>) => {
+    const next = props.config.cases.map((c, i) =>
+      i === index ? { ...c, ...updates } : c,
+    );
+    props.onChange({ ...props.config, cases: next });
+  };
+
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div>
+        <FieldLabel label="显示名 (label)" />
+        <TextInput
+          value={props.config.label}
+          placeholder="如 角色分支"
+          onInput={(v) => props.onChange({ ...props.config, label: v })}
+        />
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <FieldLabel label="匹配规则（按顺序匹配）" />
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-[12px] text-accent px-2 h-8 rounded-lg bg-accent/10 active:bg-accent/20"
+            onClick={handleAddCase}
+          >
+            + 添加
+          </button>
+        </div>
+        <For each={props.config.cases}>
+          {(caseItem, index) => (
+            <div class="flex items-center gap-2 mb-2 p-2 rounded-xl bg-night-deep/40 border border-white/5">
+              <input
+                type="text"
+                class="flex-1 min-w-0 h-10 px-2 rounded-lg bg-night-deep/80 border border-white/10 text-xs text-mist-solid focus:outline-none focus:border-accent/40"
+                placeholder="匹配值 (如 single)"
+                value={caseItem.match_value}
+                onInput={(e) => handleUpdateCase(index(), { match_value: e.currentTarget.value })}
+              />
+              <span class="text-mist-solid/40 text-xs">→</span>
+              <input
+                type="text"
+                class="flex-1 min-w-0 h-10 px-2 rounded-lg bg-night-deep/80 border border-white/10 text-xs text-mist-solid focus:outline-none focus:border-accent/40"
+                placeholder="出口端口 (如 out_single)"
+                value={caseItem.port}
+                onInput={(e) => handleUpdateCase(index(), { port: e.currentTarget.value })}
+              />
+              <button
+                type="button"
+                class="text-mist-solid/40 active:text-red-400 w-8 h-8 flex items-center justify-center"
+                onClick={() => handleRemoveCase(index())}
+                aria-label="删除规则"
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </For>
+        <Show when={props.config.cases.length === 0}>
+          <p class="text-[12px] text-mist-solid/40 leading-5 py-2">
+            尚无匹配规则。点击"添加"创建一条。
+          </p>
+        </Show>
+      </div>
+
+      <div>
+        <FieldLabel label="default_port（默认出口端口名）" />
+        <TextInput
+          value={props.config.default_port}
+          placeholder="如 out_default"
+          onInput={(v) => props.onChange({ ...props.config, default_port: v })}
+        />
+      </div>
+
+      <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
+        每条规则的出口端口必须连一条出边；默认出口也必须有出边。Branch 的入边必须来自 Constant 节点。
+      </div>
+    </div>
+  );
+};
 
 // ─── SamplingParams 节点表单 ───
 
@@ -582,6 +720,20 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
           onChange={(c: RoleSwitchConfig) => props.onConfigChange({ type: 'role_switch', config: c })}
         />
       );
+    case 'constant':
+      return (
+        <ConstantForm
+          config={node.config}
+          onChange={(c: ConstantConfig) => props.onConfigChange({ type: 'constant', config: c })}
+        />
+      );
+    case 'branch':
+      return (
+        <BranchForm
+          config={node.config}
+          onChange={(c: BranchConfig) => props.onConfigChange({ type: 'branch', config: c })}
+        />
+      );
     case 'sampling_params':
       return (
         <SamplingParamsForm
@@ -656,6 +808,26 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return {
         type: 'role_switch',
         config: { label: '角色模式分支' },
+      };
+    case 'constant':
+      return {
+        type: 'constant',
+        config: {
+          label: '会话角色',
+          source: 'conversation_type',
+        },
+      };
+    case 'branch':
+      return {
+        type: 'branch',
+        config: {
+          label: '角色分支',
+          cases: [
+            { match_value: 'single', port: 'out_single' },
+            { match_value: 'online', port: 'out_online' },
+          ],
+          default_port: 'out_single',
+        },
       };
     case 'sampling_params':
       return {

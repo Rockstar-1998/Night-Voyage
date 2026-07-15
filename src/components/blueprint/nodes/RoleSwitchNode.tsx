@@ -1,5 +1,5 @@
 /**
- * RoleSwitch node config editor.
+ * RoleSwitch node config editor (DEPRECATED).
  *
  * Edits a RoleSwitchConfig: just `label`. The two outlet ports
  * (out_single / out_online) are fixed by the node type and cannot be
@@ -10,6 +10,10 @@
  * memory mode (legacy/mem0/stateless), RoleSwitch branches on conversation
  * type (single/online). The two nodes are composed in-graph via serial
  * connection to realise the 6 permutation paths.
+ *
+ * 已废弃：被 Constant + Branch 节点替代。保留此变体仅为向后兼容，
+ * 旧图仍可加载执行；新图应使用 Constant（读取会话属性）+ Branch（按值分支）。
+ * 已从 NodeSelector 可选列表移除，仅当选中已有 RoleSwitch 节点时才显示此表单。
  *
  * Constraints:
  * - C1 Frontend Render-Only: edits forwarded via onUpdate, no backend calls.
@@ -35,6 +39,10 @@ export const RoleSwitchNode: Component<NodeConfigComponentProps<RoleSwitchConfig
 
   return (
     <div class="space-y-4">
+      <div class="px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/80 leading-relaxed">
+        RoleSwitch 已废弃，建议迁移为 Constant + Branch 节点。旧图仍可执行。
+      </div>
+
       <div class="space-y-1">
         <label class={LABEL_CLASS}>label（显示名）</label>
         <input

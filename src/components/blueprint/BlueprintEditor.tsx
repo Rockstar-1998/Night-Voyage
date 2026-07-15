@@ -123,6 +123,26 @@ function defaultConfigForType(type: NodeType): NodeConfig {
         type: 'role_switch',
         config: { label: '角色模式分支' },
       };
+    case 'constant':
+      return {
+        type: 'constant',
+        config: {
+          label: '会话角色',
+          source: 'conversation_type',
+        },
+      };
+    case 'branch':
+      return {
+        type: 'branch',
+        config: {
+          label: '角色分支',
+          cases: [
+            { match_value: 'single', port: 'out_single' },
+            { match_value: 'online', port: 'out_online' },
+          ],
+          default_port: 'out_single',
+        },
+      };
     case 'sampling_params':
       return {
         type: 'sampling_params',

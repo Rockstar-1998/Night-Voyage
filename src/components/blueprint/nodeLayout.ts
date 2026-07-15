@@ -81,6 +81,8 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   mode_switch: '#06b6d4',
   role_switch: '#8b5cf6',
   sampling_params: '#6b7280',
+  constant: '#14b8a6',
+  branch: '#d946ef',
 };
 
 /**
@@ -119,6 +121,17 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
         { port: 'out_single', label: '单人' },
         { port: 'out_online', label: '多人' },
       ];
+    case 'constant':
+      return [{ port: 'out', label: null }];
+    case 'branch':
+      // 每个 case 的 port + default_port
+      return [
+        ...node.config.cases.map((c) => ({
+          port: c.port,
+          label: c.match_value,
+        })),
+        { port: node.config.default_port, label: '默认' },
+      ];
     case 'sampling_params':
       return [{ port: 'out', label: null }];
   }
@@ -139,6 +152,8 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'group_gate':
     case 'mode_switch':
     case 'role_switch':
+    case 'constant':
+    case 'branch':
     case 'sampling_params':
       return [{ port: 'in', label: null }];
   }
@@ -162,6 +177,8 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'group_gate':
     case 'mode_switch':
     case 'role_switch':
+    case 'constant':
+    case 'branch':
       return false;
   }
 }
@@ -184,6 +201,10 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.label || 'Mode Switch';
     case 'role_switch':
       return node.config.label || 'Role Switch';
+    case 'constant':
+      return node.config.label || 'Constant';
+    case 'branch':
+      return node.config.label || 'Branch';
     case 'sampling_params':
       return 'Sampling Params';
   }
@@ -202,6 +223,10 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return '3 branches';
     case 'role_switch':
       return '2 branches';
+    case 'constant':
+      return node.config.source;
+    case 'branch':
+      return `${node.config.cases.length} cases`;
     case 'start':
     case 'end':
     case 'sampling_params':

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 序列化为 snake_case 字符串，与蓝图 JSON 中节点的 `type` 字段值匹配
 /// （`start` / `end` / `prompt` / `schema_field` / `mutex_gate` / `group_gate`
-/// / `mode_switch` / `role_switch` / `sampling_params`）。
+/// / `mode_switch` / `role_switch` / `sampling_params` / `constant` / `branch`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
@@ -19,6 +19,10 @@ pub enum NodeType {
     ModeSwitch,
     RoleSwitch,
     SamplingParams,
+    /// 常量节点：运行时读取会话属性，输出值供下游 BranchNode 回溯查询。
+    Constant,
+    /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
+    Branch,
 }
 
 /// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
@@ -39,6 +43,10 @@ pub enum NodeConfig {
     ModeSwitch(ModeSwitchConfig),
     RoleSwitch(RoleSwitchConfig),
     SamplingParams(SamplingParamsConfig),
+    /// 常量节点：运行时读取会话属性，输出值供下游 BranchNode 回溯查询。
+    Constant(ConstantConfig),
+    /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
+    Branch(BranchConfig),
 }
 
 impl NodeConfig {
@@ -54,6 +62,8 @@ impl NodeConfig {
             Self::ModeSwitch(_) => NodeType::ModeSwitch,
             Self::RoleSwitch(_) => NodeType::RoleSwitch,
             Self::SamplingParams(_) => NodeType::SamplingParams,
+            Self::Constant(_) => NodeType::Constant,
+            Self::Branch(_) => NodeType::Branch,
         }
     }
 }
@@ -192,9 +202,49 @@ pub struct ModeSwitchConfig {
 /// 与 [`ModeSwitchConfig`] 对称——把"角色模式轴"独立成节点，与"记忆模式轴"
 /// 在图中串联使用，避免单节点端口膨胀。出口端口名固定：`out_single` / `out_online`
 /// （未来扩展 `out_agent`）。
+///
+/// **已废弃**：被 [`ConstantConfig`] + [`BranchConfig`] 替代。保留变体以向后兼容
+/// 旧图，图执行器仍能处理 RoleSwitch 节点。前端节点选择器已移除 RoleSwitch 选项。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleSwitchConfig {
     pub label: String,
+}
+
+/// Constant 节点配置，运行时读取会话属性，输出值供下游 [`BranchConfig`] 回溯查询。
+///
+/// `source` 指定会话属性键名，当前支持：
+/// - `"conversation_type"` → 输出 `context.conversation_type`（`"single"` / `"online"`）
+/// - `"memory_mode"` → 输出 `context.memory_mode`（`"stateless"` / `"legacy"` / `"mem0"`）
+///
+/// 出口端口：`out`。值不通过运行时管道传递，而是由下游 BranchNode 通过入边回溯
+/// 读取 ConstantNode 的 `source` 配置，直接从 context 取值（详见 spec §3.1）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstantConfig {
+    pub label: String,
+    pub source: String,
+}
+
+/// Branch 节点的单条匹配规则。
+///
+/// 运行时按 `cases` 顺序匹配，第一个 `match_value` 与上游 ConstantNode 输出值
+/// 相等的规则生效，走其 `port` 出口。所有 case 都不匹配时走 `default_port`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchCase {
+    pub match_value: String,
+    pub port: String,
+}
+
+/// Branch 节点配置，接收上游 [`ConstantConfig`] 的值，按 `cases` 匹配走对应出口。
+///
+/// 入口端口：`in`（必须来自 ConstantNode）。
+/// 出口端口：每个 case 的 `port` + `default_port`，每个出口都必须有出边。
+///
+/// `default_port` 必填，避免无匹配时图执行器无路可走（C2 零回退：不静默跳过）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchConfig {
+    pub label: String,
+    pub cases: Vec<BranchCase>,
+    pub default_port: String,
 }
 
 /// SamplingParams 节点配置，产出 [`CompiledSamplingParams`]。

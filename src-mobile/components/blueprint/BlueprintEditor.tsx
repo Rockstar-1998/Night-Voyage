@@ -58,13 +58,15 @@ export interface BlueprintEditorProps {
 
 // ─── 节点类型选择项 ───
 
+// role_switch 已废弃，从可选列表移除（旧图仍可加载执行）
 const ADDABLE_NODE_TYPES: Array<{ type: NodeType; label: string; desc: string }> = [
   { type: 'prompt', label: 'Prompt', desc: '提示词片段 → block' },
   { type: 'schema_field', label: 'SchemaField', desc: 'schema 字段，可选 db_mapping' },
   { type: 'mutex_gate', label: 'MutexGate', desc: '互斥组，单选' },
   { type: 'group_gate', label: 'GroupGate', desc: '普通组，多选' },
   { type: 'mode_switch', label: 'ModeSwitch', desc: '三模式分支' },
-  { type: 'role_switch', label: 'RoleSwitch', desc: '角色模式分支（single/online）' },
+  { type: 'constant', label: 'Constant', desc: '读取会话属性（如 conversation_type）输出值' },
+  { type: 'branch', label: 'Branch', desc: '接收上游常量值，按 cases 匹配走对应出口' },
   { type: 'sampling_params', label: 'SamplingParams', desc: '采样参数' },
   { type: 'start', label: 'Start', desc: '链表起点（每图唯一）' },
   { type: 'end', label: 'End', desc: '链表终点（每图唯一）' },

@@ -86,6 +86,8 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   mode_switch: '#06b6d4',
   role_switch: '#8b5cf6',
   sampling_params: '#6b7280',
+  constant: '#14b8a6',
+  branch: '#d946ef',
 };
 
 export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
@@ -119,6 +121,16 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
         { port: 'out_single', label: '单人' },
         { port: 'out_online', label: '多人' },
       ];
+    case 'constant':
+      return [{ port: 'out', label: null }];
+    case 'branch':
+      return [
+        ...node.config.cases.map((c) => ({
+          port: c.port,
+          label: c.match_value,
+        })),
+        { port: node.config.default_port, label: '默认' },
+      ];
     case 'sampling_params':
       return [{ port: 'out', label: null }];
   }
@@ -135,6 +147,8 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'group_gate':
     case 'mode_switch':
     case 'role_switch':
+    case 'constant':
+    case 'branch':
     case 'sampling_params':
       return [{ port: 'in', label: null }];
   }
@@ -154,6 +168,8 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'group_gate':
     case 'mode_switch':
     case 'role_switch':
+    case 'constant':
+    case 'branch':
       return false;
   }
 }
@@ -176,6 +192,10 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.label || 'Mode Switch';
     case 'role_switch':
       return node.config.label || 'Role Switch';
+    case 'constant':
+      return node.config.label || 'Constant';
+    case 'branch':
+      return node.config.label || 'Branch';
     case 'sampling_params':
       return 'Sampling Params';
   }
@@ -194,6 +214,10 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return '3 分支';
     case 'role_switch':
       return '2 分支';
+    case 'constant':
+      return node.config.source;
+    case 'branch':
+      return `${node.config.cases.length} 规则`;
     case 'start':
     case 'end':
     case 'sampling_params':
@@ -496,6 +520,27 @@ export function createNode(
         type: 'role_switch',
         position,
         config: { label: '角色模式分支' },
+      };
+    case 'constant':
+      return {
+        id: genNodeId('const'),
+        type: 'constant',
+        position,
+        config: { label: '会话角色', source: 'conversation_type' },
+      };
+    case 'branch':
+      return {
+        id: genNodeId('branch'),
+        type: 'branch',
+        position,
+        config: {
+          label: '角色分支',
+          cases: [
+            { match_value: 'single', port: 'out_single' },
+            { match_value: 'online', port: 'out_online' },
+          ],
+          default_port: 'out_single',
+        },
       };
     case 'sampling_params':
       return {

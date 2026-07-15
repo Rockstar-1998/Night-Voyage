@@ -26,6 +26,8 @@ export const NODE_TYPES = [
   'mode_switch',
   'role_switch',
   'sampling_params',
+  'constant',
+  'branch',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -93,6 +95,23 @@ export interface RoleSwitchConfig {
   // Two outlet ports are fixed: out_single / out_online (future: out_agent)
 }
 
+export interface ConstantConfig {
+  label: string;
+  // 会话属性键名："conversation_type"（输出 single/online）| "memory_mode"
+  source: string;
+}
+
+export interface BranchCase {
+  match_value: string;
+  port: string;
+}
+
+export interface BranchConfig {
+  label: string;
+  cases: BranchCase[];
+  default_port: string;
+}
+
 export interface SamplingParamsConfig {
   temperature: number | null;
   max_tokens: number | null;
@@ -114,6 +133,8 @@ export type NodeConfig =
   | { type: 'group_gate'; config: GroupGateConfig }
   | { type: 'mode_switch'; config: ModeSwitchConfig }
   | { type: 'role_switch'; config: RoleSwitchConfig }
+  | { type: 'constant'; config: ConstantConfig }
+  | { type: 'branch'; config: BranchConfig }
   | { type: 'sampling_params'; config: SamplingParamsConfig };
 
 export type BlueprintNode = NodeConfig & {

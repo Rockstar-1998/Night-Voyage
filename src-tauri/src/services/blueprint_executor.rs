@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
     BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph, CompiledBlock,
-    CompiledSamplingParams, NodeConfig, SchemaFieldConfig,
+    CompiledSamplingParams, ConstantConfig, NodeConfig, SchemaFieldConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -52,6 +52,14 @@ pub enum BlueprintError {
     LockedNodeOffMainPath(String),
     /// Schema property construction failed.
     SchemaBuildError(String),
+    /// A Branch node has no incoming edge (must be preceded by a Constant node).
+    BranchNoIncomingEdge(String),
+    /// A Branch node's upstream is not a Constant node.
+    BranchMustFollowConstant(String),
+    /// A Constant node's `source` is not a recognized session attribute key.
+    UnknownConstantSource(String),
+    /// A Branch node is missing a required port (case port or default_port).
+    MissingBranchPort(String, String),
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -85,6 +93,18 @@ impl std::fmt::Display for BlueprintError {
                 write!(f, "locked node {id} is not on main path")
             }
             Self::SchemaBuildError(msg) => write!(f, "schema build error: {msg}"),
+            Self::BranchNoIncomingEdge(id) => {
+                write!(f, "branch node {id} has no incoming edge (must follow a constant node)")
+            }
+            Self::BranchMustFollowConstant(id) => {
+                write!(f, "branch node {id} must be preceded by a constant node")
+            }
+            Self::UnknownConstantSource(src) => {
+                write!(f, "unknown constant source: {src}")
+            }
+            Self::MissingBranchPort(node, port) => {
+                write!(f, "branch node {node} missing required port: {port}")
+            }
         }
     }
 }
@@ -231,6 +251,27 @@ fn traverse(
             let merge_node = find_merge_node(graph, node_id)?;
             traverse(graph, &merge_node, context, result, visited, path)?;
         }
+        NodeConfig::Constant(_) => {
+            // 常量节点不直接产出值传递——值由下游 BranchNode 通过入边回溯查询。
+            // 直接继续到 out 端口的下游节点（通常是 BranchNode）。
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path)?;
+        }
+        NodeConfig::Branch(cfg) => {
+            // 回溯查找上游 ConstantNode，读取 source 配置，从 context 取值
+            let source_value = resolve_constant_source(graph, node_id, context)?;
+            // 按顺序匹配 cases，第一个匹配的生效；无匹配走 default_port
+            let port = cfg
+                .cases
+                .iter()
+                .find(|c| c.match_value == source_value)
+                .map(|c| c.port.as_str())
+                .unwrap_or(&cfg.default_port);
+            let branch_target = target_of(graph, node_id, port)?;
+            traverse(graph, &branch_target, context, result, visited, path)?;
+            let merge_node = find_merge_node(graph, node_id)?;
+            traverse(graph, &merge_node, context, result, visited, path)?;
+        }
         NodeConfig::SamplingParams(cfg) => {
             merge_sampling_params(cfg, &mut result.sampling_params);
             let next = next_node_id(graph, node_id, "out")?;
@@ -326,6 +367,58 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
                         port.to_string(),
                     ));
                 }
+            }
+        }
+    }
+
+    // 7a. Constant node must have outgoing edge on "out" port
+    for node in &graph.nodes {
+        if matches!(node.config, NodeConfig::Constant(_)) {
+            let has_out = graph
+                .edges
+                .iter()
+                .any(|e| e.source == node.id && e.source_port == "out");
+            if !has_out {
+                return Err(BlueprintError::NoOutgoingEdge {
+                    node: node.id.clone(),
+                    port: "out".to_string(),
+                });
+            }
+        }
+    }
+
+    // 7b. Branch node: each case port + default_port must have outgoing edge;
+    // must have an incoming edge from a Constant node (structural check).
+    for node in &graph.nodes {
+        if let NodeConfig::Branch(cfg) = &node.config {
+            // 检查每个 case 的 port
+            for case in &cfg.cases {
+                let has_edge = graph
+                    .edges
+                    .iter()
+                    .any(|e| e.source == node.id && e.source_port == case.port);
+                if !has_edge {
+                    return Err(BlueprintError::MissingBranchPort(
+                        node.id.clone(),
+                        case.port.clone(),
+                    ));
+                }
+            }
+            // 检查 default_port
+            let has_default = graph
+                .edges
+                .iter()
+                .any(|e| e.source == node.id && e.source_port == cfg.default_port);
+            if !has_default {
+                return Err(BlueprintError::MissingBranchPort(
+                    node.id.clone(),
+                    cfg.default_port.clone(),
+                ));
+            }
+            // 检查入边存在（结构校验；上游是否为 Constant 在运行时 resolve_constant_source 再验）
+            let has_incoming = graph.edges.iter().any(|e| e.target == node.id);
+            if !has_incoming {
+                return Err(BlueprintError::BranchNoIncomingEdge(node.id.clone()));
             }
         }
     }
@@ -538,6 +631,44 @@ fn find_end_node_id(graph: &BlueprintGraph) -> Option<String> {
         .map(|n| n.id.clone())
 }
 
+/// 回溯查找 Branch 节点上游的 Constant 节点，读取其 `source` 配置，
+/// 从 `context` 中取对应属性值。
+///
+/// 设计决策（spec §3.1）：不引入运行时值传递管道。BranchNode 通过入边回溯
+/// 找到上游 ConstantNode，读取其 `source` 配置，直接从 context 取值。
+/// 这样避免修改 `traverse` 的签名（不需要传 `value: Option<String>`）。
+///
+/// 错误处理（C2 零回退）：
+/// - Branch 无入边 → `BranchNoIncomingEdge`
+/// - 上游不是 Constant → `BranchMustFollowConstant`
+/// - `source` 不是合法会话属性键 → `UnknownConstantSource`
+fn resolve_constant_source(
+    graph: &BlueprintGraph,
+    branch_node_id: &str,
+    context: &BlueprintExecutionContext,
+) -> Result<String, BlueprintError> {
+    let incoming_edge = graph
+        .edges
+        .iter()
+        .find(|e| e.target == branch_node_id)
+        .ok_or_else(|| BlueprintError::BranchNoIncomingEdge(branch_node_id.to_string()))?;
+
+    let source_node = graph
+        .nodes
+        .iter()
+        .find(|n| n.id == incoming_edge.source)
+        .ok_or_else(|| BlueprintError::NodeNotFound(incoming_edge.source.clone()))?;
+
+    match &source_node.config {
+        NodeConfig::Constant(ConstantConfig { source, .. }) => match source.as_str() {
+            "conversation_type" => Ok(context.conversation_type.clone()),
+            "memory_mode" => Ok(context.memory_mode.clone()),
+            _ => Err(BlueprintError::UnknownConstantSource(source.clone())),
+        },
+        _ => Err(BlueprintError::BranchMustFollowConstant(branch_node_id.to_string())),
+    }
+}
+
 /// Compute the set of all node ids reachable from `start` (including `start`),
 /// following all outgoing edges. Cycle-safe via internal visited set.
 fn compute_reachable_set(graph: &BlueprintGraph, start: &str) -> HashSet<String> {
@@ -587,8 +718,9 @@ fn compute_dfs_forward_order(graph: &BlueprintGraph, start: &str) -> Vec<String>
 mod tests {
     use super::*;
     use crate::models::blueprint::{
-        GateOption, GroupGateConfig, ModeSwitchConfig, MutexGateConfig, Position,
-        PromptConfig, RoleSwitchConfig, SamplingParamsConfig, SchemaFieldConfig,
+        BranchCase, BranchConfig, GateOption, GroupGateConfig, ModeSwitchConfig,
+        MutexGateConfig, Position, PromptConfig, RoleSwitchConfig, SamplingParamsConfig,
+        SchemaFieldConfig,
     };
     use crate::models::blueprint::{BlueprintEdge, BlueprintGraph, BlueprintNode, NodeConfig};
 
@@ -708,6 +840,36 @@ mod tests {
             id: id.to_string(),
             config: NodeConfig::RoleSwitch(RoleSwitchConfig {
                 label: "role".to_string(),
+            }),
+            position: pos(0.0, 0.0),
+        }
+    }
+
+    fn constant(id: &str, source: &str) -> BlueprintNode {
+        BlueprintNode {
+            id: id.to_string(),
+            config: NodeConfig::Constant(ConstantConfig {
+                label: "const".to_string(),
+                source: source.to_string(),
+            }),
+            position: pos(0.0, 0.0),
+        }
+    }
+
+    /// `cases` 形如 `[("match_value", "port")]`；`default_port` 为默认出口。
+    fn branch(id: &str, cases: &[(&str, &str)], default_port: &str) -> BlueprintNode {
+        BlueprintNode {
+            id: id.to_string(),
+            config: NodeConfig::Branch(BranchConfig {
+                label: "branch".to_string(),
+                cases: cases
+                    .iter()
+                    .map(|(m, p)| BranchCase {
+                        match_value: m.to_string(),
+                        port: p.to_string(),
+                    })
+                    .collect(),
+                default_port: default_port.to_string(),
             }),
             position: pos(0.0, 0.0),
         }
@@ -1256,5 +1418,339 @@ mod tests {
             .expect("role+mode serial must execute");
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].identifier, "legacy_block");
+    }
+
+    // ─── Constant + Branch 节点测试（spec 里程碑 A）───
+
+    /// 基础场景：Start → Constant(conversation_type) → Branch(cases=[
+    ///   {match:"single", port:"out_single"}, {match:"online", port:"out_online"}
+    /// ], default="out_single") → 两条分支各自一个 Prompt → End
+    ///
+    /// 验证 conversation_type=single 时走 out_single，conversation_type=online 时走 out_online。
+    #[tokio::test]
+    async fn test_constant_branch_single_online() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single"), ("online", "out_online")],
+                    "out_single",
+                ),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_online", "online_block", "system", "online content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_single", "in"),
+                edge("e4", "n_branch", "out_online", "n_online", "in"),
+                edge("e5", "n_single", "out", "n_end", "in"),
+                edge("e6", "n_online", "out", "n_end", "in"),
+            ],
+        );
+
+        // conversation_type = "single" → single_block
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect("constant+branch single must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "single_block");
+
+        // conversation_type = "online" → online_block
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "online"))
+            .await
+            .expect("constant+branch online must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "online_block");
+    }
+
+    /// Branch 走 default_port：source 值不匹配任何 case 时走 default。
+    #[tokio::test]
+    async fn test_branch_default_port() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single")],
+                    "out_default", // 无 online case，online 走 default
+                ),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_default", "default_block", "system", "default content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_single", "in"),
+                edge("e4", "n_branch", "out_default", "n_default", "in"),
+                edge("e5", "n_single", "out", "n_end", "in"),
+                edge("e6", "n_default", "out", "n_end", "in"),
+            ],
+        );
+
+        // conversation_type = "online" 不匹配 "single" → 走 default_port
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "online"))
+            .await
+            .expect("branch default must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "default_block");
+    }
+
+    /// Branch 无入边 → 校验失败。
+    #[tokio::test]
+    async fn test_branch_no_incoming_edge_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single")],
+                    "out_default",
+                ),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_branch", "in"), // 有入边但来自 Start，不是 Constant
+                edge("e2", "n_branch", "out_single", "n_end", "in"),
+                edge("e3", "n_branch", "out_default", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect_err("branch with non-constant upstream must error");
+        match err {
+            BlueprintError::BranchMustFollowConstant(id) => {
+                assert_eq!(id, "n_branch");
+            }
+            other => panic!("expected BranchMustFollowConstant, got {other:?}"),
+        }
+    }
+
+    /// Branch 缺少 case port 的出边 → 校验失败。
+    #[tokio::test]
+    async fn test_branch_missing_port_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single"), ("online", "out_online")],
+                    "out_default",
+                ),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_end", "in"),
+                // 缺少 out_online 和 out_default 的出边
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect_err("branch with missing port must error");
+        match err {
+            BlueprintError::MissingBranchPort(node, port) => {
+                assert_eq!(node, "n_branch");
+                assert!(port == "out_online" || port == "out_default");
+            }
+            other => panic!("expected MissingBranchPort, got {other:?}"),
+        }
+    }
+
+    /// Constant 的 source 不合法 → 运行时报错。
+    #[tokio::test]
+    async fn test_constant_unknown_source_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "unknown_attribute"), // 不合法的 source
+                branch(
+                    "n_branch",
+                    &[("single", "out_single")],
+                    "out_default",
+                ),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_default", "default_block", "system", "default content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_single", "in"),
+                edge("e4", "n_branch", "out_default", "n_default", "in"),
+                edge("e5", "n_single", "out", "n_end", "in"),
+                edge("e6", "n_default", "out", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect_err("constant with unknown source must error");
+        match err {
+            BlueprintError::UnknownConstantSource(src) => {
+                assert_eq!(src, "unknown_attribute");
+            }
+            other => panic!("expected UnknownConstantSource, got {other:?}"),
+        }
+    }
+
+    /// Constant + Branch + ModeSwitch 串联组合：6 种路径中验证两种。
+    ///
+    /// 结构：
+    /// Start → Constant(conversation_type) → Branch →
+    ///   (out_single) → ModeSwitch → (out_stateless) → PromptSS → End
+    ///                              → (out_legacy)    → PromptSL → End
+    ///                              → (out_mem0)      → PromptSM → End
+    ///   (out_online) → ModeSwitch → (out_stateless) → PromptOS → End
+    ///                              → (out_legacy)    → PromptOL → End
+    ///                              → (out_mem0)      → PromptOM → End
+    #[tokio::test]
+    async fn test_constant_branch_with_mode_switch_6_paths() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single"), ("online", "out_online")],
+                    "out_single",
+                ),
+                mode_switch("n_mode_s"),
+                mode_switch("n_mode_o"),
+                prompt("n_ss", "ss_block", "system", "single+stateless"),
+                prompt("n_sl", "sl_block", "system", "single+legacy"),
+                prompt("n_sm", "sm_block", "system", "single+mem0"),
+                prompt("n_os", "os_block", "system", "online+stateless"),
+                prompt("n_ol", "ol_block", "system", "online+legacy"),
+                prompt("n_om", "om_block", "system", "online+mem0"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_mode_s", "in"),
+                edge("e4", "n_branch", "out_online", "n_mode_o", "in"),
+                edge("e5", "n_mode_s", "out_stateless", "n_ss", "in"),
+                edge("e6", "n_mode_s", "out_legacy", "n_sl", "in"),
+                edge("e7", "n_mode_s", "out_mem0", "n_sm", "in"),
+                edge("e8", "n_mode_o", "out_stateless", "n_os", "in"),
+                edge("e9", "n_mode_o", "out_legacy", "n_ol", "in"),
+                edge("e10", "n_mode_o", "out_mem0", "n_om", "in"),
+                edge("e11", "n_ss", "out", "n_end", "in"),
+                edge("e12", "n_sl", "out", "n_end", "in"),
+                edge("e13", "n_sm", "out", "n_end", "in"),
+                edge("e14", "n_os", "out", "n_end", "in"),
+                edge("e15", "n_ol", "out", "n_end", "in"),
+                edge("e16", "n_om", "out", "n_end", "in"),
+            ],
+        );
+
+        // single + stateless → ss_block
+        let r = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect("single+stateless path must execute");
+        assert_eq!(r.blocks.len(), 1);
+        assert_eq!(r.blocks[0].identifier, "ss_block");
+
+        // online + mem0 → om_block
+        let r = execute_blueprint(&g, &ctx_with_role("mem0", "online"))
+            .await
+            .expect("online+mem0 path must execute");
+        assert_eq!(r.blocks.len(), 1);
+        assert_eq!(r.blocks[0].identifier, "om_block");
+
+        // single + legacy → sl_block
+        let r = execute_blueprint(&g, &ctx_with_role("legacy", "single"))
+            .await
+            .expect("single+legacy path must execute");
+        assert_eq!(r.blocks.len(), 1);
+        assert_eq!(r.blocks[0].identifier, "sl_block");
+
+        // online + stateless → os_block
+        let r = execute_blueprint(&g, &ctx_with_role("stateless", "online"))
+            .await
+            .expect("online+stateless path must execute");
+        assert_eq!(r.blocks.len(), 1);
+        assert_eq!(r.blocks[0].identifier, "os_block");
+    }
+
+    /// Constant + Branch JSON 序列化/反序列化往返测试。
+    #[tokio::test]
+    async fn test_constant_branch_json_round_trip() {
+        let json = r#"{
+            "version": 2,
+            "nodes": [
+                { "id": "n_start", "type": "start", "position": {"x":0,"y":0} },
+                {
+                    "id": "n_const", "type": "constant", "position": {"x":100,"y":0},
+                    "config": { "label": "会话角色", "source": "conversation_type" }
+                },
+                {
+                    "id": "n_branch", "type": "branch", "position": {"x":300,"y":0},
+                    "config": {
+                        "label": "角色分支",
+                        "cases": [
+                            { "match_value": "single", "port": "out_single" },
+                            { "match_value": "online", "port": "out_online" }
+                        ],
+                        "default_port": "out_single"
+                    }
+                },
+                { "id": "n_end", "type": "end", "position": {"x":500,"y":0} }
+            ],
+            "edges": [
+                { "id": "e1", "source": "n_start", "source_port": "out", "target": "n_const", "target_port": "in" },
+                { "id": "e2", "source": "n_const", "source_port": "out", "target": "n_branch", "target_port": "in" },
+                { "id": "e3", "source": "n_branch", "source_port": "out_single", "target": "n_end", "target_port": "in" },
+                { "id": "e4", "source": "n_branch", "source_port": "out_online", "target": "n_end", "target_port": "in" }
+            ]
+        }"#;
+
+        let graph: BlueprintGraph = serde_json::from_str(json)
+            .expect("constant+branch graph must deserialize");
+
+        // 校验 Constant 节点
+        let const_node = graph.nodes.iter()
+            .find(|n| n.id == "n_const")
+            .expect("constant node must exist");
+        match &const_node.config {
+            NodeConfig::Constant(cfg) => {
+                assert_eq!(cfg.label, "会话角色");
+                assert_eq!(cfg.source, "conversation_type");
+            }
+            other => panic!("expected Constant, got {other:?}"),
+        }
+
+        // 校验 Branch 节点
+        let branch_node = graph.nodes.iter()
+            .find(|n| n.id == "n_branch")
+            .expect("branch node must exist");
+        match &branch_node.config {
+            NodeConfig::Branch(cfg) => {
+                assert_eq!(cfg.label, "角色分支");
+                assert_eq!(cfg.cases.len(), 2);
+                assert_eq!(cfg.cases[0].match_value, "single");
+                assert_eq!(cfg.cases[0].port, "out_single");
+                assert_eq!(cfg.cases[1].match_value, "online");
+                assert_eq!(cfg.cases[1].port, "out_online");
+                assert_eq!(cfg.default_port, "out_single");
+            }
+            other => panic!("expected Branch, got {other:?}"),
+        }
+
+        // 反序列化后再序列化，验证字段完整
+        let reserialized = serde_json::to_string(&graph)
+            .expect("graph must serialize");
+        assert!(reserialized.contains("\"type\":\"constant\""));
+        assert!(reserialized.contains("\"type\":\"branch\""));
     }
 }
