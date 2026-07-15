@@ -3,8 +3,7 @@
  *
  * Orchestrates the blueprint editing experience for a single preset:
  * - Loads the preset on mount and resolves its `blueprint_graph`. If the
- *   preset has no graph yet (legacy preset), runs `migrateToBlueprint` and
- *   persists the migrated graph back to the backend.
+ *   preset has no graph yet, uses a default Start→End empty graph.
  * - Owns the graph state via `createStore` (immutable updates through
  *   `produce` / array replacement) and exposes node/edge CRUD handlers to
  *   the canvas and config panel.
@@ -24,7 +23,7 @@
  * Constraints:
  * - C1 Frontend Render-Only: the editor only renders + calls Tauri commands
  *   for load/save. No business logic, no prompt compilation.
- * - C2 Zero-Fallback Errors: load/migrate/save failures surface as visible
+ * - C2 Zero-Fallback Errors: load/save failures surface as visible
  *   error toasts and an error banner; no silent fallback.
  * - C3 Responsiveness: SolidJS fine-grained signals + `createStore`. Node
  *   moves patch only the moved node's position; config edits patch only the
@@ -46,21 +45,10 @@ import {
   type Position,
 } from '../../lib/blueprint/types';
 import {
-  migrateToBlueprint,
-  type LegacyBlock,
-  type LegacyPresetForMigration,
-  type LegacySemanticGroup,
-  type LegacySemanticOption,
-} from '../../lib/blueprint/migration';
-import {
   presetsGet,
   presetsUpdate,
   type CreatePresetPayload,
   type PresetDetail,
-  type PresetPromptBlock,
-  type PresetSemanticGroupRecord,
-  type PresetSemanticOptionBlockRecord,
-  type PresetSemanticOptionRecord,
 } from '../../lib/backend';
 import { BlueprintCanvas } from './BlueprintCanvas';
 import { NodeConfigPanel } from './NodeConfigPanel';
@@ -189,88 +177,6 @@ function createEmptyGraph(): BlueprintGraph {
         target_port: 'in',
       },
     ],
-  };
-}
-
-// ─── Legacy preset → migration input ───
-
-function mapBlockToLegacy(block: PresetPromptBlock): LegacyBlock {
-  return {
-    id: block.id,
-    blockType: block.blockType,
-    title: block.title ?? null,
-    content: block.content,
-    sortOrder: block.sortOrder,
-    priority: block.priority,
-    isEnabled: block.isEnabled,
-    scope: block.scope,
-    isLocked: block.isLocked,
-    lockReason: block.lockReason ?? null,
-    exclusiveGroupKey: block.exclusiveGroupKey ?? null,
-    exclusiveGroupLabel: block.exclusiveGroupLabel ?? null,
-  };
-}
-
-function mapSemanticOptionBlockToLegacy(
-  block: PresetSemanticOptionBlockRecord,
-): LegacyBlock {
-  return {
-    id: block.id,
-    blockType: block.blockType,
-    title: block.title ?? null,
-    content: block.content,
-    sortOrder: block.sortOrder,
-    priority: block.priority,
-    isEnabled: block.isEnabled,
-    scope: block.scope,
-    isLocked: block.isLocked,
-    lockReason: block.lockReason ?? null,
-    exclusiveGroupKey: block.exclusiveGroupKey ?? null,
-    exclusiveGroupLabel: block.exclusiveGroupLabel ?? null,
-  };
-}
-
-function mapSemanticOptionToLegacy(
-  option: PresetSemanticOptionRecord,
-): LegacySemanticOption {
-  return {
-    optionKey: option.optionKey,
-    label: option.label,
-    description: option.description ?? undefined,
-    blocks: option.blocks.map(mapSemanticOptionBlockToLegacy),
-  };
-}
-
-function mapSemanticGroupToLegacy(
-  group: PresetSemanticGroupRecord,
-): LegacySemanticGroup {
-  return {
-    groupKey: group.groupKey,
-    label: group.label,
-    description: group.description ?? null,
-    selectionMode: group.selectionMode === 'multiple' ? 'multiple' : 'single',
-    options: group.options.map(mapSemanticOptionToLegacy),
-  };
-}
-
-function buildLegacyPresetForMigration(detail: PresetDetail): LegacyPresetForMigration {
-  return {
-    id: detail.preset.id,
-    name: detail.preset.name,
-    blocks: detail.blocks.map(mapBlockToLegacy),
-    structuredOutputSchema: detail.preset.structuredOutputSchema,
-    semanticGroups: detail.semanticGroups.map(mapSemanticGroupToLegacy),
-    temperature: detail.preset.temperature ?? null,
-    maxOutputTokens: detail.preset.maxOutputTokens ?? null,
-    topP: detail.preset.topP ?? null,
-    topK: undefined,
-    presencePenalty: detail.preset.presencePenalty ?? null,
-    frequencyPenalty: detail.preset.frequencyPenalty ?? null,
-    responseMode: detail.preset.responseMode ?? null,
-    stopSequences:
-      detail.stopSequences.length > 0
-        ? detail.stopSequences.map((s) => s.stopText)
-        : null,
   };
 }
 
@@ -403,64 +309,14 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           // so the user can still see the canvas and re-author the graph.
         }
       } else {
-        // No blueprint graph yet. Distinguish between:
-        // - Brand-new empty preset (no blocks, no semantic groups, no schema)
-        //   → use the default empty graph, no migration needed.
-        // - Legacy preset with content but no graph
-        //   → run migrateToBlueprint and persist the result.
-        const hasLegacyContent =
-          detail.blocks.length > 0 ||
-          detail.semanticGroups.length > 0 ||
-          (detail.preset.structuredOutputSchema != null &&
-            detail.preset.structuredOutputSchema.trim() !== '');
-
-        if (!hasLegacyContent) {
-          // Brand-new empty preset — use default Start→End graph directly.
-          const empty = createEmptyGraph();
-          setGraph(produce(() => {
-            graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
-            graph.edges.splice(0, graph.edges.length, ...empty.edges);
-            (graph as BlueprintGraph).version = 2;
-          }));
-          setDirty(false);
-        } else {
-          // Legacy preset — migrate.
-          const legacy = buildLegacyPresetForMigration(detail);
-          const result = migrateToBlueprint(legacy);
-          if (result.ok) {
-            setGraph(produce(() => {
-              graph.nodes.splice(0, graph.nodes.length, ...result.graph.nodes);
-              graph.edges.splice(0, graph.edges.length, ...result.graph.edges);
-              (graph as BlueprintGraph).version = 2;
-            }));
-            showToast('旧预设已自动迁移为蓝图，正在保存…', 'info');
-            try {
-              const json = serializeBlueprintGraph(graph);
-              const payload = buildBlueprintUpdatePayload(detail, json);
-              const updated = await presetsUpdate(payload);
-              setPresetDetail(updated);
-              setDirty(false);
-              showToast('蓝图迁移结果已保存', 'success');
-            } catch (saveErr) {
-              const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
-              showToast(`迁移结果保存失败：${msg}`, 'error');
-              setError(`迁移结果保存失败：${msg}`);
-              setDirty(true);
-            }
-          } else {
-            // Migration failed — per spec, fall back to an empty graph and
-            // surface the error (C2 zero-fallback).
-            setError(`旧预设迁移失败：${result.error}`);
-            showToast(`旧预设迁移失败：${result.error}`, 'error');
-            setGraph(produce(() => {
-              const empty = createEmptyGraph();
-              graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
-              graph.edges.splice(0, graph.edges.length, ...empty.edges);
-              (graph as BlueprintGraph).version = 2;
-            }));
-            setDirty(false);
-          }
-        }
+        // No blueprint graph yet — use default Start→End empty graph.
+        const empty = createEmptyGraph();
+        setGraph(produce(() => {
+          graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
+          graph.edges.splice(0, graph.edges.length, ...empty.edges);
+          (graph as BlueprintGraph).version = 2;
+        }));
+        setDirty(false);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -624,7 +480,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   return (
     <div class="flex flex-col h-full w-full bg-transparent overflow-hidden">
       {/* Toolbar */}
-      <header class="flex items-center justify-between gap-4 px-6 py-3 border-b border-white/5 bg-night-water/40 backdrop-blur-sm flex-shrink-0">
+      <header class="flex items-center justify-between gap-4 px-6 py-3 border-b border-white/5 bg-night-water/40 backdrop-blur-sm flex-shrink-0 relative z-50">
         <div class="flex items-center gap-3 min-w-0">
           <Show when={props.onClose}>
             <IconButton

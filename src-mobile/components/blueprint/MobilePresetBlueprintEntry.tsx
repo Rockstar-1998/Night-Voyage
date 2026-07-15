@@ -1,14 +1,10 @@
 /**
  * 移动端蓝图编辑器集成入口（Task 13.4）。
  *
- * 列出 preset，点击后加载 PresetDetail → 映射为 LegacyPresetForMigration →
- * 调用 migrateToBlueprint 迁移为 BlueprintGraph → 打开 BlueprintEditor。
+ * 列出 preset，点击后加载 PresetDetail → 读取 blueprint_graph（若有）或
+ * 使用空 Start→End 图 → 打开 BlueprintEditor。
  *
  * 也提供"新建空白蓝图"入口，直接创建 Start → End 最小图。
- *
- * 后端持久化状态：当前 PresetSummary / CreatePresetPayload 尚未含 blueprintGraph
- * 字段（待 Task 12 后端重构）。保存回调先以 toast 形式展示生成的蓝图 JSON
- * 摘要，并诚实提示"后端持久化待 Task 12 接入"——不静默回退（C2）。
  */
 
 import {
@@ -20,21 +16,9 @@ import {
 } from 'solid-js';
 import type {
   BlueprintGraph,
+  BlueprintNode,
 } from '../../../src/lib/blueprint/types';
 import {
-  LegacyBlock,
-  LegacyPresetForMigration,
-  LegacySemanticGroup,
-  migrateToBlueprint,
-  MigrationResult,
-} from '../../../src/lib/blueprint/migration';
-import {
-  PresetDetail,
-  PresetPromptBlock,
-  PresetSemanticGroupRecord,
-  PresetSemanticOptionBlockRecord,
-  PresetSemanticOptionRecord,
-  PresetStopSequenceRecord,
   PresetSummary,
   presetsGet,
   presetsList,
@@ -67,68 +51,15 @@ function createEmptyGraph(): BlueprintGraph {
   };
 }
 
-// ─── PresetDetail → LegacyPresetForMigration 映射 ───
-
-function mapBlock(b: PresetPromptBlock | PresetSemanticOptionBlockRecord): LegacyBlock {
-  return {
-    id: b.id,
-    blockType: b.blockType,
-    title: b.title ?? null,
-    content: b.content,
-    sortOrder: b.sortOrder ?? null,
-    priority: b.priority ?? null,
-    isEnabled: b.isEnabled ?? null,
-    scope: b.scope ?? null,
-    isLocked: b.isLocked ?? null,
-    lockReason: b.lockReason ?? null,
-    exclusiveGroupKey: b.exclusiveGroupKey ?? null,
-    exclusiveGroupLabel: b.exclusiveGroupLabel ?? null,
-  };
-}
-
-function mapSemanticGroup(g: PresetSemanticGroupRecord): LegacySemanticGroup {
-  const mapOption = (opt: PresetSemanticOptionRecord): LegacySemanticGroup['options'][number] => ({
-    optionKey: opt.optionKey,
-    label: opt.label,
-    description: opt.description ?? null,
-    blocks: (opt.blocks ?? []).map(mapBlock),
+/// Ensure Start/End nodes have an in-memory `config: {}` placeholder after
+/// loading from DB (the serialized JSON omits it per Rust serde convention).
+function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
+  return nodes.map((n) => {
+    if ((n.type === 'start' || n.type === 'end') && n.config === undefined) {
+      return { ...n, config: {} } as BlueprintNode;
+    }
+    return n;
   });
-  return {
-    groupKey: g.groupKey,
-    label: g.label,
-    description: g.description ?? null,
-    selectionMode: g.selectionMode === 'multiple' ? 'multiple' : 'single',
-    options: (g.options ?? []).map(mapOption),
-  };
-}
-
-function mapStopSequences(stops: PresetStopSequenceRecord[]): string[] | null {
-  if (!stops || stops.length === 0) return null;
-  return stops.map((s) => s.stopText);
-}
-
-function buildLegacyPreset(
-  preset: PresetSummary,
-  detail: PresetDetail,
-): LegacyPresetForMigration {
-  return {
-    id: preset.id,
-    name: preset.name,
-    blocks: (detail.blocks ?? []).map(mapBlock),
-    structuredOutputSchema: preset.structuredOutputSchema,
-    semanticGroups: (detail.semanticGroups ?? []).map(mapSemanticGroup),
-    temperature: preset.temperature ?? null,
-    maxOutputTokens: preset.maxOutputTokens ?? null,
-    topP: preset.topP ?? null,
-    topK: null,
-    presencePenalty: preset.presencePenalty ?? null,
-    frequencyPenalty: preset.frequencyPenalty ?? null,
-    responseMode: preset.responseMode ?? null,
-    stopSequences: mapStopSequences(detail.stopSequences ?? []),
-    thinkingEnabled: null,
-    thinkingBudgetTokens: null,
-    betaFeatures: null,
-  };
 }
 
 // ─── 组件 ───
@@ -138,7 +69,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [editingPreset, setEditingPreset] = createSignal<{ graph: BlueprintGraph; title: string } | null>(null);
-  const [migrating, setMigrating] = createSignal<number | null>(null);
+  const [openingPreset, setOpeningPreset] = createSignal<number | null>(null);
   const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
   const [renamingValue, setRenamingValue] = createSignal('');
   const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
@@ -170,16 +101,25 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   const handleOpenPreset = async (preset: PresetSummary) => {
     if (renamingPresetId() === preset.id) return;
     if (presetBusy() !== null) return;
-    setMigrating(preset.id);
+    setOpeningPreset(preset.id);
     try {
       const detail = await presetsGet(preset.id);
-      const legacy = buildLegacyPreset(preset, detail);
-      const result: MigrationResult = migrateToBlueprint(legacy);
-      if (!result.ok) {
-        showToast(`迁移失败：${result.error}`, 'error', 5000);
-        return;
+      const rawGraph = detail.preset.blueprintGraph;
+      let graph: BlueprintGraph;
+      if (rawGraph && rawGraph.trim() !== '') {
+        const parsed = JSON.parse(rawGraph) as BlueprintGraph;
+        if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+          throw new Error('blueprint_graph JSON 结构无效');
+        }
+        graph = {
+          version: 2,
+          nodes: normalizeLoadedNodes(parsed.nodes),
+          edges: parsed.edges,
+        };
+      } else {
+        graph = createEmptyGraph();
       }
-      setEditingPreset({ graph: result.graph, title: `编辑：${preset.name}` });
+      setEditingPreset({ graph, title: `编辑：${preset.name}` });
     } catch (err) {
       showToast(
         `加载预设失败：${err instanceof Error ? err.message : String(err)}`,
@@ -187,7 +127,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
         5000,
       );
     } finally {
-      setMigrating(null);
+      setOpeningPreset(null);
     }
   };
 
@@ -290,14 +230,14 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   };
 
   const handleSaveGraph = (graph: BlueprintGraph) => {
-    // 后端 blueprint_graph 字段待 Task 12 接入持久化。
-    // 当前阶段：诚实提示，不静默回退（C2）。
+    // 后端 blueprint_graph 字段持久化由移动端 BlueprintEditor 自行处理。
+    // 此回调仅用于编辑器关闭前的提示。
     const json = JSON.stringify(graph);
     const sizeKb = (new Blob([json]).size / 1024).toFixed(1);
     showToast(
-      `蓝图已生成（${graph.nodes.length} 节点 / ${graph.edges.length} 连线 / ${sizeKb} KB）。后端 blueprint_graph 持久化待 Task 12 接入。`,
+      `蓝图已生成（${graph.nodes.length} 节点 / ${graph.edges.length} 连线 / ${sizeKb} KB）`,
       'info',
-      5000,
+      3000,
     );
   };
 
@@ -355,11 +295,6 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
               </div>
             </button>
 
-            {/* 说明卡 */}
-            <div class="mb-4 p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-mist-solid/55 leading-relaxed">
-              点击下方预设自动迁移为蓝图并打开编辑器。旧 preset 的 blocks / schema / semanticGroups / 采样参数会被映射为对应节点。
-            </div>
-
             {/* 加载状态 */}
             <Show when={loading()}>
               <div class="flex items-center justify-center py-12">
@@ -378,7 +313,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
 
             {/* preset 列表 */}
             <Show when={!loading() && !loadError()}>
-              <h3 class="text-[12px] font-bold text-mist-solid/60 mb-2 px-1">从现有预设迁移</h3>
+              <h3 class="text-[12px] font-bold text-mist-solid/60 mb-2 px-1">现有预设</h3>
               <div class="flex flex-col gap-2">
                 <For each={presets()}>
                   {(preset) => (
@@ -466,10 +401,10 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
                           </button>
                         </div>
                       </Show>
-                      <Show when={migrating() === preset.id}>
-                        <div class="text-[11px] text-accent animate-pulse shrink-0">迁移中…</div>
+                      <Show when={openingPreset() === preset.id}>
+                        <div class="text-[11px] text-accent animate-pulse shrink-0">加载中…</div>
                       </Show>
-                      <Show when={migrating() !== preset.id && renamingPresetId() !== preset.id}>
+                      <Show when={openingPreset() !== preset.id && renamingPresetId() !== preset.id}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-mist-solid/40 shrink-0"><path d="m9 18 6-6-6-6"/></svg>
                       </Show>
                       <Show when={presetBusy() === preset.id}>
