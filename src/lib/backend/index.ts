@@ -16,6 +16,9 @@ export * from './messages';
 // Presets
 export * from './presets';
 
+// Preset Gate Selection (preset-level Gate selection API for preset detail view)
+export * from './gates';
+
 // Characters
 export * from './characters';
 

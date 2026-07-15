@@ -15,6 +15,7 @@ import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
 import { AuroraBackground } from './components/AuroraBackground';
 import { BlueprintEditor } from './components/blueprint/BlueprintEditor';
+import { PresetDetailView } from './components/PresetDetailView';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
@@ -356,7 +357,9 @@ type DesktopViewProps = {
 
 const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [activeSettingCategory, setActiveSettingCategory] = createSignal('api');
-  const [editingPresetId, setEditingPresetId] = createSignal<number | null>(null);
+  // 预设工作区导航：卡片 → 预设详情（台前）→ 蓝图编辑器（幕后）
+  const [presetDetailId, setPresetDetailId] = createSignal<number | null>(null);
+  const [editingBlueprintId, setEditingBlueprintId] = createSignal<number | null>(null);
   const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
   const [renamingValue, setRenamingValue] = createSignal('');
   const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
@@ -647,16 +650,19 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                   return (
                     <div class="flex h-full w-full bg-transparent">
                       <Show
-                        when={editingPresetId()}
+                        when={editingBlueprintId()}
                         fallback={
-                          <div class="flex-1 flex flex-col min-w-0 h-full">
-                            <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between gap-3" data-workspace-title>
-                              <div class="flex items-center gap-3 min-w-0">
-                                <span>预设蓝图</span>
-                                <span class="text-[10px] normal-case tracking-normal text-mist-solid/25 truncate">
-                                  选择一个预设以编辑其蓝图
-                                </span>
-                              </div>
+                          <Show
+                            when={presetDetailId()}
+                            fallback={
+                              <div class="flex-1 flex flex-col min-w-0 h-full">
+                                <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between gap-3" data-workspace-title>
+                                  <div class="flex items-center gap-3 min-w-0">
+                                    <span>预设蓝图</span>
+                                    <span class="text-[10px] normal-case tracking-normal text-mist-solid/25 truncate">
+                                      选择一个预设以查看详情
+                                    </span>
+                                  </div>
                               <button
                                 type="button"
                                 class="shrink-0 px-3 py-1 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
@@ -693,14 +699,14 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                         onClick={() => {
                                           if (renamingPresetId() === preset.id) return;
                                           if (presetBusy() !== null) return;
-                                          setEditingPresetId(preset.id);
+                                          setPresetDetailId(preset.id);
                                         }}
                                         onKeyDown={(e) => {
                                           if (e.key === 'Enter' || e.key === ' ') {
                                             e.preventDefault();
                                             if (renamingPresetId() === preset.id) return;
                                             if (presetBusy() !== null) return;
-                                            setEditingPresetId(preset.id);
+                                            setPresetDetailId(preset.id);
                                           }
                                         }}
                                       >
@@ -803,7 +809,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                           }
                                         >
                                           <div class="mt-3 text-[10px] uppercase tracking-widest text-mist-solid/30 group-hover:text-mist-solid/60 transition-colors">
-                                            点击编辑蓝图
+                                            点击查看预设详情
                                           </div>
                                         </Show>
                                         <Show when={presetBusy() === preset.id}>
@@ -818,12 +824,25 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                               </Show>
                             </div>
                           </div>
+                            }
+                          >
+                            {(detailId) => {
+                              const preset = props.presetSummaries.find((p) => p.id === detailId()) ?? null;
+                              return preset ? (
+                                <PresetDetailView
+                                  preset={preset}
+                                  onBack={() => setPresetDetailId(null)}
+                                  onEditBlueprint={() => setEditingBlueprintId(preset.id)}
+                                />
+                              ) : null;
+                            }}
+                          </Show>
                         }
                       >
                         {(id) => (
                           <BlueprintEditor
                             presetId={id()}
-                            onClose={() => setEditingPresetId(null)}
+                            onClose={() => setEditingBlueprintId(null)}
                           />
                         )}
                       </Show>

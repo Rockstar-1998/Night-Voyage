@@ -435,6 +435,47 @@ export interface CreatePresetPayload {
   semanticGroups?: PresetSemanticGroupInput[];
 }
 
+// ─── Preset Gate Selection（预设级 Gate 选择，spec 里程碑 C）───
+
+/**
+ * 预设级 Gate 选择记录。
+ *
+ * Gate 选择从"会话级运行时"改为"预设级配置期"：所有使用该预设的会话共享
+ * 同一套选择。`nodeId` 直接使用蓝图节点 ID（Gate 节点本身即分组单位，
+ * `gate_id` 字段已移除）。与后端 `PresetGateSelectionDto` 对齐（serde camelCase）。
+ */
+export interface PresetGateSelection {
+  presetId: number;
+  nodeId: string;
+  selectedKeys: string[];
+}
+
+/**
+ * Gate 选项的 IPC DTO（与后端 `BlueprintGateOptionDto` 对齐）。
+ *
+ * `description` 在后端是 `Option<String>`，序列化为 `string | null`；
+ * 前端在使用时若为 `null` 视作空串。
+ */
+export interface BlueprintGateOption {
+  key: string;
+  label: string;
+  description: string | null;
+}
+
+/**
+ * 蓝图中的 Gate 节点定义，供预设详情视图渲染选择 UI。
+ *
+ * `kind` 取值 `"mutex"` / `"group"`，对应 MutexGate / GroupGate 节点类型。
+ * 其他节点类型（Prompt / SchemaField / ModeSwitch / RoleSwitch / SamplingParams）
+ * 不暴露给用户选择，故不在此 DTO 中。与后端 `BlueprintGateDto` 对齐。
+ */
+export interface BlueprintGate {
+  nodeId: string;
+  kind: 'mutex' | 'group';
+  label: string;
+  options: BlueprintGateOption[];
+}
+
 // ─── Character ───
 
 export interface CharacterBaseSection {

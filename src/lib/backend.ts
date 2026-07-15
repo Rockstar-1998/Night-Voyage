@@ -6,6 +6,7 @@ export * from './backend/window';
 export * from './backend/conversations';
 export * from './backend/messages';
 export * from './backend/presets';
+export * from './backend/gates';
 export * from './backend/characters';
 export * from './backend/worldBooks';
 export * from './backend/plot_summaries';

@@ -28,6 +28,7 @@ import {
   presetsDuplicate,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
+import { MobilePresetDetailView } from './MobilePresetDetailView';
 import { showToast, showConfirm } from '../Toast';
 
 // ─── Props ───
@@ -69,6 +70,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [editingPreset, setEditingPreset] = createSignal<{ graph: BlueprintGraph; title: string } | null>(null);
+  const [viewingPreset, setViewingPreset] = createSignal<PresetSummary | null>(null);
   const [openingPreset, setOpeningPreset] = createSignal<number | null>(null);
   const [renamingPresetId, setRenamingPresetId] = createSignal<number | null>(null);
   const [renamingValue, setRenamingValue] = createSignal('');
@@ -98,9 +100,14 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     }
   });
 
-  const handleOpenPreset = async (preset: PresetSummary) => {
+  const handleOpenPreset = (preset: PresetSummary) => {
     if (renamingPresetId() === preset.id) return;
     if (presetBusy() !== null) return;
+    // 进入预设详情视图（台前），而非直接进入蓝图编辑器（幕后）
+    setViewingPreset(preset);
+  };
+
+  const handleEditBlueprint = async (preset: PresetSummary) => {
     setOpeningPreset(preset.id);
     try {
       const detail = await presetsGet(preset.id);
@@ -119,6 +126,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
       } else {
         graph = createEmptyGraph();
       }
+      setViewingPreset(null);
       setEditingPreset({ graph, title: `编辑：${preset.name}` });
     } catch (err) {
       showToast(
@@ -251,6 +259,9 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     <Show
       when={editingPreset()}
       fallback={
+        <Show
+          when={viewingPreset()}
+          fallback={
         <div class="h-full w-full flex flex-col bg-xuanqing">
           {/* 头部 */}
           <header class="shrink-0 h-14 flex items-center gap-2 px-4 bg-xuanqing/90 backdrop-blur-md border-b border-white/5 safe-area-top">
@@ -424,6 +435,16 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
             </Show>
           </div>
         </div>
+          }
+        >
+          {(preset) => (
+            <MobilePresetDetailView
+              preset={preset()}
+              onBack={() => setViewingPreset(null)}
+              onEditBlueprint={() => void handleEditBlueprint(preset())}
+            />
+          )}
+        </Show>
       }
     >
       {(ep) => (
