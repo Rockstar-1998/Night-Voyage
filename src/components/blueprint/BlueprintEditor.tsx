@@ -61,6 +61,9 @@ import {
   logSaveStart as dbgSaveStart,
   logSaveDone as dbgSaveDone,
   logLoad as dbgLoad,
+  logParsed as dbgParsed,
+  logGraphStore as dbgGraphStore,
+  logParseError as dbgParseError,
 } from '../../lib/debug/blueprintSaveDebug';
 
 // ─── Props ───
@@ -348,6 +351,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
             throw new Error('blueprint_graph JSON 结构无效（version/nodes/edges 缺失）');
           }
+          dbgParsed(parsed.nodes.length, parsed.edges.length);
           // Normalize Start/End nodes: the serialized JSON omits `config`
           // per Rust serde convention; add `config: {}` back in memory.
           const normalizedNodes = normalizeLoadedNodes(parsed.nodes);
@@ -356,8 +360,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             graph.edges.splice(0, graph.edges.length, ...parsed.edges);
             (graph as BlueprintGraph).version = 2;
           }));
+          dbgGraphStore(graph.nodes.length);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
+          dbgParseError(e);
           setError(`解析蓝图 JSON 失败：${msg}`);
           showToast(`解析蓝图 JSON 失败：${msg}`, 'error');
           // Keep the empty graph initialized in createStore as a safe default
