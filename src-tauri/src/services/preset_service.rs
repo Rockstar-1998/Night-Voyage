@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 
 use crate::models::{PresetDetail, PresetSemanticGroupRecord, PresetSummary};
 use crate::repositories::preset_repository::PresetRepository;
+use crate::services::debug_preset_save;
 use crate::utils::now_ts;
 use crate::validators::preset_validator::{
     merge_materialized_blocks, missing_locked_block_snapshot,
@@ -281,19 +282,55 @@ impl<'a> PresetService<'a> {
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
         semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
     ) -> Result<PresetDetail, String> {
-        let name = normalize_required_impl("name", &name)?;
+        let name = normalize_required_impl("name", &name).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
         let description = normalize_optional_text_impl(description);
-        let category = normalize_category_impl(category)?;
-        let temperature = normalize_temperature_impl(temperature)?;
-        let max_output_tokens = normalize_max_output_tokens_impl(max_output_tokens)?;
-        let top_p = normalize_top_p_impl(top_p)?;
-        let top_k = normalize_top_k_impl(top_k)?;
-        let presence_penalty = normalize_penalty_impl(presence_penalty, "presencePenalty")?;
-        let frequency_penalty = normalize_penalty_impl(frequency_penalty, "frequencyPenalty")?;
-        let response_mode = normalize_response_mode_impl(response_mode, "responseMode")?;
-        let thinking_enabled = normalize_thinking_enabled_impl(thinking_enabled)?;
-        let thinking_budget_tokens = normalize_thinking_budget_tokens_impl(thinking_budget_tokens)?;
-        let beta_features = normalize_beta_features_impl(beta_features)?;
+        let category = normalize_category_impl(category).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let temperature = normalize_temperature_impl(temperature).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let max_output_tokens = normalize_max_output_tokens_impl(max_output_tokens).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let top_p = normalize_top_p_impl(top_p).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let top_k = normalize_top_k_impl(top_k).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let presence_penalty = normalize_penalty_impl(presence_penalty, "presencePenalty").map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let frequency_penalty = normalize_penalty_impl(frequency_penalty, "frequencyPenalty").map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let response_mode = normalize_response_mode_impl(response_mode, "responseMode").map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let thinking_enabled = normalize_thinking_enabled_impl(thinking_enabled).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let thinking_budget_tokens = normalize_thinking_budget_tokens_impl(thinking_budget_tokens).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
+        let beta_features = normalize_beta_features_impl(beta_features).map_err(|e| {
+            debug_preset_save::validation_failed(&e);
+            e
+        })?;
         let structured_output_schema = normalize_optional_text_impl(structured_output_schema);
         let structured_output_display = normalize_optional_text_impl(structured_output_display);
         let context_included_keys = normalize_optional_text_impl(context_included_keys);
@@ -301,33 +338,57 @@ impl<'a> PresetService<'a> {
         blueprint_graph
             .as_deref()
             .map(validate_blueprint_graph)
-            .transpose()?;
+            .transpose()
+            .map_err(|e| {
+                debug_preset_save::graph_validation_failed(&e);
+                e
+            })?;
+        debug_preset_save::graph_validation_ok();
         let direct_blocks_input = match blocks {
-            Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks))?),
+            Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks)).map_err(|e| {
+                debug_preset_save::validation_failed(&e);
+                e
+            })?),
             None => None,
         };
         let semantic_groups_input = match semantic_groups {
             Some(semantic_groups) => Some(PresetValidator::validate_semantic_groups(Some(
                 semantic_groups,
-            ))?),
+            )).map_err(|e| {
+                debug_preset_save::validation_failed(&e);
+                e
+            })?),
             None => None,
         };
         let stop_sequences = match stop_sequences {
             Some(stop_sequences) => Some(PresetValidator::validate_stop_sequences(Some(
                 stop_sequences,
-            ))?),
+            )).map_err(|e| {
+                debug_preset_save::validation_failed(&e);
+                e
+            })?),
             None => None,
         };
         let provider_overrides = match provider_overrides {
             Some(provider_overrides) => Some(PresetValidator::validate_provider_overrides(Some(
                 provider_overrides,
-            ))?),
+            )).map_err(|e| {
+                debug_preset_save::validation_failed(&e);
+                e
+            })?),
             None => None,
         };
+        debug_preset_save::validation_ok();
         let now = now_ts();
 
-        let mut tx = self.db.begin().await.map_err(|err| err.to_string())?;
-        if !PresetRepository::exists(&mut tx, id).await? {
+        let mut tx = self.db.begin().await.map_err(|err| {
+            debug_preset_save::error(&err.to_string());
+            err.to_string()
+        })?;
+        debug_preset_save::tx_begun();
+        let preset_exists = PresetRepository::exists(&mut tx, id).await?;
+        debug_preset_save::preset_exists(preset_exists);
+        if !preset_exists {
             return Err("指定预设不存在".to_string());
         }
 
@@ -335,6 +396,7 @@ impl<'a> PresetService<'a> {
             Some(blocks) => blocks,
             None => PresetRepository::load_existing_normalized_blocks(&mut tx, id, false).await?,
         };
+        debug_preset_save::blocks_loaded(direct_blocks.len());
         let semantic_materialization = match semantic_groups_input.as_ref() {
             Some(semantic_groups) => {
                 PresetRepository::replace_semantic_groups(&mut tx, id, semantic_groups, now).await?
@@ -353,7 +415,11 @@ impl<'a> PresetService<'a> {
             .as_ref()
             .map(|f| serde_json::to_string(f).unwrap_or_default());
 
-        Self::ensure_locked_blocks_preserved(&mut tx, id, &final_blocks).await?;
+        Self::ensure_locked_blocks_preserved(&mut tx, id, &final_blocks).await.map_err(|e| {
+            debug_preset_save::locked_blocks_failed(&e);
+            e
+        })?;
+        debug_preset_save::locked_blocks_ok();
 
         PresetRepository::update(
             &mut tx,
@@ -378,8 +444,10 @@ impl<'a> PresetService<'a> {
             now,
         )
         .await?;
+        debug_preset_save::repo_updated();
 
         PresetRepository::replace_blocks(&mut tx, id, &final_blocks, now).await?;
+        debug_preset_save::blocks_replaced(final_blocks.len());
 
         if let Some(stop_sequences) = stop_sequences {
             PresetRepository::replace_stop_sequences(&mut tx, id, &stop_sequences, now).await?;
@@ -390,7 +458,11 @@ impl<'a> PresetService<'a> {
                 .await?;
         }
 
-        tx.commit().await.map_err(|err| err.to_string())?;
+        tx.commit().await.map_err(|err| {
+            debug_preset_save::tx_commit_failed(&err.to_string());
+            err.to_string()
+        })?;
+        debug_preset_save::tx_committed();
 
         self.get_by_id(id).await
     }

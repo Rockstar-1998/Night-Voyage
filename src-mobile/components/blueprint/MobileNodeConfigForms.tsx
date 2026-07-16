@@ -12,7 +12,7 @@
  * - 表单不做后端校验，仅做最小前端格式约束（如数字解析）；保存时由父级决定
  */
 
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Match, Show, Switch, createSignal } from 'solid-js';
 import type {
   BlueprintNode,
   BranchCase,
@@ -668,80 +668,81 @@ const SamplingParamsForm: Component<{
 };
 
 // ─── 分发器 ───
+//
+// 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
+// 原因：SolidJS 组件函数只执行一次，`const node = props.node` 是非响应式
+// 快照，后续 props.node 变化时表单不会更新；且 switch 返回新 JSX 会导致
+// 组件在每次 config 变化时重新挂载（input 失焦）。
+// <Match> 只在 node.type 变化时切换分支；config 变化时仅更新 props，
+// 保持表单实例和焦点稳定。
 
 export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props) => {
-  const node = props.node;
-  switch (node.type) {
-    case 'start':
-      return <StartEndForm type="start" />;
-    case 'end':
-      return <StartEndForm type="end" />;
-    case 'prompt':
-      return (
+  return (
+    <Switch fallback={null}>
+      <Match when={props.node.type === 'start'}>
+        <StartEndForm type="start" />
+      </Match>
+      <Match when={props.node.type === 'end'}>
+        <StartEndForm type="end" />
+      </Match>
+      <Match when={props.node.type === 'prompt'}>
         <PromptForm
-          config={node.config}
+          config={props.node.config as PromptConfig}
           onChange={(c: PromptConfig) => props.onConfigChange({ type: 'prompt', config: c })}
         />
-      );
-    case 'schema_field':
-      return (
+      </Match>
+      <Match when={props.node.type === 'schema_field'}>
         <SchemaFieldForm
-          config={node.config}
+          config={props.node.config as SchemaFieldConfig}
           onChange={(c: SchemaFieldConfig) => props.onConfigChange({ type: 'schema_field', config: c })}
         />
-      );
-    case 'mutex_gate':
-      return (
+      </Match>
+      <Match when={props.node.type === 'mutex_gate'}>
         <GateForm
-          config={node.config}
+          config={props.node.config as MutexGateConfig}
           isMultiple={false}
           onChange={(c: MutexGateConfig) => props.onConfigChange({ type: 'mutex_gate', config: c })}
         />
-      );
-    case 'group_gate':
-      return (
+      </Match>
+      <Match when={props.node.type === 'group_gate'}>
         <GateForm
-          config={node.config}
+          config={props.node.config as GroupGateConfig}
           isMultiple={true}
           onChange={(c: GroupGateConfig) => props.onConfigChange({ type: 'group_gate', config: c })}
         />
-      );
-    case 'mode_switch':
-      return (
+      </Match>
+      <Match when={props.node.type === 'mode_switch'}>
         <ModeSwitchForm
-          config={node.config}
+          config={props.node.config as ModeSwitchConfig}
           onChange={(c: ModeSwitchConfig) => props.onConfigChange({ type: 'mode_switch', config: c })}
         />
-      );
-    case 'role_switch':
-      return (
+      </Match>
+      <Match when={props.node.type === 'role_switch'}>
         <RoleSwitchForm
-          config={node.config}
+          config={props.node.config as RoleSwitchConfig}
           onChange={(c: RoleSwitchConfig) => props.onConfigChange({ type: 'role_switch', config: c })}
         />
-      );
-    case 'constant':
-      return (
+      </Match>
+      <Match when={props.node.type === 'constant'}>
         <ConstantForm
-          config={node.config}
+          config={props.node.config as ConstantConfig}
           onChange={(c: ConstantConfig) => props.onConfigChange({ type: 'constant', config: c })}
         />
-      );
-    case 'branch':
-      return (
+      </Match>
+      <Match when={props.node.type === 'branch'}>
         <BranchForm
-          config={node.config}
+          config={props.node.config as BranchConfig}
           onChange={(c: BranchConfig) => props.onConfigChange({ type: 'branch', config: c })}
         />
-      );
-    case 'sampling_params':
-      return (
+      </Match>
+      <Match when={props.node.type === 'sampling_params'}>
         <SamplingParamsForm
-          config={node.config}
+          config={props.node.config as SamplingParamsConfig}
           onChange={(c: SamplingParamsConfig) => props.onConfigChange({ type: 'sampling_params', config: c })}
         />
-      );
-  }
+      </Match>
+    </Switch>
+  );
 };
 
 // ─── 导出空配置工厂（用于 BlueprintEditor 创建新节点时初始化）───

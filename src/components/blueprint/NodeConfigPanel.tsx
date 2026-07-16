@@ -30,8 +30,22 @@
  * - C5 Mobile Frontend Independence: PC-only, lives under `src/`.
  */
 
-import { Component, Show } from 'solid-js';
-import type { BlueprintNode, NodeConfig } from '../../lib/blueprint/types';
+import { Component, Show, Switch, Match } from 'solid-js';
+import type {
+  BlueprintNode,
+  BranchConfig,
+  ConstantConfig,
+  EndConfig,
+  GroupGateConfig,
+  ModeSwitchConfig,
+  MutexGateConfig,
+  NodeConfig,
+  PromptConfig,
+  RoleSwitchConfig,
+  SamplingParamsConfig,
+  SchemaFieldConfig,
+  StartConfig,
+} from '../../lib/blueprint/types';
 import { isNodeLocked } from './nodeLayout';
 import { Lock, Trash2 } from '../../lib/icons';
 import { IconButton } from '../ui/IconButton';
@@ -90,137 +104,63 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onDelete(node.id);
   };
 
-  /**
-   * Dispatch to the per-type config component. The `switch` on `node.type`
-   * narrows the discriminated union so `node.config` is typed precisely
-   * inside each branch — no `as` cast required.
-   */
-  const renderConfig = (node: BlueprintNode) => {
-    const locked = isLocked();
-    switch (node.type) {
-      case 'start':
-        return <StartNode config={node.config} isLocked={locked} onUpdate={() => {}} />;
-      case 'end':
-        return <EndNode config={node.config} isLocked={locked} onUpdate={() => {}} />;
-      case 'prompt':
-        return (
-          <PromptNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'prompt',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'schema_field':
-        return (
-          <SchemaFieldNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'schema_field',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'mutex_gate':
-        return (
-          <MutexGateNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'mutex_gate',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'group_gate':
-        return (
-          <GroupGateNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'group_gate',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'mode_switch':
-        return (
-          <ModeSwitchNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'mode_switch',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'role_switch':
-        return (
-          <RoleSwitchNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'role_switch',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'constant':
-        return (
-          <ConstantNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'constant',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'branch':
-        return (
-          <BranchNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'branch',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-      case 'sampling_params':
-        return (
-          <SamplingParamsNode
-            config={node.config}
-            isLocked={locked}
-            onUpdate={(updates) =>
-              props.onUpdate(node.id, {
-                type: 'sampling_params',
-                config: { ...node.config, ...updates },
-              })
-            }
-          />
-        );
-    }
-  };
+  // ─── Per-type update helpers ───
+  // Each helper narrows the config type so the per-type component receives
+  // a properly typed config. The `as` cast is safe because <Match when=...>
+  // guarantees the runtime type before this component is rendered.
+  //
+  // IMPORTANT: We use <Switch>/<Match> instead of a `renderConfig(node())`
+  // function call because the latter re-creates the component on every
+  // config change (each keystroke), causing the input to lose focus.
+  // <Match> only re-mounts when the node *type* changes; config changes
+  // update props in-place, preserving focus.
+
+  const updateStart = (_nodeId: string) => {};
+  const updatePrompt = (nodeId: string, updates: Partial<PromptConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'prompt',
+      config: { ...(props.node!.config as PromptConfig), ...updates },
+    });
+  const updateSchemaField = (nodeId: string, updates: Partial<SchemaFieldConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'schema_field',
+      config: { ...(props.node!.config as SchemaFieldConfig), ...updates },
+    });
+  const updateMutexGate = (nodeId: string, updates: Partial<MutexGateConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'mutex_gate',
+      config: { ...(props.node!.config as MutexGateConfig), ...updates },
+    });
+  const updateGroupGate = (nodeId: string, updates: Partial<GroupGateConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'group_gate',
+      config: { ...(props.node!.config as GroupGateConfig), ...updates },
+    });
+  const updateModeSwitch = (nodeId: string, updates: Partial<ModeSwitchConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'mode_switch',
+      config: { ...(props.node!.config as ModeSwitchConfig), ...updates },
+    });
+  const updateRoleSwitch = (nodeId: string, updates: Partial<RoleSwitchConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'role_switch',
+      config: { ...(props.node!.config as RoleSwitchConfig), ...updates },
+    });
+  const updateConstant = (nodeId: string, updates: Partial<ConstantConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'constant',
+      config: { ...(props.node!.config as ConstantConfig), ...updates },
+    });
+  const updateBranch = (nodeId: string, updates: Partial<BranchConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'branch',
+      config: { ...(props.node!.config as BranchConfig), ...updates },
+    });
+  const updateSamplingParams = (nodeId: string, updates: Partial<SamplingParamsConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'sampling_params',
+      config: { ...(props.node!.config as SamplingParamsConfig), ...updates },
+    });
 
   return (
     <aside class="flex flex-col h-full bg-night-water/60 backdrop-blur-xl border-l border-white/5">
@@ -258,9 +198,91 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
               </IconButton>
             </header>
 
-            {/* Body: dispatch to per-type config component */}
+            {/*
+              Body: dispatch to per-type config component via <Switch>/<Match>.
+              <Match> only re-mounts when node().type changes; config changes
+              update props in-place, preserving input focus.
+            */}
             <div class="flex-1 overflow-y-auto px-5 py-5 custom-scrollbar">
-              {renderConfig(node())}
+              <Switch fallback={null}>
+                <Match when={node().type === 'start'}>
+                  <StartNode
+                    config={node().config as StartConfig}
+                    isLocked={isLocked()}
+                    onUpdate={() => updateStart(node().id)}
+                  />
+                </Match>
+                <Match when={node().type === 'end'}>
+                  <EndNode
+                    config={node().config as EndConfig}
+                    isLocked={isLocked()}
+                    onUpdate={() => {}}
+                  />
+                </Match>
+                <Match when={node().type === 'prompt'}>
+                  <PromptNode
+                    config={node().config as PromptConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updatePrompt(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'schema_field'}>
+                  <SchemaFieldNode
+                    config={node().config as SchemaFieldConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateSchemaField(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'mutex_gate'}>
+                  <MutexGateNode
+                    config={node().config as MutexGateConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateMutexGate(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'group_gate'}>
+                  <GroupGateNode
+                    config={node().config as GroupGateConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateGroupGate(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'mode_switch'}>
+                  <ModeSwitchNode
+                    config={node().config as ModeSwitchConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateModeSwitch(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'role_switch'}>
+                  <RoleSwitchNode
+                    config={node().config as RoleSwitchConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateRoleSwitch(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'constant'}>
+                  <ConstantNode
+                    config={node().config as ConstantConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateConstant(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'branch'}>
+                  <BranchNode
+                    config={node().config as BranchConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateBranch(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'sampling_params'}>
+                  <SamplingParamsNode
+                    config={node().config as SamplingParamsConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateSamplingParams(node().id, updates)}
+                  />
+                </Match>
+              </Switch>
             </div>
           </>
         )}

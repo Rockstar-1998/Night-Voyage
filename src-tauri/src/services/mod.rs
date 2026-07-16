@@ -5,6 +5,8 @@ pub mod chat;
 pub mod chat_service;
 /// Isolated debug log macros — see module docs for cleanup procedure.
 pub mod debug_log;
+/// Isolated debug log for preset save chain — see module docs for cleanup procedure.
+pub mod debug_preset_save;
 pub mod http_client;
 pub mod mem0_snapshot;
 pub mod memory_providers;

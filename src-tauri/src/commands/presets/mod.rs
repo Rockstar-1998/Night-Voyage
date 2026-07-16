@@ -1,4 +1,5 @@
 use crate::models::{PresetDetail, PresetSummary};
+use crate::services::debug_preset_save;
 use crate::services::preset_service::PresetService;
 use crate::validators::preset_validator::{
     PresetPromptBlockInput, PresetProviderOverrideInput,
@@ -115,8 +116,9 @@ pub async fn presets_update(
     provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
     semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
 ) -> Result<PresetDetail, String> {
+    debug_preset_save::entry(id, &name, blueprint_graph.as_deref());
     let service = PresetService::new(&state.db);
-    service
+    let result = service
         .update(
             id,
             name,
@@ -141,7 +143,12 @@ pub async fn presets_update(
             provider_overrides,
             semantic_groups,
         )
-        .await
+        .await;
+    match &result {
+        Ok(_) => debug_preset_save::success(),
+        Err(err) => debug_preset_save::error(err),
+    }
+    result
 }
 
 #[tauri::command]
