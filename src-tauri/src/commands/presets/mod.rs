@@ -18,8 +18,18 @@ pub async fn presets_get(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<PresetDetail, String> {
+    debug_preset_save::load_entry(id);
     let service = PresetService::new(&state.db);
-    service.get_by_id(id).await
+    match service.get_by_id(id).await {
+        Ok(detail) => {
+            debug_preset_save::load_ok(id, detail.preset.blueprint_graph.as_deref());
+            Ok(detail)
+        }
+        Err(err) => {
+            debug_preset_save::load_failed(id, &err);
+            Err(err)
+        }
+    }
 }
 
 #[tauri::command]

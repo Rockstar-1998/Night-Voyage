@@ -98,3 +98,29 @@ pub fn success() {
 pub fn error(err: &str) {
     dbg_eprintln!("[preset-save] error: {}", err);
 }
+
+// ─── 加载链路日志（用于对比保存/读取内容是否一致）───
+
+/// presets_get 入口：记录请求的 preset id。
+pub fn load_entry(id: i64) {
+    dbg_eprintln!("[preset-load] entry: id={}", id);
+}
+
+/// presets_get 成功：记录读取到的 blueprint_graph 长度和内容前缀（前 300 字符）。
+pub fn load_ok(id: i64, blueprint_graph: Option<&str>) {
+    match blueprint_graph {
+        Some(g) => {
+            let len = g.len();
+            let prefix: String = g.chars().take(300).collect();
+            dbg_eprintln!("[preset-load] ok: id={}, blueprint_graph_len={}, prefix={}", id, len, prefix);
+        }
+        None => {
+            dbg_eprintln!("[preset-load] ok: id={}, blueprint_graph=None", id);
+        }
+    }
+}
+
+/// presets_get 失败。
+pub fn load_failed(id: i64, err: &str) {
+    dbg_eprintln!("[preset-load] FAILED: id={}, err={}", id, err);
+}
