@@ -33,7 +33,7 @@
  */
 
 import { Component, Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
-import { createStore, produce } from 'solid-js/store';
+import { createStore } from 'solid-js/store';
 import { ArrowLeft, Eye, Save } from '../../lib/icons';
 import {
   NODE_TYPES,
@@ -355,11 +355,12 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           // Normalize Start/End nodes: the serialized JSON omits `config`
           // per Rust serde convention; add `config: {}` back in memory.
           const normalizedNodes = normalizeLoadedNodes(parsed.nodes);
-          setGraph(produce(() => {
-            graph.nodes.splice(0, graph.nodes.length, ...normalizedNodes);
-            graph.edges.splice(0, graph.edges.length, ...parsed.edges);
-            (graph as BlueprintGraph).version = 2;
-          }));
+          // 修复：使用直接路径赋值替代 produce+splice。
+          // produce+splice 在 SolidJS store 中会导致节点丢失（race condition）。
+          // 直接赋值 nodes/edges 数组是 SolidJS store 推荐的替换方式。
+          setGraph('nodes', normalizedNodes);
+          setGraph('edges', parsed.edges);
+          setGraph('version', 2);
           dbgGraphStore(graph.nodes.length);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -372,11 +373,9 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       } else {
         // No blueprint graph yet — use default Start→End empty graph.
         const empty = createEmptyGraph();
-        setGraph(produce(() => {
-          graph.nodes.splice(0, graph.nodes.length, ...empty.nodes);
-          graph.edges.splice(0, graph.edges.length, ...empty.edges);
-          (graph as BlueprintGraph).version = 2;
-        }));
+        setGraph('nodes', empty.nodes);
+        setGraph('edges', empty.edges);
+        setGraph('version', 2);
         setDirty(false);
       }
     } catch (e) {
@@ -415,10 +414,8 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   };
 
   const handleDeleteNode = (nodeId: string) => {
-    setGraph(produce((g) => {
-      g.nodes = g.nodes.filter((n) => n.id !== nodeId);
-      g.edges = g.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-    }));
+    setGraph('nodes', (prev) => prev.filter((n) => n.id !== nodeId));
+    setGraph('edges', (prev) => prev.filter((e) => e.source !== nodeId && e.target !== nodeId));
     if (selectedNodeId() === nodeId) setSelectedNodeId(null);
     setHiddenNodeIds((prev) => {
       const next = new Set(prev);
