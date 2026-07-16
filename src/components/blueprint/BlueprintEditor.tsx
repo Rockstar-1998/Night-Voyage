@@ -56,6 +56,12 @@ import { NodeSelector } from './NodeSelector';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
 import type { ViewTransform } from './nodeLayout';
+import {
+  logUpdate as dbgUpdate,
+  logSaveStart as dbgSaveStart,
+  logSaveDone as dbgSaveDone,
+  logLoad as dbgLoad,
+} from '../../lib/debug/blueprintSaveDebug';
 
 // ─── Props ───
 
@@ -334,6 +340,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       setPresetDetail(detail);
 
       const rawGraph = detail.preset.blueprintGraph;
+      dbgLoad(rawGraph);
       if (rawGraph && rawGraph.trim() !== '') {
         // Preset already has a blueprint graph — parse it.
         try {
@@ -418,6 +425,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const handleUpdateNode = (nodeId: string, updates: Partial<NodeConfig>) => {
     // NodeConfigPanel always passes a complete { type, config } variant.
     const patch = updates as NodeConfig;
+    dbgUpdate(nodeId, patch);
     setGraph('nodes', (prev) => prev.map((n) => {
       if (n.id !== nodeId) return n;
       return { id: n.id, position: n.position, ...patch } as BlueprintNode;
@@ -494,8 +502,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setError(null);
     try {
       const json = serializeBlueprintGraph(graph);
+      dbgSaveStart(json);
       const payload = buildBlueprintUpdatePayload(detail, json);
       const updated = await presetsUpdate(payload);
+      dbgSaveDone(updated.preset.blueprintGraph);
       setPresetDetail(updated);
       setDirty(false);
       showToast('蓝图已保存', 'success');
