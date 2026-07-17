@@ -3,7 +3,6 @@ pub mod blueprint;
 pub mod characters;
 pub mod chat;
 pub mod conversations;
-pub mod debug;
 pub mod exchange;
 pub mod mem0;
 pub mod mem0_snapshot;

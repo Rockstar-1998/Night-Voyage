@@ -61,10 +61,6 @@ import {
   ViewTransform,
 } from './nodeLayout';
 import { showToast } from '../Toast';
-import {
-  logRender as dbgRender,
-  logLayoutError as dbgLayoutError,
-} from '../../lib/debug/blueprintSaveDebug';
 
 // ─── Props ───
 
@@ -337,13 +333,6 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     props.graph.nodes.filter((n) => !props.hiddenNodeIds.has(n.id)),
   );
 
-  // Debug: log render state whenever visibleNodes changes
-  createMemo(() => {
-    const vn = visibleNodes();
-    dbgRender(props.graph.nodes.length, vn.length, props.hiddenNodeIds.size);
-    return vn;
-  });
-
   const isEdgeHidden = (edge: BlueprintEdge): boolean =>
     props.hiddenNodeIds.has(edge.source) || props.hiddenNodeIds.has(edge.target);
 
@@ -440,13 +429,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
         {/* Nodes */}
         <For each={visibleNodes()}>
           {(node) => {
-            let layout;
-            try {
-              layout = computeNodeLayout(node);
-            } catch (e) {
-              dbgLayoutError(node.id, node.type, e);
-              return null;
-            }
+            const layout = computeNodeLayout(node);
             const isSelected = props.selectedNodeId === node.id;
             const isHidden = props.hiddenNodeIds.has(node.id);
             return (

@@ -84,7 +84,6 @@ pub fn run() {
             commands::providers::providers_test_claude_native,
             commands::providers::providers_fetch_models,
             commands::providers::providers_count_tokens,
-            commands::debug::debug_log_frontend,
             commands::conversations::conversations_list,
             commands::conversations::conversations_create,
             commands::conversations::conversations_update_bindings,

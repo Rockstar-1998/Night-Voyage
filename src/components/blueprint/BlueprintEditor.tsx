@@ -56,15 +56,6 @@ import { NodeSelector } from './NodeSelector';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
 import type { ViewTransform } from './nodeLayout';
-import {
-  logUpdate as dbgUpdate,
-  logSaveStart as dbgSaveStart,
-  logSaveDone as dbgSaveDone,
-  logLoad as dbgLoad,
-  logParsed as dbgParsed,
-  logGraphStore as dbgGraphStore,
-  logParseError as dbgParseError,
-} from '../../lib/debug/blueprintSaveDebug';
 
 // ─── Props ───
 
@@ -343,7 +334,6 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       setPresetDetail(detail);
 
       const rawGraph = detail.preset.blueprintGraph;
-      dbgLoad(rawGraph);
       if (rawGraph && rawGraph.trim() !== '') {
         // Preset already has a blueprint graph — parse it.
         try {
@@ -351,20 +341,14 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
             throw new Error('blueprint_graph JSON 结构无效（version/nodes/edges 缺失）');
           }
-          dbgParsed(parsed.nodes.length, parsed.edges.length);
           // Normalize Start/End nodes: the serialized JSON omits `config`
           // per Rust serde convention; add `config: {}` back in memory.
           const normalizedNodes = normalizeLoadedNodes(parsed.nodes);
-          // 修复：使用直接路径赋值替代 produce+splice。
-          // produce+splice 在 SolidJS store 中会导致节点丢失（race condition）。
-          // 直接赋值 nodes/edges 数组是 SolidJS store 推荐的替换方式。
           setGraph('nodes', normalizedNodes);
           setGraph('edges', parsed.edges);
           setGraph('version', 2);
-          dbgGraphStore(graph.nodes.length);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          dbgParseError(e);
           setError(`解析蓝图 JSON 失败：${msg}`);
           showToast(`解析蓝图 JSON 失败：${msg}`, 'error');
           // Keep the empty graph initialized in createStore as a safe default
@@ -428,7 +412,6 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const handleUpdateNode = (nodeId: string, updates: Partial<NodeConfig>) => {
     // NodeConfigPanel always passes a complete { type, config } variant.
     const patch = updates as NodeConfig;
-    dbgUpdate(nodeId, patch);
     setGraph('nodes', (prev) => prev.map((n) => {
       if (n.id !== nodeId) return n;
       return { id: n.id, position: n.position, ...patch } as BlueprintNode;
@@ -505,10 +488,8 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setError(null);
     try {
       const json = serializeBlueprintGraph(graph);
-      dbgSaveStart(json);
       const payload = buildBlueprintUpdatePayload(detail, json);
       const updated = await presetsUpdate(payload);
-      dbgSaveDone(updated.preset.blueprintGraph);
       setPresetDetail(updated);
       setDirty(false);
       showToast('蓝图已保存', 'success');

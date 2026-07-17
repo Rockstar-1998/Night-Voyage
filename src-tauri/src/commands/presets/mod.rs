@@ -1,5 +1,4 @@
 use crate::models::{PresetDetail, PresetSummary};
-use crate::services::debug_preset_save;
 use crate::services::preset_service::PresetService;
 use crate::validators::preset_validator::{
     PresetPromptBlockInput, PresetProviderOverrideInput,
@@ -18,18 +17,8 @@ pub async fn presets_get(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<PresetDetail, String> {
-    debug_preset_save::load_entry(id);
     let service = PresetService::new(&state.db);
-    match service.get_by_id(id).await {
-        Ok(detail) => {
-            debug_preset_save::load_ok(id, detail.preset.blueprint_graph.as_deref());
-            Ok(detail)
-        }
-        Err(err) => {
-            debug_preset_save::load_failed(id, &err);
-            Err(err)
-        }
-    }
+    service.get_by_id(id).await
 }
 
 #[tauri::command]
@@ -126,9 +115,8 @@ pub async fn presets_update(
     provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
     semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
 ) -> Result<PresetDetail, String> {
-    debug_preset_save::entry(id, &name, blueprint_graph.as_deref());
     let service = PresetService::new(&state.db);
-    let result = service
+    service
         .update(
             id,
             name,
@@ -153,12 +141,7 @@ pub async fn presets_update(
             provider_overrides,
             semantic_groups,
         )
-        .await;
-    match &result {
-        Ok(_) => debug_preset_save::success(),
-        Err(err) => debug_preset_save::error(err),
-    }
-    result
+        .await
 }
 
 #[tauri::command]
