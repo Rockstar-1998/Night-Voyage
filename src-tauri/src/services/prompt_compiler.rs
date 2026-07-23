@@ -631,7 +631,16 @@ pub async fn compile_prompt(
     let blueprint_blocks: Vec<PromptBlock> = blueprint_result
         .blocks
         .iter()
-        .map(compiled_block_to_prompt_block)
+        .map(|compiled| {
+            // 内容模板层：蓝图 Prompt 节点 content 经 minijinja 渲染（D2 Strict，
+            // 未知变量上抛为编译错误，禁止静默回退）。转换与渲染分离，
+            // compiled_block_to_prompt_block 保持纯转换。
+            let descriptor = format!("blueprint node `{}`", compiled.identifier);
+            let rendered = render_prompt_template(&compiled.content, &render_context, &descriptor)?;
+            let mut rendered_block = compiled.clone();
+            rendered_block.content = rendered;
+            compiled_block_to_prompt_block(&rendered_block)
+        })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.replace('\\', "/"))?;
     system_blocks = blueprint_blocks;
@@ -798,9 +807,10 @@ pub async fn compile_prompt(
         input.target_round_id,
         exclude_message_id,
         &mut history_blocks,
+        &render_context,
         &mut debug,
     )
-    .await;
+    .await?;
 
     if let Some(world_book_id) = context.world_book_id {
         dbg_eprintln!(
@@ -2196,29 +2206,46 @@ async fn ensure_opening_in_history(
     target_round_id: Option<i64>,
     exclude_message_id: i64,
     history_blocks: &mut Vec<PromptBlock>,
+    render_context: &PromptTemplateRenderContext,
     debug: &mut PromptCompileDebugReport,
-) {
-    let opening = match load_opening_block(db, conversation_id, target_round_id, exclude_message_id, debug).await {
+) -> Result<(), String> {
+    // 错误分层（见 spec §4.3）：
+    // - DB 加载错误：保持既有 best-effort（非致命，log 后跳过开场注入）。
+    // - 模板渲染错误：必须上抛为 compile 错误（D2/C2 零回退）。
+    let mut opening = match load_opening_block(db, conversation_id, target_round_id, exclude_message_id, debug).await {
         Ok(Some(block)) => block,
-        Ok(None) => return,
+        Ok(None) => return Ok(()),
         Err(err) => {
             dbg_eprintln!("[prompt-compiler] ensure_opening_in_history: failed to load opening (non-fatal): {}", err);
-            return;
+            return Ok(());
         }
     };
 
     let opening_message_id = match &opening.source {
         PromptBlockSource::Message { message_id } => *message_id,
-        _ => return,
+        _ => return Ok(()),
     };
+
+    // 内容模板层：开场消息 content 经 minijinja 渲染。开场归属限 AI 角色卡，
+    // 可引用 character.* 与 player_character.name（<user>）。DB 存原始模板，
+    // 渲染只发生在编译期。
+    let descriptor = format!("opening message `{opening_message_id}`");
+    let rendered = render_prompt_template(&opening.content, render_context, &descriptor)?;
+    let token_cost = estimate_token_cost(&rendered);
 
     if let Some(existing) = history_blocks.iter_mut().find(|b| {
         matches!(&b.source, PromptBlockSource::Message { message_id } if *message_id == opening_message_id)
     }) {
+        // legacy 模式：开场已在 history_blocks（原始 content），覆盖为渲染结果。
         existing.required = true;
+        existing.content = rendered;
+        existing.token_cost_estimate = Some(token_cost);
     } else {
+        opening.content = rendered;
+        opening.token_cost_estimate = Some(token_cost);
         history_blocks.insert(0, opening);
     }
+    Ok(())
 }
 
 fn filter_structured_content(
@@ -2801,7 +2828,10 @@ fn source_message_id(source: &PromptBlockSource) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_character_system_message, CharacterBaseSectionCompileData, CharacterCompileData,
+        build_character_system_message, render_prompt_template, CharacterBaseSectionCompileData,
+        CharacterCompileData, PromptTemplateCharacterContext, PromptTemplateConversationContext,
+        PromptTemplateCurrentUserContext, PromptTemplateProviderContext,
+        PromptTemplateRenderContext,
     };
 
     #[test]
@@ -2847,5 +2877,101 @@ mod tests {
         assert!(message.contains("Character Name: Mina"));
         assert!(message.contains("Character Tags: scholar"));
         assert!(message.contains("Character Description: An observant archivist."));
+    }
+
+    /// 构造一个含 character + player_character 的渲染上下文，供模板单测复用。
+    fn sample_render_context() -> PromptTemplateRenderContext {
+        PromptTemplateRenderContext {
+            conversation: PromptTemplateConversationContext {
+                id: 100,
+                host_character_id: Some(7),
+                world_book_id: None,
+                preset_id: Some(3),
+                target_round_id: None,
+            },
+            provider: PromptTemplateProviderContext {
+                kind: "openai".to_string(),
+                model_name: "gpt-4o".to_string(),
+            },
+            current_user: PromptTemplateCurrentUserContext {
+                role: "user".to_string(),
+                content: "hello".to_string(),
+                message_id: 0,
+            },
+            character: Some(PromptTemplateCharacterContext {
+                id: 7,
+                name: "Aria".to_string(),
+                description: "A wandering bard.".to_string(),
+                tags: vec!["bard".to_string()],
+                base_sections: vec![],
+            }),
+            player_character: Some(PromptTemplateCharacterContext {
+                id: 9,
+                name: "Ren".to_string(),
+                description: "A quiet traveler.".to_string(),
+                tags: vec!["traveler".to_string()],
+                base_sections: vec![],
+            }),
+        }
+    }
+
+    // D1：不含 {{ }} 的文本原样透传（蓝图/开场 content 无副作用）。
+    #[test]
+    fn render_template_passthrough_without_placeholders() {
+        let ctx = sample_render_context();
+        let out = render_prompt_template(
+            "You are a calm observer. No variables here.",
+            &ctx,
+            "test",
+        )
+        .expect("plain text should render unchanged");
+        assert_eq!(out, "You are a calm observer. No variables here.");
+    }
+
+    // D3 + 蓝图/开场站点：{{ character.name }} 与 {{ player_character.name }} 替换。
+    #[test]
+    fn render_template_substitutes_character_and_player() {
+        let ctx = sample_render_context();
+        let out = render_prompt_template(
+            "{{ character.name }} greets {{ player_character.name }}.",
+            &ctx,
+            "test",
+        )
+        .expect("known variables should substitute");
+        assert_eq!(out, "Aria greets Ren.");
+    }
+
+    // D6：开场消息引用 player_character.name（即 <user>）应正确替换。
+    #[test]
+    fn render_template_opening_uses_player_character_name() {
+        let ctx = sample_render_context();
+        let out = render_prompt_template(
+            "You open your eyes and see {{ player_character.name }} at the door.",
+            &ctx,
+            "opening message `1`",
+        )
+        .expect("player_character.name should resolve in opening");
+        assert_eq!(
+            out,
+            "You open your eyes and see Ren at the door."
+        );
+    }
+
+    // D2：未知 {{ var }} 必须 Strict 报错，不得静默留空（C2 零回退）。
+    #[test]
+    fn render_template_unknown_variable_errors() {
+        let ctx = sample_render_context();
+        let err = render_prompt_template(
+            "Hello {{ nonexistent }}",
+            &ctx,
+            "blueprint node `x`",
+        );
+        assert!(err.is_err(), "unknown variable must error under Strict");
+        let msg = err.unwrap_err();
+        assert!(msg.contains("blueprint node `x`"), "descriptor must surface: {msg}");
+        assert!(
+            msg.contains("template render failed"),
+            "error must carry render-failed marker: {msg}"
+        );
     }
 }
