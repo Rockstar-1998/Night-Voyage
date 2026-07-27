@@ -246,6 +246,8 @@ type DesktopViewProps = {
   onDeleteConversation: (id: number) => Promise<void> | void;
   onOpenRoom?: (conversationId: number) => void;
   onCloseRoom?: (conversationId: number) => void;
+  /// 当前用户是否为房客（远程房间会话）。房客不可关闭房间。
+  isGuest?: boolean;
   providers: ApiProviderSummary[];
   providerModels: Record<number, RemoteModel[]>;
   providersLoading: boolean;
@@ -487,6 +489,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                             onDeleteConversation={props.onDeleteConversation}
                             onOpenRoom={props.onOpenRoom}
                             onCloseRoom={props.onCloseRoom}
+                            isGuest={props.isGuest}
                           />
                         </div>
                       </Show>
@@ -2677,6 +2680,7 @@ function App() {
         onDeleteConversation={handleDeleteConversation}
         onOpenRoom={handleOpenRoom}
         onCloseRoom={handleCloseRoom}
+        isGuest={roomClientSession()?.conversation.id === selectedConversationId()}
         roomActionLoading={roomActionLoading()}
         providers={providers}
         providerModels={providerModels}

@@ -2016,7 +2016,7 @@ pub async fn build_context_snapshot(
     .filter(|n: &String| !n.is_empty());
 
     let host_world_book_name = sqlx::query_scalar::<_, String>(
-        "SELECT wb.name FROM conversations c LEFT JOIN world_books wb ON wb.id = c.world_book_id WHERE c.id = ? LIMIT 1",
+        "SELECT wb.title FROM conversations c LEFT JOIN world_books wb ON wb.id = c.world_book_id WHERE c.id = ? LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_optional(db)

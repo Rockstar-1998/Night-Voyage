@@ -17,6 +17,8 @@ interface SessionSidebarProps {
   onDeleteConversation?: (id: number) => void;
   onOpenRoom?: (conversationId: number) => void;
   onCloseRoom?: (conversationId: number) => void;
+  /// 当前用户是否为房客（远程房间会话）。房客不可关闭房间。
+  isGuest?: boolean;
 }
 
 export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
@@ -171,19 +173,28 @@ export const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                                 </span>
                               </div>
                               <Show
-                                when={session.roomStatus === 'open'}
+                                when={session.roomStatus === 'open' && !props.isGuest}
                                 fallback={
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      props.onOpenRoom?.(session.id);
-                                    }}
-                                    disabled={props.roomActionLoading}
-                                    class="w-full py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-500/20"
+                                  <Show
+                                    when={session.roomStatus === 'open'}
+                                    fallback={
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onOpenRoom?.(session.id);
+                                        }}
+                                        disabled={props.roomActionLoading}
+                                        class="w-full py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-500/20"
+                                      >
+                                        {props.roomActionLoading ? '开启中...' : '开启房间'}
+                                      </button>
+                                    }
                                   >
-                                    {props.roomActionLoading ? '开启中...' : '开启房间'}
-                                  </button>
+                                    <div class="w-full py-2.5 rounded-xl bg-white/5 text-mist-solid/40 text-xs font-bold uppercase tracking-wider text-center border border-white/10">
+                                      房客模式（不可关闭房间）
+                                    </div>
+                                  </Show>
                                 }
                               >
                                 <button

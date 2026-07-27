@@ -171,7 +171,6 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setRoomCreating(true);
     setRoomError('');
     try {
-      console.debug('[NewChatModal] handleCreateRoom: creating room on port', port, 'conversationId', conversationId);
       const result = await roomCreate({
         roomName: title().trim() || selectedCharacter()?.name || '未命名房间',
         conversationId,

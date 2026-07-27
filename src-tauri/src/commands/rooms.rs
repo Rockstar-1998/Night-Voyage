@@ -94,6 +94,24 @@ pub async fn room_create(
         }
     }
 
+    // 防御性校验：会话必须真实存在，否则 rooms.conversation_id 外键会触发 787。
+    // 这是 C2 零回退要求——不让 DB 抛晦涩的 FK 错误，而是返回明确语义错误。
+    let conversation_exists: Option<bool> = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+    if conversation_exists != Some(true) {
+        let msg = format!(
+            "创建房间失败：会话 {} 不存在或已被删除，无法绑定到房间（外键约束）",
+            conversation_id
+        );
+        dbg_eprintln!("[room-create] rejected: {}", msg);
+        return Err(msg);
+    }
+
     // Insert room record
     let room_id = sqlx::query_scalar::<_, i64>(
         "INSERT INTO rooms (room_name, host_address, conversation_id, max_players, host_port, status, current_player_count, passphrase, created_at) \
