@@ -259,6 +259,7 @@ pub async fn conversations_create(
                         role: "assistant",
                         message_kind: "assistant_visible",
                         content: &content,
+                        display_name: None,
                         is_hidden: false,
                         is_swipe: false,
                         swipe_index: 0,
@@ -1241,7 +1242,7 @@ pub async fn conversations_fork(
         })?;
 
         let orig_messages = sqlx::query(
-            "SELECT id, member_id, role, content, message_kind, is_hidden, is_swipe, swipe_index, reply_to_id, created_at FROM messages WHERE round_id = ? AND id <= ? ORDER BY id"
+            "SELECT id, member_id, role, content, message_kind, is_hidden, is_swipe, swipe_index, reply_to_id, created_at, COALESCE(display_name, '') AS display_name FROM messages WHERE round_id = ? AND id <= ? ORDER BY id"
         )
         .bind(orig_round_id)
         .bind(up_to_message_id)
@@ -1256,7 +1257,7 @@ pub async fn conversations_fork(
                 .or(orig_member_id);
 
             sqlx::query(
-                "INSERT INTO messages (conversation_id, round_id, member_id, role, content, message_kind, is_hidden, is_swipe, swipe_index, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO messages (conversation_id, round_id, member_id, role, content, message_kind, display_name, is_hidden, is_swipe, swipe_index, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(fork_id)
             .bind(new_round_id)
@@ -1264,6 +1265,7 @@ pub async fn conversations_fork(
             .bind(msg_row.try_get::<String, _>("role").unwrap_or_default())
             .bind(msg_row.try_get::<String, _>("content").unwrap_or_default())
             .bind(msg_row.try_get::<String, _>("message_kind").unwrap_or_default())
+            .bind(msg_row.try_get::<String, _>("display_name").unwrap_or_default())
             .bind(msg_row.try_get::<i64, _>("is_hidden").unwrap_or_default())
             .bind(msg_row.try_get::<i64, _>("is_swipe").unwrap_or_default())
             .bind(msg_row.try_get::<i64, _>("swipe_index").unwrap_or_default())

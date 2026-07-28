@@ -10,6 +10,9 @@ pub struct InsertMessageRecord<'a> {
     pub role: &'a str,
     pub message_kind: &'a str,
     pub content: &'a str,
+    /// 发送者展示名（去规范化）。仅 user 消息需要；
+    /// 写入 messages 表自包含，使成员记录被删除（房客离开）后历史仍能显示真名。
+    pub display_name: Option<String>,
     pub is_hidden: bool,
     pub is_swipe: bool,
     pub swipe_index: i64,
@@ -48,8 +51,8 @@ impl MessageRepository {
         let result = sqlx::query(
             "INSERT INTO messages (
                 conversation_id, round_id, member_id, role, message_kind, content,
-                is_hidden, is_swipe, swipe_index, reply_to_id, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                display_name, is_hidden, is_swipe, swipe_index, reply_to_id, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(record.conversation_id)
         .bind(record.round_id)
@@ -57,6 +60,7 @@ impl MessageRepository {
         .bind(record.role)
         .bind(record.message_kind)
         .bind(record.content)
+        .bind(&record.display_name)
         .bind(if record.is_hidden { 1 } else { 0 })
         .bind(if record.is_swipe { 1 } else { 0 })
         .bind(record.swipe_index)
@@ -76,22 +80,22 @@ impl MessageRepository {
     ) -> Result<Vec<UiMessage>, String> {
         let rows = sqlx::query(
             "SELECT m.id, m.conversation_id, m.round_id, m.member_id, m.role, m.message_kind, m.content, \
-             cm.display_name AS display_name, m.is_swipe, m.swipe_index, m.reply_to_id, \
+             COALESCE(m.display_name, cm.display_name) AS display_name, m.is_swipe, m.swipe_index, m.reply_to_id, \
              CASE \
-                WHEN m.role = 'assistant' AND m.round_id IS NOT NULL THEN \
-                    CASE WHEN mr.active_assistant_message_id IS NOT NULL THEN \
-                        CASE WHEN mr.active_assistant_message_id = m.id THEN 1 ELSE 0 END \
-                    ELSE \
-                        CASE WHEN m.id = (SELECT MAX(m2.id) FROM messages m2 WHERE m2.round_id = m.round_id AND m2.role = 'assistant' AND m2.is_hidden = 0) THEN 1 ELSE 0 END \
-                    END \
-                ELSE 1 \
-            END AS is_active_in_round, \
-            m.created_at \
-            FROM messages m \
-            LEFT JOIN conversation_members cm ON cm.id = m.member_id \
-            LEFT JOIN message_rounds mr ON mr.id = m.round_id \
-            WHERE m.conversation_id = ? AND m.is_hidden = 0 AND m.message_kind != 'user_aggregate' \
-             ORDER BY m.id DESC LIMIT ?",
+                 WHEN m.role = 'assistant' AND m.round_id IS NOT NULL THEN \
+                     CASE WHEN mr.active_assistant_message_id IS NOT NULL THEN \
+                         CASE WHEN mr.active_assistant_message_id = m.id THEN 1 ELSE 0 END \
+                     ELSE \
+                         CASE WHEN m.id = (SELECT MAX(m2.id) FROM messages m2 WHERE m2.round_id = m.round_id AND m2.role = 'assistant' AND m2.is_hidden = 0) THEN 1 ELSE 0 END \
+                     END \
+                 ELSE 1 \
+             END AS is_active_in_round, \
+             m.created_at \
+             FROM messages m \
+             LEFT JOIN conversation_members cm ON cm.id = m.member_id \
+             LEFT JOIN message_rounds mr ON mr.id = m.round_id \
+             WHERE m.conversation_id = ? AND m.is_hidden = 0 AND m.message_kind != 'user_aggregate' \
+              ORDER BY m.id DESC LIMIT ?",
         )
         .bind(conversation_id)
         .bind(limit)
@@ -105,7 +109,7 @@ impl MessageRepository {
     pub async fn find_by_id(db: &SqlitePool, id: i64) -> Result<UiMessage, String> {
         let row = sqlx::query(
             "SELECT m.id, m.conversation_id, m.round_id, m.member_id, m.role, m.message_kind, m.content, \
-             cm.display_name AS display_name, m.is_swipe, m.swipe_index, m.reply_to_id, \
+             COALESCE(m.display_name, cm.display_name) AS display_name, m.is_swipe, m.swipe_index, m.reply_to_id, \
              CASE \
                  WHEN m.role = 'assistant' AND m.round_id IS NOT NULL THEN \
                      CASE WHEN mr.active_assistant_message_id IS NOT NULL THEN \

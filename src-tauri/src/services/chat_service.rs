@@ -353,6 +353,18 @@ impl ChatService {
             "spoken"
         };
 
+        // 去规范化：取发送者真实展示名写入 messages，使成员记录被删（房客离开）
+        // 后历史消息仍显示真名，而非退化成「玩家」。成员在线时必然存在。
+        let sender_display_name: Option<String> = sqlx::query_scalar::<_, String>(
+            "SELECT display_name FROM conversation_members WHERE id = ?",
+        )
+        .bind(member_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .ok()
+        .flatten()
+        .filter(|n: &String| !n.trim().is_empty());
+
         RoundRepository::insert_member_action(
             &mut tx,
             round_id,
@@ -374,6 +386,7 @@ impl ChatService {
                         role: "user",
                         message_kind: "user_visible",
                         content: content.as_str(),
+                        display_name: sender_display_name,
                         is_hidden: false,
                         is_swipe: false,
                         swipe_index: 0,
@@ -442,6 +455,7 @@ impl ChatService {
                     role: "user",
                     message_kind: "user_aggregate",
                     content: aggregated_user_content.as_str(),
+                    display_name: None,
                     is_hidden: true,
                     is_swipe: false,
                     swipe_index: 0,
@@ -460,6 +474,7 @@ impl ChatService {
                     role: "assistant",
                     message_kind: "assistant_visible",
                     content: "",
+                    display_name: None,
                     is_hidden: false,
                     is_swipe: false,
                     swipe_index: 0,
@@ -612,6 +627,7 @@ impl ChatService {
                 role: "user",
                 message_kind: "user_visible",
                 content: &tool_result_display,
+                display_name: None,
                 is_hidden: false,
                 is_swipe: false,
                 swipe_index: 0,
@@ -649,6 +665,7 @@ impl ChatService {
                 role: "user",
                 message_kind: "user_aggregate",
                 content: aggregated_user_content.as_str(),
+                display_name: None,
                 is_hidden: true,
                 is_swipe: false,
                 swipe_index: 0,
@@ -667,6 +684,7 @@ impl ChatService {
                 role: "assistant",
                 message_kind: "assistant_visible",
                 content: "",
+                display_name: None,
                 is_hidden: false,
                 is_swipe: false,
                 swipe_index: 0,
@@ -735,6 +753,7 @@ impl ChatService {
                 role: "assistant",
                 message_kind: "assistant_visible",
                 content: "",
+                display_name: None,
                 is_hidden: false,
                 is_swipe: true,
                 swipe_index: next_swipe,
