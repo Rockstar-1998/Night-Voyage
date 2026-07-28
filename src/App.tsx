@@ -154,14 +154,18 @@ const toChatMessage = (
 ): ChatMessage => {
   const aiAvatar = remoteHost?.imageBase64 ?? toAssetUrl(aiCharacter?.imagePath);
   const playerAvatar = toAssetUrl(playerCharacter?.imagePath);
+  // 用户消息优先使用消息携带的真实发送者名（按成员存储的 display_name），
+  // 本地玩家角色名仅作自身消息兜底。之前一律套用本地 playerCharacter?.name
+  // 会导致多人房下双方消息都显示成自己的名字，且重连时回退为「玩家」。
+  const senderName =
+    message.role === 'assistant'
+      ? (aiCharacter?.name || remoteHost?.name || 'AI')
+      : (message.displayName || playerCharacter?.name || '玩家');
   return {
     id: String(message.id),
     backendId: message.id,
     sender: message.role === 'assistant' ? 'ai' : 'user',
-    senderName:
-      message.role === 'assistant'
-        ? (aiCharacter?.name || remoteHost?.name || 'AI')
-        : (playerCharacter?.name || message.displayName || '玩家'),
+    senderName,
     avatar: message.role === 'assistant' ? aiAvatar : playerAvatar,
     content: message.content,
     isStreaming: false,

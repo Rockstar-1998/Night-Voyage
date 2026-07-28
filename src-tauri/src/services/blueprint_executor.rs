@@ -137,6 +137,8 @@ pub async fn execute_blueprint(
             stop: Vec::new(),
         },
         db_mappings: HashMap::new(),
+        context_included_keys: HashMap::new(),
+        display_config: HashMap::new(),
     };
 
     let start_id = graph
@@ -441,18 +443,13 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         return Err(BlueprintError::UnreachableEnd);
     }
 
-    // 9. Locked nodes must be reachable from Start (simplified check per task spec)
-    for node in &graph.nodes {
-        let is_locked = match &node.config {
-            NodeConfig::Prompt(cfg) => cfg.is_locked,
-            NodeConfig::SchemaField(cfg) => cfg.is_locked,
-            NodeConfig::SamplingParams(cfg) => cfg.is_locked,
-            _ => false,
-        };
-        if is_locked && !reachable_from_start.contains(&node.id) {
-            return Err(BlueprintError::LockedNodeOffMainPath(node.id.clone()));
-        }
-    }
+    // 9. Locked nodes: `is_locked` only marks "core, not user-editable" intent.
+    // It does NOT require the node to be reachable from Start. An unreachable
+    // (orphaned) locked node is simply skipped by `traverse` and must NOT abort
+    // the whole graph compilation — that would block every prompt compile that
+    // references a preset owning such a node (e.g. an isolated rules node).
+    // Reachability of the Start→End path is already enforced by check #8 above.
+    let _ = &reachable_from_start;
 
     Ok(())
 }
@@ -517,7 +514,8 @@ fn find_merge_node(
 }
 
 /// Apply a SchemaField node to the execution result: insert property into
-/// structured_output_schema and optionally record db_mapping.
+/// structured_output_schema and optionally record db_mapping, context
+/// inclusion flag, and per-field display config.
 fn apply_schema_field(
     cfg: &SchemaFieldConfig,
     result: &mut BlueprintExecutionResult,
@@ -532,15 +530,16 @@ fn apply_schema_field(
         props.insert(cfg.field_name.clone(), property);
     }
 
-    // All fields are added to `required` — SchemaFieldConfig has no nullable
-    // marker, and the user explicitly added the node expecting the field in
-    // AI output.
-    if let Some(required) = result
-        .structured_output_schema
-        .get_mut("required")
-        .and_then(|v| v.as_array_mut())
-    {
-        required.push(serde_json::Value::String(cfg.field_name.clone()));
+    // Only mark `required` when the node opts in. When false, the field is
+    // optional in the LLM's structured output.
+    if cfg.required {
+        if let Some(required) = result
+            .structured_output_schema
+            .get_mut("required")
+            .and_then(|v| v.as_array_mut())
+        {
+            required.push(serde_json::Value::String(cfg.field_name.clone()));
+        }
     }
 
     if let Some(db_mapping) = &cfg.db_mapping {
@@ -548,6 +547,20 @@ fn apply_schema_field(
             .db_mappings
             .insert(cfg.field_name.clone(), db_mapping.clone());
     }
+
+    // Record per-field context inclusion. Prompt compiler filters structured
+    // content using this map before injecting into the next turn.
+    result
+        .context_included_keys
+        .insert(cfg.field_name.clone(), cfg.context_included);
+
+    // Always record display config so MessageItem can render consistently.
+    // The frontend defaults to default_expanded=true / hide_label=false for
+    // fields missing from the map, so we only need to record non-default
+    // overrides (or just always record; the JSON is small).
+    result
+        .display_config
+        .insert(cfg.field_name.clone(), cfg.display.clone());
 
     Ok(())
 }
