@@ -65,6 +65,8 @@ import {
   presetsDelete,
   presetsRename,
   presetsDuplicate,
+  presetsExport,
+  presetsImport,
   providersCreate,
   providersDelete,
   providersFetchModels,
@@ -371,9 +373,45 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
 
+  let presetImportInputRef: HTMLInputElement | undefined;
+
   const refreshPresetList = async () => {
     if (props.onPresetsChanged) {
       await props.onPresetsChanged();
+    }
+  };
+
+  const handleImportPresetFile = async (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (presetBusy() !== null) return;
+    setPresetBusy(-1);
+    try {
+      const payloadJson = await file.text();
+      const imported = await presetsImport(payloadJson);
+      showToast(`已导入预设「${imported.preset.name}」`, 'success');
+      await refreshPresetList();
+    } catch (err) {
+      showToast(`导入预设失败：${toErrorMessage(err)}`, 'error');
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleExportPreset = async (id: number, currentName: string) => {
+    if (presetBusy() !== null) return;
+    setPresetBusy(id);
+    try {
+      const payloadJson = await presetsExport(id);
+      const fileName = `${sanitizeFileName(currentName, 'preset')}.nvpreset.json`;
+      downloadJsonFile(fileName, payloadJson);
+      showToast(`已导出预设「${currentName}」`, 'success');
+    } catch (err) {
+      showToast(`导出预设失败：${toErrorMessage(err)}`, 'error');
+    } finally {
+      setPresetBusy(null);
     }
   };
 
@@ -670,32 +708,61 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                       选择一个预设以查看详情
                                     </span>
                                   </div>
-                              <button
-                                type="button"
-                                class="shrink-0 px-3 py-1 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
-                                onClick={handleCreatePreset}
-                                disabled={presetBusy() !== null}
-                              >
-                                + 新建预设
-                              </button>
-                            </div>
-                            <div class="flex-1 overflow-auto px-8 pb-8">
-                              <Show
-                                when={props.presetSummaries.length > 0}
-                                fallback={
-                                  <div class="flex flex-col items-center justify-center h-full gap-3">
-                                    <div class="text-sm text-mist-solid/30">暂无预设</div>
+                                  <input
+                                    ref={presetImportInputRef}
+                                    type="file"
+                                    accept=".json,.nvpreset.json,application/json"
+                                    class="hidden"
+                                    onChange={(e) => void handleImportPresetFile(e)}
+                                  />
+                                  <div class="flex items-center gap-2 shrink-0">
                                     <button
                                       type="button"
-                                      class="px-3 py-1.5 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+                                      class="px-3 py-1 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
+                                      onClick={() => presetImportInputRef?.click()}
+                                      disabled={presetBusy() !== null}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                                      导入预设
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="px-3 py-1 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
                                       onClick={handleCreatePreset}
                                       disabled={presetBusy() !== null}
                                     >
                                       + 新建预设
                                     </button>
                                   </div>
-                                }
-                              >
+                                </div>
+                                <div class="flex-1 overflow-auto px-8 pb-8">
+                                  <Show
+                                    when={props.presetSummaries.length > 0}
+                                    fallback={
+                                      <div class="flex flex-col items-center justify-center h-full gap-3">
+                                        <div class="text-sm text-mist-solid/30">暂无预设</div>
+                                        <div class="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
+                                            onClick={() => presetImportInputRef?.click()}
+                                            disabled={presetBusy() !== null}
+                                          >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                                            导入预设
+                                          </button>
+                                          <button
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+                                            onClick={handleCreatePreset}
+                                            disabled={presetBusy() !== null}
+                                          >
+                                            + 新建预设
+                                          </button>
+                                        </div>
+                                      </div>
+                                    }
+                                  >
                                 <div class="grid gap-3" style={{ "grid-template-columns": "repeat(auto-fill, minmax(280px, 1fr))" }}>
                                   <For each={props.presetSummaries}>
                                     {(preset) => (
@@ -762,6 +829,19 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                             when={renamingPresetId() !== preset.id}
                                           >
                                             <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <button
+                                                type="button"
+                                                class="p-1 rounded text-mist-solid/40 hover:text-emerald-300 hover:bg-emerald-500/15 transition-colors"
+                                                title="导出"
+                                                aria-label="导出预设"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  void handleExportPreset(preset.id, preset.name);
+                                                }}
+                                                disabled={presetBusy() !== null}
+                                              >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                                              </button>
                                               <button
                                                 type="button"
                                                 class="p-1 rounded text-mist-solid/40 hover:text-emerald-300 hover:bg-emerald-500/15 transition-colors"
@@ -842,6 +922,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                   preset={preset}
                                   onBack={() => setPresetDetailId(null)}
                                   onEditBlueprint={() => setEditingBlueprintId(preset.id)}
+                                  onExport={() => void handleExportPreset(preset.id, preset.name)}
                                 />
                               ) : null;
                             }}

@@ -36,6 +36,7 @@ export interface PresetDetailViewProps {
   preset: PresetSummary;
   onBack: () => void;
   onEditBlueprint: () => void;
+  onExport?: () => void;
 }
 
 // ─── 单个 Gate 选择器 ───
@@ -230,15 +231,28 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
             </span>
           </Show>
         </div>
-        <button
-          type="button"
-          class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
-          onClick={props.onEditBlueprint}
-          title="打开蓝图编辑器（幕后）"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21v-4a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v4"/><path d="M7 8 12 3l5 5"/><path d="M12 3v12"/></svg>
-          编辑蓝图
-        </button>
+        <div class="flex items-center gap-2 shrink-0">
+          <Show when={props.onExport}>
+            <button
+              type="button"
+              class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
+              onClick={props.onExport}
+              title="导出预设文件 (.nvpreset.json)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              导出预设
+            </button>
+          </Show>
+          <button
+            type="button"
+            class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
+            onClick={props.onEditBlueprint}
+            title="打开蓝图编辑器（幕后）"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21v-4a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v4"/><path d="M7 8 12 3l5 5"/><path d="M12 3v12"/></svg>
+            编辑蓝图
+          </button>
+        </div>
       </div>
 
       {/* 主体 */}
