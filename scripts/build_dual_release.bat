@@ -12,6 +12,11 @@ setlocal
 set "ROOT=D:\data\Night Voyage"
 set "CACHE_DIR=%ROOT%\.cache"
 set "CARGO_HOME=%CACHE_DIR%\.cargo"
+:: Expose cargo/rustc binaries to PATH so `tauri build` (which spawns
+:: `cargo metadata` via a plain PATH lookup) can discover the toolchain.
+:: The toolchain bin lives at .cache\cargo\bin (no leading dot), which is
+:: NOT on the system PATH, so it must be prepended here.
+set "PATH=%CACHE_DIR%\cargo\bin;%PATH%"
 set "NPM_CACHE_DIR=%CACHE_DIR%\npm-cache"
 set "NPM_LOGS_DIR=%NPM_CACHE_DIR%\_logs"
 set "NPM_CONFIG_CACHE=%NPM_CACHE_DIR%"

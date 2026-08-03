@@ -210,6 +210,11 @@ fn traverse(
             traverse(graph, &next, context, result, visited, path)?;
         }
         NodeConfig::MutexGate(_) => {
+            eprintln!(
+                "[blueprint-executor] MutexGate node={} reached; selections_present={}",
+                node_id,
+                context.gate_selections.contains_key(node_id)
+            );
             let selection = context
                 .gate_selections
                 .get(node_id)
@@ -225,12 +230,23 @@ fn traverse(
             traverse(graph, &merge_node, context, result, visited, path)?;
         }
         NodeConfig::GroupGate(cfg) => {
-            let selection = context
+            // GroupGate 为可选多选（如"可选增强模块"），未配置选择属合法状态：
+            // 缺失 entry 或 keys 为空均表示"不启用任何模块"，不应报错。仅在
+            // 实际选中的分支上继续遍历；未选任何项时直接收敛到 merge 节点（产出 0 块）。
+            // 这与 MutexGate（必选单选，缺失选择仍报错）形成对照——分组多选天然允许空集。
+            eprintln!(
+                "[blueprint-executor] GroupGate node={} reached; selections_present={}; selected_keys={:?}",
+                node_id,
+                context.gate_selections.contains_key(node_id),
+                context.gate_selections.get(node_id).map(|s| &s.keys)
+            );
+            let selected_keys: Vec<String> = context
                 .gate_selections
                 .get(node_id)
-                .ok_or_else(|| BlueprintError::MissingGateSelection(node_id.to_string()))?;
+                .map(|sel| sel.keys.clone())
+                .unwrap_or_default();
             for option in &cfg.options {
-                if selection.keys.contains(&option.key) {
+                if selected_keys.contains(&option.key) {
                     let port = format!("out_{}", option.key);
                     let branch_target = target_of(graph, node_id, &port)?;
                     traverse(graph, &branch_target, context, result, visited, path)?;
