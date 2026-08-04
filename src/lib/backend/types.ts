@@ -860,6 +860,15 @@ export interface RoomStatusResult {
   currentPlayerCount: number;
 }
 
+/** 房客本地保存的联机房间加入记录，重启后可一键重连（允许修改 IP/端口）。 */
+export interface RoomGuestHistoryEntry {
+  conversationId: number;
+  hostAddress: string;
+  port: number;
+  displayName: string;
+  updatedAt: number;
+}
+
 export interface RoomJoinResult {
   success: boolean;
   message: string;

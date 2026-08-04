@@ -119,6 +119,8 @@ import {
   roomRequestContext,
   roomOpen,
   roomClose,
+  roomGetStatus,
+  roomUpdatePort,
   roomBroadcastSchemaToggle,
   roomUpdateGuestCharacter,
   type RoomStreamChunkEvent,
@@ -361,6 +363,14 @@ type DesktopViewProps = {
   hostProviderName?: string | null;
   /** Room guest plot summaries (host-side data) — forwarded to RightDrawer. */
   plotSummaries?: PlotSummaryRecord[];
+  /** 会话类型：联机房间房主可改端口。 */
+  conversationType?: 'single' | 'online' | string;
+  /** 房主房间当前端口（创建后可改）。 */
+  roomPort?: number | null;
+  /** 房主房间是否处于开启状态（改端口会重开监听并断开房客）。 */
+  roomIsOpen?: boolean;
+  /** 房主主动更改房间端口的回调。 */
+  onUpdateRoomPort?: (port: number) => Promise<void> | void;
 };
 
 const AnimatedDesktopView = (props: DesktopViewProps) => {
@@ -623,6 +633,11 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                           hostWorldBookName={props.hostWorldBookName}
                           hostProviderName={props.hostProviderName}
                           plotSummaries={props.plotSummaries}
+                          conversationType={props.conversationType}
+                          isGuest={props.isGuest}
+                          roomPort={props.roomPort}
+                          roomIsOpen={props.roomIsOpen}
+                          onUpdateRoomPort={props.onUpdateRoomPort}
                         />
                       </div>
                     </>
@@ -991,6 +1006,29 @@ function App() {
   // Rewind confirmation dialog: holds the target message/round when the user
   // clicks "回溯到此轮". Null = dialog closed.
   const [rewindTarget, setRewindTarget] = createSignal<{ messageId: string; roundId: number } | null>(null);
+  // 当前联机房主会话的房间端口/开启状态，用于右侧栏端口设置展示与修改。
+  const [roomStatus, setRoomStatus] = createSignal<{ port: number | null; isOpen: boolean }>({ port: null, isOpen: false });
+
+  const refreshRoomStatus = async (conversationId: number) => {
+    try {
+      const status = await roomGetStatus({ conversationId });
+      setRoomStatus({ port: status.port ?? null, isOpen: status.isOpen });
+    } catch (error) {
+      console.error('[room] refreshRoomStatus failed', error);
+    }
+  };
+
+  const handleUpdateRoomPort = async (port: number) => {
+    const conversationId = selectedConversationId();
+    if (conversationId == null) {
+      throw new Error('当前未选择会话，无法修改房间端口。');
+    }
+    await roomUpdatePort({ conversationId, port });
+    // 端口修改后刷新房间状态；房客断开由后端 shutdown 触发，前端 RoomClient 会收到 disconnected。
+    await refreshRoomStatus(conversationId);
+    await refreshSessions();
+    showToast(`房间端口已更新为 ${port}`, 'success');
+  };
 
   const activeRoomClientSession = createMemo(() => {
     const session = roomClientSession();
@@ -1006,6 +1044,15 @@ function App() {
     if (local) return local;
     const remote = roomClientSession()?.conversation;
     return remote?.id === selectedConversationId() ? remote : null;
+  });
+  // 房主联机会话：切换选择时拉取房间端口/状态，供右侧栏端口设置展示。
+  createEffect(() => {
+    const id = selectedConversationId();
+    const conv = selectedConversation();
+    if (id == null || conv?.conversationType !== 'online' || activeRoomClientSession()) {
+      return;
+    }
+    void refreshRoomStatus(id);
   });
   const remoteHostCharacter = createMemo(() => activeRoomClientSession()?.hostCharacter ?? null);
   const selectedCharacter = createMemo(() => {
@@ -2766,6 +2813,10 @@ function App() {
         onOpenRoom={handleOpenRoom}
         onCloseRoom={handleCloseRoom}
         isGuest={roomClientSession()?.conversation.id === selectedConversationId()}
+        conversationType={selectedConversation()?.conversationType}
+        roomPort={roomStatus().port}
+        roomIsOpen={roomStatus().isOpen}
+        onUpdateRoomPort={handleUpdateRoomPort}
         roomActionLoading={roomActionLoading()}
         providers={providers}
         providerModels={providerModels}

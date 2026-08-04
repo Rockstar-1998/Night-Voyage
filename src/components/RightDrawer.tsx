@@ -1,6 +1,6 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import { Select } from './ui/Select';
-import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Save, Sparkles, UserRound, Lock } from '../lib/icons';
+import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Radio, Save, Sparkles, UserRound, Lock } from '../lib/icons';
 import { animate } from '../lib/animate';
 import type { ApiProviderSummary, CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
 import { toAssetUrl } from '../lib/backend';
@@ -28,6 +28,11 @@ interface RightDrawerProps {
   hostWorldBookName?: string | null;
   hostProviderName?: string | null;
   plotSummaries?: PlotSummaryRecord[];
+  conversationType?: 'single' | 'online' | string;
+  isGuest?: boolean;
+  roomPort?: number | null;
+  roomIsOpen?: boolean;
+  onUpdateRoomPort?: (port: number) => Promise<void> | void;
 }
 
 const getSectionLabel = (sectionKey: string) => {
@@ -58,6 +63,8 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [bindingEmbeddingProviderId, setBindingEmbeddingProviderId] = createSignal('');
   const [snapshotWindowInput, setSnapshotWindowInput] = createSignal('');
   const [snapshotWindowSaving, setSnapshotWindowSaving] = createSignal(false);
+  const [portInput, setPortInput] = createSignal('');
+  const [portSaving, setPortSaving] = createSignal(false);
   let drawerRef: HTMLDivElement | undefined;
 
   const toggleDrawer = () => {
@@ -488,6 +495,72 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
               </div>
             </Show>
           </section>
+
+          <Show when={props.conversationType === 'online' && !props.isGuest && !props.isRoomClient}>
+            <section class="border-b border-white/10 pb-6 mb-6 space-y-4">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-200 flex items-center justify-center">
+                  <Radio size={18} />
+                </div>
+                <div>
+                  <p class="text-sm font-semibold text-white">房间端口设置</p>
+                  <p class="text-xs text-mist-solid/40">仅房主可修改联机房间端口</p>
+                </div>
+              </div>
+
+              <div class="flex items-end gap-2">
+                <div class="flex-1 space-y-1">
+                  <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">端口</label>
+                  <input
+                    type="number"
+                    value={portInput() || (props.roomPort != null ? String(props.roomPort) : '')}
+                    onInput={(e) => setPortInput(e.currentTarget.value)}
+                    placeholder="例如 8080"
+                    min={1}
+                    max={65535}
+                    class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-white placeholder-mist-solid/30"
+                  />
+                </div>
+                <IconButton
+                  onClick={async () => {
+                    const val = Number(portInput());
+                    if (!Number.isFinite(val) || val <= 0 || val > 65535) {
+                      setLocalError('端口必须在 1-65535 之间。');
+                      return;
+                    }
+                    if (val === props.roomPort) {
+                      setLocalError(null);
+                      return;
+                    }
+                    setPortSaving(true);
+                    setLocalError(null);
+                    try {
+                      await props.onUpdateRoomPort?.(val);
+                      setPortInput('');
+                    } catch (error) {
+                      setLocalError(error instanceof Error ? error.message : String(error));
+                    } finally {
+                      setPortSaving(false);
+                    }
+                  }}
+                  label={portSaving() ? '保存中' : '保存端口'}
+                  tone="accent"
+                  size="md"
+                >
+                  <Save size={16} class={portSaving() ? 'animate-pulse' : ''} />
+                </IconButton>
+              </div>
+
+              <Show when={props.roomIsOpen}>
+                <p class="text-[11px] text-amber-300/70">
+                  房间正在开启，修改端口会让当前连接的房客断开，需重新以新端口加入。
+                </p>
+              </Show>
+              <Show when={localError()}>
+                <p class="text-[11px] text-red-300">{localError()}</p>
+              </Show>
+            </section>
+          </Show>
 
           <Show when={props.isRoomClient}>
             <section class="border-b border-white/10 pb-6 mb-6 space-y-4">

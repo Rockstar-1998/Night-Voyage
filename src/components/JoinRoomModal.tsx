@@ -1,10 +1,12 @@
-import { Component, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { X, Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check } from '../lib/icons';
+import { Component, For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { X, Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check, RotateCcw } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
 import { Select } from './ui/Select';
 import {
   roomJoin,
   roomLeave,
+  roomGetGuestHistory,
+  roomSaveGuestHistory,
   listenRoomMemberJoined,
   listenRoomMemberLeft,
   listenRoomDisconnected,
@@ -19,6 +21,7 @@ import {
   type RoomStreamEndEvent,
   type RoomRoundStateUpdateEvent,
   type RoomJoinResult,
+  type RoomGuestHistoryEntry,
 } from '../lib/backend';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -44,6 +47,17 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
   const [statusMessage, setStatusMessage] = createSignal('');
   const [members, setMembers] = createSignal<RoomMemberJoinedEvent[]>([]);
   const [copied, setCopied] = createSignal(false);
+  const [guestHistory, setGuestHistory] = createSignal<RoomGuestHistoryEntry[]>([]);
+
+  const refreshGuestHistory = async () => {
+    try {
+      const history = await roomGetGuestHistory();
+      // 最近加入的排在前面
+      setGuestHistory(history.sort((a, b) => b.updatedAt - a.updatedAt));
+    } catch (error) {
+      console.error('[room-join] failed to load guest history', error);
+    }
+  };
 
   const selectedCharacter = createMemo(() =>
     props.playerCharacters.find((character) => character.id === selectedCharacterId()),
@@ -83,6 +97,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
     setStatus('idle');
     setStatusMessage('');
     setMembers([]);
+    void refreshGuestHistory();
   };
 
   const setupListeners = async () => {
@@ -120,6 +135,7 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
 
   onMount(() => {
     void setupListeners();
+    void refreshGuestHistory();
   });
 
   onCleanup(() => {
@@ -168,6 +184,18 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
           displayName: member.displayName,
         })));
         props.onJoined?.(result, { hostAddress: addr, port: p, displayName: name, selectedCharacterId: selectedCharacterId() });
+        // 保存/更新房客加入记录，便于重启后一键重连（允许修改 IP/端口）。
+        if (result.conversation?.id != null) {
+          void roomSaveGuestHistory({
+            conversationId: result.conversation.id,
+            hostAddress: addr,
+            port: p,
+            displayName: name,
+            updatedAt: Date.now(),
+          }).catch((error) => {
+            console.error('[room-join] failed to save guest history', error);
+          });
+        }
         // Don't add a fake self-entry; the real MemberJoined event from the server
         // will arrive shortly via listenRoomMemberJoined and add the actual member.
       } else {
@@ -296,6 +324,41 @@ export const JoinRoomModal: Component<JoinRoomModalProps> = (props) => {
                 </div>
               }
             >
+              <Show when={(guestHistory()?.length ?? 0) > 0}>
+                <div class="w-full relative max-w-lg mx-auto mt-6">
+                  <div class="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                      <h3 class="text-sm font-bold text-white uppercase tracking-widest">重新加入房间</h3>
+                      <span class="text-xs text-mist-solid/40">{guestHistory().length} 条记录</span>
+                    </div>
+                    <p class="text-[11px] text-mist-solid/40">重启后无需重新输入，可修改 IP / 端口再重连。</p>
+                    <div class="flex flex-col gap-2">
+                      <For each={guestHistory()}>
+                        {(entry) => (
+                          <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
+                            <div class="min-w-0 flex-1">
+                              <div class="text-sm text-white truncate">{entry.displayName || '匿名'}</div>
+                              <div class="text-[10px] text-mist-solid/35 font-mono truncate">{entry.hostAddress}:{entry.port}</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setHostAddress(entry.hostAddress);
+                                setPort(String(entry.port));
+                                if (entry.displayName) setDisplayName(entry.displayName);
+                              }}
+                              class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-200 text-xs font-medium hover:bg-purple-500/30 transition-colors"
+                            >
+                              <RotateCcw size={13} />
+                              填入并重连
+                            </button>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </div>
+              </Show>
+
               <div class="w-full relative max-w-lg mx-auto mt-12">
                 <div class="space-y-6">
                   <div class="space-y-2">

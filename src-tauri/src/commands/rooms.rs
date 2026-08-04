@@ -112,15 +112,16 @@ pub async fn room_create(
         return Err(msg);
     }
 
-    // Insert room record
+    // `stored_port` 在创建时与 `host_port` 一致，是房主后续可改的权威持久化端口。
     let room_id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO rooms (room_name, host_address, conversation_id, max_players, host_port, status, current_player_count, passphrase, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO rooms (room_name, host_address, conversation_id, max_players, host_port, stored_port, status, current_player_count, passphrase, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(&room_name)
     .bind("0.0.0.0")
     .bind(conversation_id)
     .bind(4i64)
+    .bind(port as i64)
     .bind(port as i64)
     .bind("waiting")
     .bind(1i64)
@@ -186,15 +187,16 @@ pub async fn room_open(
         }
     }
 
-    let room: Option<(i64, i64, String)> = sqlx::query_as(
-        "SELECT id, host_port, status FROM rooms WHERE conversation_id = ? LIMIT 1",
+    // 读取持久化端口：优先 stored_port，缺失（旧房间）回退 host_port。
+    let room: Option<(i64, i64, i64, String)> = sqlx::query_as(
+        "SELECT id, COALESCE(stored_port, host_port) AS effective_port, host_port, status FROM rooms WHERE conversation_id = ? LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_optional(db)
     .await
     .map_err(|e| e.to_string())?;
 
-    let (room_id, host_port, _status) = room.ok_or_else(|| "房间不存在".to_string())?;
+    let (room_id, effective_port, _host_port, _status) = room.ok_or_else(|| "房间不存在".to_string())?;
 
     sqlx::query(
         "DELETE FROM conversation_members WHERE conversation_id = ? AND join_order > 0",
@@ -210,7 +212,7 @@ pub async fn room_open(
         .await
         .map_err(|e| e.to_string())?;
 
-    let server = RoomServer::start(room_id, host_port as u32, app.clone(), db.clone()).await?;
+    let server = RoomServer::start(room_id, effective_port as u32, app.clone(), db.clone()).await?;
 
     sqlx::query("UPDATE rooms SET status = 'waiting' WHERE id = ?")
         .bind(room_id)
@@ -233,7 +235,96 @@ pub async fn room_open(
     Ok(RoomOpenResult {
         room_id,
         host_address,
-        port: host_port as u32,
+        port: effective_port as u32,
+        alternative_addresses,
+    })
+}
+
+/// Host-side command: change the room port after creation.
+///
+/// Stops the currently running room server (if any, regardless of which
+/// conversation it served), persists the new port into both `host_port` and
+/// `stored_port`, then restarts the server on the new port. Guests are
+/// disconnected by the shutdown and must rejoin using the new port.
+///
+/// C2 零回退：端口非法、房间不存在、server 启动失败都显式报错，不静默回退。
+#[tauri::command]
+pub async fn room_update_port(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    conversation_id: i64,
+    port: u32,
+) -> Result<RoomOpenResult, String> {
+    let db = &state.db;
+
+    if port == 0 || port > 65535 {
+        return Err(format!(
+            "端口 {} 超出 TCP 有效范围 (1-65535)，当前仅支持标准 TCP 端口",
+            port
+        ));
+    }
+
+    let room: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM rooms WHERE conversation_id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (room_id,) = room.ok_or_else(|| "房间不存在，无法修改端口".to_string())?;
+
+    // 关闭可能仍在运行的旧 server（房主换端口必然要重启监听）。
+    {
+        let mut host_server = state.host_server.lock().await;
+        if let Some(old_server) = host_server.take() {
+            let mut server = old_server.lock().await;
+            server.shutdown().await;
+        }
+    }
+
+    // 持久化新端口：host_port 为运行端口，stored_port 为权威设置值。
+    sqlx::query("UPDATE rooms SET host_port = ?, stored_port = ? WHERE id = ?")
+        .bind(port as i64)
+        .bind(port as i64)
+        .bind(room_id)
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let server = match RoomServer::start(room_id, port, app.clone(), db.clone()).await {
+        Ok(server) => server,
+        Err(error) => {
+            dbg_eprintln!(
+                "[room-update-port] failed to restart server on port {} for room {}: {}",
+                port, room_id, error
+            );
+            return Err(error);
+        }
+    };
+
+    sqlx::query("UPDATE rooms SET status = 'waiting' WHERE id = ?")
+        .bind(room_id)
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    {
+        let mut host_server = state.host_server.lock().await;
+        *host_server = Some(server);
+    }
+
+    let all_ips = get_all_local_ips();
+    let host_address = all_ips
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let alternative_addresses: Vec<String> = all_ips.into_iter().skip(1).collect();
+
+    Ok(RoomOpenResult {
+        room_id,
+        host_address,
+        port,
         alternative_addresses,
     })
 }
@@ -372,15 +463,17 @@ pub async fn room_get_status(
 ) -> Result<RoomStatusResult, String> {
     let db = &state.db;
 
+    // 始终返回房间端口（stored_port 优先，回退 host_port），便于房主在房间设置里
+    // 展示并可修改端口，即使房间当前未开启。
     let room: Option<(i64, i64, String, i64)> = sqlx::query_as(
-        "SELECT id, host_port, status, current_player_count FROM rooms WHERE conversation_id = ? LIMIT 1",
+        "SELECT id, COALESCE(stored_port, host_port) AS effective_port, status, current_player_count FROM rooms WHERE conversation_id = ? LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_optional(db)
     .await
     .map_err(|e| e.to_string())?;
 
-    let Some((room_id, host_port, _db_status, current_player_count)) = room else {
+    let Some((room_id, effective_port, _db_status, current_player_count)) = room else {
         return Ok(RoomStatusResult {
             room_id: None,
             is_open: false,
@@ -402,7 +495,7 @@ pub async fn room_get_status(
     Ok(RoomStatusResult {
         room_id: Some(room_id),
         is_open,
-        port: if is_open { Some(host_port as u32) } else { None },
+        port: Some(effective_port as u32),
         current_player_count: if is_open { current_player_count } else { 1 },
     })
 }
@@ -652,6 +745,79 @@ pub async fn room_request_context(
     .await?;
 
     client.send_message(&snapshot).await
+}
+
+/// Guest-side command: persist a room join record so the guest can rejoin
+/// after a restart without re-typing the host IP + port.
+///
+/// Records are keyed by `conversationId` (the host room's conversation id,
+/// carried by `RoomJoinResult.conversation.id`) and stored in the local
+/// `settings` table under `room_guest_history:<conversationId>`. Only the
+/// most recent `RoomGuestHistoryEntry` per conversation is kept; an optional
+/// `displayName` is stored to pre-fill the join form.
+///
+/// C2 零回退：序列化失败显式报错，不静默丢弃。
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomGuestHistoryEntry {
+    pub conversation_id: i64,
+    pub host_address: String,
+    pub port: u32,
+    pub display_name: String,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub async fn room_save_guest_history(
+    state: tauri::State<'_, AppState>,
+    entry: RoomGuestHistoryEntry,
+) -> Result<(), String> {
+    let mut history = load_guest_history(&state).await;
+
+    // 同一 conversation_id 只保留最新一条记录（覆盖更新）。
+    history.retain(|item| item.conversation_id != entry.conversation_id);
+    history.push(entry);
+
+    let json = serde_json::to_string(&history)
+        .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES (?, ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind("room_guest_history")
+    .bind(json)
+    .execute(&state.db)
+    .await
+    .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn room_get_guest_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RoomGuestHistoryEntry>, String> {
+    Ok(load_guest_history(&state).await)
+}
+
+async fn load_guest_history(state: &AppState) -> Vec<RoomGuestHistoryEntry> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = ? LIMIT 1",
+    )
+    .bind("room_guest_history")
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| err.to_string().replace('\\', "/"))
+    .unwrap_or(None);
+
+    let Some((json,)) = row else {
+        return Vec::new();
+    };
+
+    serde_json::from_str::<Vec<RoomGuestHistoryEntry>>(&json)
+        .map_err(|err| err.to_string().replace('\\', "/"))
+        .unwrap_or_default()
 }
 
 // ─── Helpers ───

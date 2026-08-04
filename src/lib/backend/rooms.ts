@@ -3,6 +3,7 @@ import { invokeCommand, toInvokeArgs } from './internal';
 import type {
   GuestCharacterCardPayload,
   RoomContextSnapshotEvent,
+  RoomGuestHistoryEntry,
   RoomContextWindowChangedEvent,
   RoomCreateResult,
   RoomErrorEvent,
@@ -50,6 +51,30 @@ export async function roomGetStatus(payload: {
   conversationId: number;
 }) {
   return invokeCommand<RoomStatusResult>('room_get_status', toInvokeArgs(payload));
+}
+
+/** 房主在房间创建后修改端口：重启监听并持久化。 */
+export async function roomUpdatePort(payload: {
+  conversationId: number;
+  port: number;
+}) {
+  return invokeCommand<RoomOpenResult>('room_update_port', toInvokeArgs(payload));
+}
+
+/** 保存房客的房间加入记录（本地 settings）。 */
+export async function roomSaveGuestHistory(payload: {
+  conversationId: number;
+  hostAddress: string;
+  port: number;
+  displayName: string;
+  updatedAt: number;
+}) {
+  return invokeCommand<void>('room_save_guest_history', toInvokeArgs(payload));
+}
+
+/** 读取房客保存的所有房间加入记录。 */
+export async function roomGetGuestHistory() {
+  return invokeCommand<RoomGuestHistoryEntry[]>('room_get_guest_history');
 }
 
 export async function roomJoin(payload: {
