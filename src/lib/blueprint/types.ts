@@ -59,12 +59,23 @@ export interface PromptConfig {
   lock_reason: string | null;
 }
 
+export interface FieldDisplayConfig {
+  default_expanded: boolean;
+  hide_label: boolean;
+}
+
 export interface SchemaFieldConfig {
   field_name: string;
   field_type: string;
   description: string;
   sub_schema: Record<string, unknown> | null;
   db_mapping: string | null;
+  /** 加入 schema `required` 数组。默认 true。 */
+  required: boolean;
+  /** 是否将该字段值注入下一轮对话上下文。默认 true。 */
+  context_included: boolean;
+  /** 前端消息列表展示偏好。 */
+  display: FieldDisplayConfig;
   is_locked: boolean;
   lock_reason: string | null;
 }
@@ -119,6 +130,8 @@ export interface SamplingParamsConfig {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   stop: string[] | null;
+  thinking_enabled: boolean | null;
+  thinking_budget_tokens: number | null;
   is_locked: boolean;
 }
 
@@ -139,6 +152,9 @@ export type NodeConfig =
 
 export type BlueprintNode = NodeConfig & {
   id: string;
+  /** Optional in JSON: missing positions default to {x: 0, y: 0}.
+   *  Import paths (PortablePresetFile) may omit position to save space —
+   *  the loader normalizes missing positions before assigning to the store. */
   position: Position;
 };
 

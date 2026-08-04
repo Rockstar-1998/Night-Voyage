@@ -69,7 +69,7 @@ impl NodeConfig {
 }
 
 /// 蓝图节点画布坐标。仅编辑器使用，执行器忽略。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
@@ -79,11 +79,15 @@ pub struct Position {
 ///
 /// 序列化结果形如：
 /// `{"id":"n_role","type":"prompt","config":{...},"position":{"x":200,"y":300}}`。
+///
+/// `position` 带 `#[serde(default)]`：导入文件可省略坐标字段（默认为 0,0），
+/// 节省便携文件体积；编辑器打开后可通过「整理节点」重新计算布局。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlueprintNode {
     pub id: String,
     #[serde(flatten)]
     pub config: NodeConfig,
+    #[serde(default)]
     pub position: Position,
 }
 
@@ -148,6 +152,19 @@ pub struct PromptConfig {
 ///
 /// `db_mapping` 为 `Some("world_variables")` / `Some("plot_summary")` 时，
 /// AI 输出中对应字段会被 stream_processor 写入 `message_rounds` 对应列。
+///
+/// `required` 控制该字段是否进入 `required` 数组（JSON Schema）。`false` 时
+/// LLM 可省略该字段。前端默认 `true`。
+///
+/// `context_included` 控制该字段值是否参与下一轮对话上下文（影响
+/// `filter_structured_content` 过滤）。注意：当 `db_mapping` 不为空时，
+/// 字段值会通过 `world_variable` / `plot_summary` 块自动进入下一轮上下文，
+/// 此时 `context_included` 的过滤无意义（流处理已将其持久化）。前端默认
+/// `true`。
+///
+/// `display` 控制该字段在前端消息列表中的展示偏好（默认展开 / 隐藏标签）。
+/// 序列化为 JSON 对象注入 preset 的 `structured_output_display` 列，供
+/// `MessageItem.parseStructuredResponse` 消费。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaFieldConfig {
     pub field_name: String,
@@ -155,9 +172,26 @@ pub struct SchemaFieldConfig {
     pub description: String,
     pub sub_schema: Option<serde_json::Value>,
     pub db_mapping: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default = "default_true")]
+    pub context_included: bool,
+    #[serde(default)]
+    pub display: FieldDisplayConfig,
     pub is_locked: bool,
     pub lock_reason: Option<String>,
 }
+
+/// 字段在前端消息列表的展示偏好，对应旧版 `structured_output_display` 的单字段条目。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldDisplayConfig {
+    #[serde(default = "default_true")]
+    pub default_expanded: bool,
+    #[serde(default)]
+    pub hide_label: bool,
+}
+
+fn default_true() -> bool { true }
 
 /// Gate 选项，[`MutexGateConfig`] 与 [`GroupGateConfig`] 共用。
 ///
@@ -258,6 +292,8 @@ pub struct SamplingParamsConfig {
     pub frequency_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
     pub stop: Option<Vec<String>>,
+    pub thinking_enabled: Option<bool>,
+    pub thinking_budget_tokens: Option<i64>,
     pub is_locked: bool,
 }
 
@@ -295,7 +331,7 @@ pub struct CompiledBlock {
 ///
 /// 注意：此类型与 `services::prompt_compiler::CompiledSamplingParams` 字段集不同，
 /// 后者由 Task 2 执行器完成从本类型到 prompt_compiler 类型的转换。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompiledSamplingParams {
     pub temperature: Option<f64>,
     pub max_tokens: Option<i64>,
@@ -303,18 +339,27 @@ pub struct CompiledSamplingParams {
     pub frequency_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
     pub stop: Vec<String>,
+    pub thinking_enabled: Option<bool>,
+    pub thinking_budget_tokens: Option<i64>,
 }
 
 /// 蓝图执行结果，包含 prompt blocks、structured_output_schema、采样参数与 db 字段映射。
 ///
 /// `structured_output_schema` 为 JSON Schema 对象（`{"type":"object","properties":{...}}`）。
 /// `db_mappings` 键为 [`SchemaFieldConfig::field_name`]，值为 `db_mapping` 字段名。
+/// `context_included_keys` 键为字段名，值 `false` 表示该字段不进入下一轮上下文。
+/// `display_config` 键为字段名，值为该字段的展示偏好（默认展开/隐藏标签），
+/// 序列化为 JSON 对象后写入 `presets.structured_output_display`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlueprintExecutionResult {
     pub blocks: Vec<CompiledBlock>,
     pub structured_output_schema: serde_json::Value,
     pub sampling_params: CompiledSamplingParams,
     pub db_mappings: HashMap<String, String>,
+    #[serde(default)]
+    pub context_included_keys: HashMap<String, bool>,
+    #[serde(default)]
+    pub display_config: HashMap<String, FieldDisplayConfig>,
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@
 
 import { Component, Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { ArrowLeft, Eye, Save } from '../../lib/icons';
+import { ArrowLeft, Eye, LayoutGrid, Save } from '../../lib/icons';
 import {
   NODE_TYPES,
   type BlueprintEdge,
@@ -55,7 +55,7 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import { NodeSelector } from './NodeSelector';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
-import type { ViewTransform } from './nodeLayout';
+import { autoLayout, type ViewTransform } from './nodeLayout';
 
 // ─── Props ───
 
@@ -93,6 +93,9 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           description: '',
           sub_schema: null,
           db_mapping: null,
+          required: true,
+          context_included: true,
+          display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
         },
@@ -153,6 +156,8 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           frequency_penalty: null,
           presence_penalty: null,
           stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
           is_locked: false,
         },
       };
@@ -265,12 +270,18 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
 
 /// Ensure Start/End nodes have an in-memory `config: {}` placeholder after
 /// loading from DB (the serialized JSON omits it per Rust serde convention).
+/// Also default missing `position` to {x: 0, y: 0} for portable presets that
+/// strip position data (Rust schema treats position as optional since v2).
 function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
   return nodes.map((n) => {
+    let next = n;
     if ((n.type === 'start' || n.type === 'end') && n.config === undefined) {
-      return { ...n, config: {} } as BlueprintNode;
+      next = { ...n, config: {} } as BlueprintNode;
     }
-    return n;
+    if (!next.position || typeof next.position.x !== 'number' || typeof next.position.y !== 'number') {
+      next = { ...next, position: { x: 0, y: 0 } };
+    }
+    return next;
   });
 }
 
@@ -347,6 +358,22 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           setGraph('nodes', normalizedNodes);
           setGraph('edges', parsed.edges);
           setGraph('version', 2);
+
+          // If the imported JSON stripped positions (every node at 0,0),
+          // auto-layout so the editor opens with a usable view.
+          const allAtOrigin =
+            normalizedNodes.length > 0 &&
+            normalizedNodes.every((n) => n.position.x === 0 && n.position.y === 0);
+          if (allAtOrigin) {
+            const positions = autoLayout(normalizedNodes, parsed.edges);
+            setGraph('nodes', (prev) =>
+              prev.map((n) => {
+                const pos = positions.get(n.id);
+                return pos ? { ...n, position: pos } : n;
+              }),
+            );
+            setDirty(true);
+          }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           setError(`解析蓝图 JSON 失败：${msg}`);
@@ -476,6 +503,18 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setHiddenNodeIds(new Set<string>());
   };
 
+  // ─── Auto layout ───
+
+  const handleAutoLayout = () => {
+    const positions = autoLayout(graph.nodes, graph.edges);
+    setGraph('nodes', (prev) => prev.map((n) => {
+      const pos = positions.get(n.id);
+      return pos ? { ...n, position: pos } : n;
+    }));
+    setDirty(true);
+    showToast('节点已自动整理', 'success');
+  };
+
   // ─── Save ───
 
   const handleSave = async () => {
@@ -550,6 +589,14 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
         <div class="flex items-center gap-2">
           <NodeSelector onAddNode={handleAddNode} disabled={isLoading()} />
+          <IconButton
+            onClick={handleAutoLayout}
+            disabled={isLoading() || graph.nodes.length <= 2}
+            label="整理节点布局"
+            size="sm"
+          >
+            <LayoutGrid size={16} />
+          </IconButton>
           <IconButton
             onClick={handleShowAllNodes}
             disabled={hiddenNodeIds().size === 0}

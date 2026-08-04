@@ -135,6 +135,7 @@ pub async fn execute_blueprint(
             frequency_penalty: None,
             presence_penalty: None,
             stop: Vec::new(),
+            ..Default::default()
         },
         db_mappings: HashMap::new(),
         context_included_keys: HashMap::new(),
@@ -623,6 +624,13 @@ fn merge_sampling_params(
     if let Some(stop) = &cfg.stop {
         compiled.stop = stop.clone();
     }
+    // 思考强度：蓝图节点可覆盖预设/provider override 的 thinking 配置。
+    if let Some(enabled) = cfg.thinking_enabled {
+        compiled.thinking_enabled = Some(enabled);
+    }
+    if let Some(budget) = cfg.thinking_budget_tokens {
+        compiled.thinking_budget_tokens = Some(budget);
+    }
 }
 
 /// Find the target node of the edge leaving `node_id` via `port`.
@@ -848,6 +856,8 @@ mod tests {
                 frequency_penalty: None,
                 presence_penalty: None,
                 stop: None,
+                thinking_enabled: None,
+                thinking_budget_tokens: None,
                 is_locked: false,
             }),
             position: pos(0.0, 0.0),
@@ -1055,6 +1065,55 @@ mod tests {
         assert_eq!(result.sampling_params.temperature, Some(0.8));
         assert_eq!(result.sampling_params.max_tokens, Some(4096));
         assert_eq!(result.sampling_params.top_p, Some(0.95));
+    }
+
+    #[tokio::test]
+    async fn test_sampling_params_carries_thinking() {
+        // 验证蓝图 SamplingParams 节点能把 thinking_enabled / thinking_budget_tokens
+        // 透传到执行结果的 compiled sampling params（修复"思考强度"经蓝图节点被丢弃）。
+        let g = graph(
+            vec![
+                start("n_start"),
+                sampling("n_sp_base", 0.8, 4096, 0.95),
+                BlueprintNode {
+                    id: "n_sp_think".to_string(),
+                    config: NodeConfig::SamplingParams(SamplingParamsConfig {
+                        temperature: None,
+                        max_tokens: None,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        thinking_enabled: Some(true),
+                        thinking_budget_tokens: Some(2048),
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_sp_base", "in"),
+                edge("e2", "n_sp_base", "out", "n_sp_think", "in"),
+                edge("e3", "n_sp_think", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect("thinking chain must execute");
+
+        assert_eq!(result.sampling_params.temperature, Some(0.8), "base temp retained");
+        assert_eq!(
+            result.sampling_params.thinking_enabled,
+            Some(true),
+            "thinking_enabled must propagate from blueprint node"
+        );
+        assert_eq!(
+            result.sampling_params.thinking_budget_tokens,
+            Some(2048),
+            "thinking_budget_tokens must propagate from blueprint node"
+        );
     }
 
     #[tokio::test]

@@ -136,6 +136,37 @@ export const SamplingParamsNode: Component<NodeConfigComponentProps<SamplingPara
         />
       </div>
 
+      <div class="space-y-2 pt-2 border-t border-white/10">
+        <label class="flex items-center gap-2 text-xs text-mist-solid/70 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={props.config.thinking_enabled ?? false}
+            disabled={props.isLocked}
+            onChange={(e) =>
+              update({ thinking_enabled: e.currentTarget.checked ? true : null })
+            }
+            class="accent-accent"
+          />
+          thinking_enabled（开启思考/推理）
+        </label>
+        <label class={LABEL_CLASS}>thinking_budget_tokens（思考预算，≥128）</label>
+        <input
+          type="number"
+          step="1"
+          min="128"
+          value={props.config.thinking_budget_tokens ?? ''}
+          disabled={props.isLocked || !props.config.thinking_enabled}
+          onChange={(e) => {
+            const n = parseNum(e.currentTarget.value);
+            update({
+              thinking_budget_tokens: n === null ? null : Math.max(128, Math.trunc(n)),
+            });
+          }}
+          class={INPUT_CLASS}
+          placeholder="留空 = 不覆盖（沿用默认预算）"
+        />
+      </div>
+
       <div class="space-y-2">
         <div class="flex items-center justify-between">
           <label class={LABEL_CLASS}>stop（字符串列表）</label>

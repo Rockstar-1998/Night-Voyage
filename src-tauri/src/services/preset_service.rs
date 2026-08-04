@@ -36,7 +36,7 @@ pub struct PortablePresetMeta {
     pub structured_output_schema: Option<String>,
     pub structured_output_display: Option<String>,
     pub context_included_keys: Option<String>,
-    pub blueprint_graph: Option<String>,
+    pub blueprint_graph: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -94,7 +94,30 @@ impl<'a> PresetService<'a> {
                 structured_output_schema: detail.preset.structured_output_schema,
                 structured_output_display: detail.preset.structured_output_display,
                 context_included_keys: detail.preset.context_included_keys,
-                blueprint_graph: detail.preset.blueprint_graph,
+                blueprint_graph: detail.preset.blueprint_graph.and_then(|s| {
+                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&s) {
+                        if let Some(nodes) = v.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+                            for node in nodes {
+                                if node.get("type").and_then(|t| t.as_str()) == Some("prompt") {
+                                    if let Some(config) = node.get_mut("config").and_then(|c| c.as_object_mut()) {
+                                        if let Some(serde_json::Value::String(content)) = config.get("content") {
+                                            if content.contains('\n') {
+                                                let lines: Vec<serde_json::Value> = content
+                                                    .split('\n')
+                                                    .map(|line| serde_json::Value::String(line.to_string()))
+                                                    .collect();
+                                                config.insert("content".to_string(), serde_json::Value::Array(lines));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(v)
+                    } else {
+                        Some(serde_json::Value::String(s))
+                    }
+                }),
             },
             semantic_groups: detail
                 .semantic_groups
@@ -149,7 +172,33 @@ impl<'a> PresetService<'a> {
             portable.preset.structured_output_schema,
             portable.preset.structured_output_display,
             portable.preset.context_included_keys,
-            portable.preset.blueprint_graph,
+            portable.preset.blueprint_graph.map(|mut v| {
+                if !v.is_string() {
+                    if let Some(nodes) = v.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+                        for node in nodes {
+                            if node.get("type").and_then(|t| t.as_str()) == Some("prompt") {
+                                if let Some(config) = node.get_mut("config").and_then(|c| c.as_object_mut()) {
+                                    if let Some(serde_json::Value::Array(lines)) = config.get("content") {
+                                        let mut s = String::new();
+                                        for (i, line) in lines.iter().enumerate() {
+                                            if let serde_json::Value::String(line_str) = line {
+                                                if i > 0 {
+                                                    s.push('\n');
+                                                }
+                                                s.push_str(line_str);
+                                            }
+                                        }
+                                        config.insert("content".to_string(), serde_json::Value::String(s));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    serde_json::to_string(&v).unwrap_or_default()
+                } else {
+                    v.as_str().unwrap().to_string()
+                }
+            }),
             Some(portable.blocks),
             Some(portable.stop_sequences),
             Some(portable.provider_overrides),
@@ -705,6 +754,8 @@ mod tests {
                         frequency_penalty: None,
                         presence_penalty: None,
                         stop: None,
+                        thinking_enabled: None,
+                        thinking_budget_tokens: None,
                         is_locked: false,
                     }),
                     position: Position { x: 600.0, y: 300.0 },

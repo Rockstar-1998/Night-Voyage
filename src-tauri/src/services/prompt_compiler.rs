@@ -665,6 +665,43 @@ pub async fn compile_prompt(
         &blueprint_result.sampling_params,
     );
 
+    // 3.5 context_included_keys: 蓝图覆盖从 DB 加载的旧字段。蓝图路径将
+    //     SchemaFieldConfig.context_included 序列化为 JSON 字符串。
+    if !blueprint_result.context_included_keys.is_empty() {
+        match serde_json::to_string(&blueprint_result.context_included_keys) {
+            Ok(json) => preset_compiler_data.params.context_included_keys = Some(json),
+            Err(err) => return Err(format!(
+                "failed to serialize context_included_keys: {}",
+                err.to_string().replace('\\', "/")
+            )),
+        }
+    }
+
+    // 3.6 display_config: 序列化为旧版 structured_output_display 兼容格式
+    //     (key -> { defaultCollapsed, hideLabel })，供 MessageItem 渲染。
+    if !blueprint_result.display_config.is_empty() {
+        let display_map: std::collections::HashMap<String, serde_json::Value> = blueprint_result
+            .display_config
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    serde_json::json!({
+                        "defaultCollapsed": !v.default_expanded,
+                        "hideLabel": v.hide_label,
+                    }),
+                )
+            })
+            .collect();
+        match serde_json::to_string(&display_map) {
+            Ok(json) => preset_compiler_data.params.structured_output_display = Some(json),
+            Err(err) => return Err(format!(
+                "failed to serialize structured_output_display: {}",
+                err.to_string().replace('\\', "/")
+            )),
+        }
+    }
+
     // 4. db_mappings: 传给 stream_processor 供持久化使用
     let db_mappings: HashMap<String, String> = blueprint_result.db_mappings;
 
@@ -2586,6 +2623,13 @@ fn apply_blueprint_sampling_params(
     }
     if !blueprint_params.stop.is_empty() {
         params.stop_sequences = blueprint_params.stop.clone();
+    }
+    // 思考强度：蓝图节点 override 预设/provider override 的 thinking 配置。
+    if let Some(enabled) = blueprint_params.thinking_enabled {
+        params.thinking_enabled = Some(enabled);
+    }
+    if let Some(budget) = blueprint_params.thinking_budget_tokens {
+        params.thinking_budget_tokens = Some(budget);
     }
 }
 
