@@ -18,8 +18,7 @@
       "nodes": [
         {
           "id": "n_start",
-          "type": "start",
-          "config": {}
+          "type": "start"
         },
         {
           "id": "n_core",
@@ -909,8 +908,7 @@
         },
         {
           "id": "n_end",
-          "type": "end",
-          "config": {}
+          "type": "end"
         },
         {
           "id": "n_rules",
