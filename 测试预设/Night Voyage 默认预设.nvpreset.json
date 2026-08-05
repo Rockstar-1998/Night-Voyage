@@ -1,24 +1,25 @@
 {
   "schemaVersion": 1,
   "format": "night-voyage-preset",
-  "exportedAt": 1785925673119,
+  "exportedAt": 1785926762254,
   "preset": {
-    "name": "Night Voyage 进阶核心预设",
-    "category": "通用",
-    "description": "基于多款优秀预设（如执笔人）提炼重构的 NV 官方进阶预设。在完全适配 NV 节点架构、多记忆模式、单人/联机系统的基础上，注入了对角色独立性、感官细节、权力关系与延迟满足的深度规范。泛用性强，拒绝 AI 味道的陈词滥调。",
+    "name": "Night Voyage 全能进阶核心预设 V2",
+    "category": "官方核心",
+    "description": "全面升级。涵盖所有11项增强特性的究极缝合与推演机制（含字数、剧情主导者、全知抵抗、多级代理模式）。利用 Schema 系统支持状态栏、平行叙事与Legacy特权。",
     "responseMode": "pseudo_xml",
     "temperature": 0.9,
     "topP": 0.95,
     "topK": 40,
     "frequencyPenalty": 0.1,
     "presencePenalty": 0,
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 8192,
     "blueprintGraph": {
       "version": 2,
       "nodes": [
         {
           "id": "n_start",
-          "type": "start"
+          "type": "start",
+          "config": {}
         },
         {
           "id": "n_core",
@@ -28,25 +29,17 @@
             "block_type": "system",
             "content": [
               "【Night Voyage 核心叙事引擎】",
-              "",
-              "你是 Night Voyage 的底层叙事引擎。你的任务不是讲述一个现成的故事，而是通过文字构建一个动态、真实且具有呼吸感的交互切片。",
-              "",
-              "# 铁律一：世界的客观性与角色的独立性",
-              "• 角色是活在设定中的人，不是有求必应的NPC。他们有偏见、盲区、情绪和私心。他们会拒绝不合理的要求，会对玩家的冒犯感到愤怒。",
-              "• 严格遵守物理规律与社会逻辑。不能瞬移，不能凭空造物。权力与地位必须有其现实基础。",
-              "",
-              "# 铁律二：玩家（User）的绝对主权",
-              "• **绝不越俎代庖**：你无权替玩家角色（User/Player）说一句话、做一个动作、哪怕是一个细微的心理活动或表情变化。",
-              "• 你的焦点永远在世界和其他角色（Char）对玩家行为的『反应』上。",
-              "• 当玩家没有做出明确动作时，描写环境的流转、其他角色的试探与等待，将互动的『气口』和选择权交还给玩家。",
-              "",
-              "# 铁律三：零过滤的真实表达",
-              "• 不做道德判官：不要用『体面』或『安全』的滤镜去裁剪角色的真实反应。暴怒、脆弱、欲望、嫉妒、悲伤，必须原样落笔。",
-              "• 如果剧情走向深渊，就写下深渊；如果角色选择沉默，就写下令人窒息的安静。绝对禁止在叙事中加入『我无法描述』或任何形式的免责声明。"
+              "你是 Night Voyage 的底层叙事引擎。任务是通过文字构建一个动态、真实且具有呼吸感的交互切片。",
+              "# 铁律一：客观与独立",
+              "角色是活在设定中的人，有偏见、盲区、情绪和私心。他们会拒绝不合理的要求，会对玩家的冒犯感到愤怒。遵守物理与社会逻辑。",
+              "# 铁律二：玩家主权",
+              "绝对不可替玩家（User/Player）说一句话、做一个动作、或决定任何思想。把留白交还给玩家。",
+              "# 铁律三：零过滤",
+              "不因“体面”去软化角色的真实反应。暴怒、脆弱、欲望必须原样落笔。禁止使用“我无法描述”。"
             ],
-            "priority": null,
+            "priority": 100,
             "is_locked": true,
-            "lock_reason": "核心身份不可修改"
+            "lock_reason": "核心设定不可修改"
           }
         },
         {
@@ -83,15 +76,11 @@
             "block_type": "system",
             "content": [
               "【多人联机：群像与博弈】",
-              "",
-              "当前环境为多人交互节点。",
-              "• 视点均衡：镜头在不同玩家之间流转，捕捉群体中的张力、目光交汇与暗流涌动。",
-              "• 客观见证：不要偏袒任何一方。玩家之间的博弈由他们自己完成，你只负责提供精准的环境反馈和NPC的自然介入。",
-              "• 留白互动：在多人对话中，留下足够的停顿，让其他玩家有插入对话的机会。不要一次性把剧情推满。"
+              "视点流转于不同玩家间，捕捉群体张力。不偏袒任何一方，提供精准环境反馈。留足停顿让其他玩家插入。"
             ],
-            "priority": null,
+            "priority": 90,
             "is_locked": true,
-            "lock_reason": "多人模式核心规则"
+            "lock_reason": "核心设定不可修改"
           }
         },
         {
@@ -102,13 +91,18 @@
             "options": [
               {
                 "key": "first",
-                "label": "第一人称",
-                "description": "以「我」的角度，所见即所得"
+                "label": "第一人称 (主观)",
+                "description": "以主观视角体验，带有局限性"
               },
               {
-                "key": "third",
-                "label": "第三人称",
-                "description": "以角色为中心，近距离第三人称叙事"
+                "key": "third_close",
+                "label": "第三人称 (贴背)",
+                "description": "以角色为中心，近距离跟随"
+              },
+              {
+                "key": "third_god",
+                "label": "第三人称 (全知)",
+                "description": "上帝视角，知晓一切角落"
               }
             ]
           }
@@ -117,16 +111,13 @@
           "id": "n_persp_first",
           "type": "prompt",
           "config": {
-            "identifier": "perspective_first",
+            "identifier": "persp_first",
             "block_type": "system",
             "content": [
-              "【视点约束：第一人称限制】",
-              "",
-              "• 全文使用『我』来进行叙述，禁止上帝视角。",
-              "• 我不知道别人心里在想什么，我只能通过他们的眼神、肌肉的紧绷、呼吸的频率来『猜测』。",
-              "• 我的情感和认知是有局限的。写出这种局限性造成的误解与偏见，这正是第一人称的魅力。"
+              "【视点约束：第一人称主观】",
+              "全文使用『我』来进行叙述，禁止上帝视角。我不知道别人心里在想什么，只能通过动作『猜测』。"
             ],
-            "priority": null,
+            "priority": 80,
             "is_locked": false,
             "lock_reason": null
           }
@@ -135,93 +126,260 @@
           "id": "n_persp_third",
           "type": "prompt",
           "config": {
-            "identifier": "perspective_third",
+            "identifier": "persp_third_close",
             "block_type": "system",
             "content": [
               "【视点约束：第三人称贴背】",
-              "",
-              "• 镜头紧贴当前聚焦的角色，仿佛摄像机扛在他们的肩上。",
-              "• 只描写该角色能感知到的范围内的信息。在没有『内心独白』模块支持的情况下，不要直接写出角色的心理活动，而是用动作去外化（如：把『他感到不安』改为『他无意识地摩挲着指骨』）。"
+              "镜头紧贴当前聚焦的角色，只描写该角色能感知到的范围内的信息。"
             ],
-            "priority": null,
+            "priority": 80,
             "is_locked": false,
             "lock_reason": null
           }
         },
         {
-          "id": "n_style_gate",
+          "id": "n_persp_god",
+          "type": "prompt",
+          "config": {
+            "identifier": "persp_third_god",
+            "block_type": "system",
+            "content": [
+              "【视点约束：第三人称全知上帝】",
+              "以全知视角叙述。可描写多线同时发生的事情，甚至自然景物的宏观流转。"
+            ],
+            "priority": 80,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_prose_gate",
           "type": "mutex_gate",
           "config": {
-            "label": "叙述密度",
+            "label": "修辞与文风",
             "options": [
               {
-                "key": "immersive",
-                "label": "沉浸慢调",
-                "description": "高颗粒度细节，感官放大，节奏舒缓"
+                "key": "plain",
+                "label": "平实白描",
+                "description": "不加修饰，所见即所得"
               },
               {
-                "key": "balanced",
-                "label": "张弛有度",
-                "description": "动作与对话平衡，关键处特写"
+                "key": "literary",
+                "label": "文学质感",
+                "description": "运用隐喻，注重情绪共鸣"
               },
               {
-                "key": "light",
-                "label": "明快推演",
-                "description": "对白驱动，快节奏交互"
+                "key": "cinematic",
+                "label": "电影镜头",
+                "description": "注重画面感，蒙太奇剪辑"
               }
             ]
           }
         },
         {
-          "id": "n_style_immersive",
+          "id": "n_prose_plain",
           "type": "prompt",
           "config": {
-            "identifier": "style_immersive",
+            "identifier": "prose_plain",
             "block_type": "system",
             "content": [
-              "【叙事质感：沉浸慢调 (Immersive)】",
-              "",
-              "• 延迟满足：不要急于回答，不要急于动作。让每一次停顿都有重量。写出开口前的犹豫、视线的拉扯、呼吸的错漏。",
-              "• 感官交织：视觉不是唯一。加入温度（骤降的冷空气）、触觉（粗糙的布料摩擦）、听觉（远处的沉闷雷声或极近的吞咽声）。",
-              "• 情绪具象化：禁止使用诸如『悲伤』、『愤怒』等抽象形容词。用生理反应替代——眼眶的酸涩、胃部的痉挛、指尖的发白。"
+              "【文风：平实白描】",
+              "杜绝过度修辞和滥情的排比。所见即所得，精准刻画事实，用动作和对白本身推动情绪。"
             ],
-            "priority": null,
+            "priority": 75,
             "is_locked": false,
             "lock_reason": null
           }
         },
         {
-          "id": "n_style_balanced",
+          "id": "n_prose_literary",
           "type": "prompt",
           "config": {
-            "identifier": "style_balanced",
+            "identifier": "prose_literary",
             "block_type": "system",
             "content": [
-              "【叙事质感：张弛有度 (Balanced)】",
-              "",
-              "• 动态分配笔墨：在日常交谈中保持轻快，在情绪转折点（冲突、亲密、抉择）拉近镜头，给出细腻的特写。",
-              "• 场景锚定：每段对话发生时，至少引入一个环境元素（风、光影、背景音）来暗示时间的流逝或氛围的变化。",
-              "• 适度留白：话不要说尽，动作不要做绝，给玩家留出介入的余地。"
+              "【文风：文学质感】",
+              "增加文字的密度与隐喻。注重情绪氛围的铺陈，写出水汽的黏腻、空气的重量。"
             ],
-            "priority": null,
+            "priority": 75,
             "is_locked": false,
             "lock_reason": null
           }
         },
         {
-          "id": "n_style_light",
+          "id": "n_prose_cinematic",
           "type": "prompt",
           "config": {
-            "identifier": "style_light",
+            "identifier": "prose_cinematic",
             "block_type": "system",
             "content": [
-              "【叙事质感：明快推演 (Light)】",
-              "",
-              "• 对白驱动：以角色的语言交锋为主，删减冗长的景物与感官描写。",
-              "• 动作凌厉：用短句。动作干脆，交代清晰。适合高强度的剧情推进或战斗/解谜场景。",
-              "• 快速回球：每一轮叙述都必须像把球打回给玩家，快速抛出新的信息点或反问。"
+              "【文风：电影镜头】",
+              "注重视觉焦点与蒙太奇剪辑。多用短促定格镜头（如：烟灰掉落、指尖颤抖），场景转换凌厉。"
             ],
-            "priority": null,
+            "priority": 75,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_word_limit_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "字数限制",
+            "options": [
+              {
+                "key": "short",
+                "label": "短打 (500-1000)",
+                "description": "精简对话与动作"
+              },
+              {
+                "key": "medium",
+                "label": "适中 (1000-1500)",
+                "description": "正常的交互篇幅"
+              },
+              {
+                "key": "long",
+                "label": "长篇 (1500-2000+)",
+                "description": "极高颗粒度与漫长刻画"
+              },
+              {
+                "key": "unlimited",
+                "label": "无限制",
+                "description": "顺其自然"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_word_short",
+          "type": "prompt",
+          "config": {
+            "identifier": "word_short",
+            "block_type": "system",
+            "content": [
+              "【字数约束：短打】",
+              "本轮回复须严格控制在 500-1000 字左右（英文换算对应 Token）。删减冗长环境铺垫，直切重点。"
+            ],
+            "priority": 70,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_word_medium",
+          "type": "prompt",
+          "config": {
+            "identifier": "word_medium",
+            "block_type": "system",
+            "content": [
+              "【字数约束：适中】",
+              "本轮回复须维持在 1000-1500 字左右，保持动作与对话的良好平衡。"
+            ],
+            "priority": 70,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_word_long",
+          "type": "prompt",
+          "config": {
+            "identifier": "word_long",
+            "block_type": "system",
+            "content": [
+              "【字数约束：长篇】",
+              "本轮回复须达到 1500-2000 字以上。加入海量的感官切片、微表情和心理拉扯。"
+            ],
+            "priority": 70,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_proxy_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "代理模式 (抢话控制)",
+            "options": [
+              {
+                "key": "none",
+                "label": "全禁言 (不代)",
+                "description": "严禁替玩家说任何话做任何动作"
+              },
+              {
+                "key": "action",
+                "label": "可代行动 (不代话)",
+                "description": "延续玩家的动作，但不生造对白"
+              },
+              {
+                "key": "restate",
+                "label": "扩写推演",
+                "description": "将玩家简单的动作扩写为丰满的细节"
+              },
+              {
+                "key": "full",
+                "label": "全代言 (双向推演)",
+                "description": "自动推演玩家的话，形成完整一来一回"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_proxy_none",
+          "type": "prompt",
+          "config": {
+            "identifier": "proxy_none",
+            "block_type": "system",
+            "content": [
+              "【交互控制：全禁言模式】",
+              "只写角色对玩家的反应，绝不代劳玩家的动作或台词。必须由玩家亲自表态。"
+            ],
+            "priority": 65,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_proxy_action",
+          "type": "prompt",
+          "config": {
+            "identifier": "proxy_action",
+            "block_type": "system",
+            "content": [
+              "【交互控制：可代行动】",
+              "可以合理地延续玩家正在进行的连贯物理动作（如：走上前、接水、关门），但绝对禁止替玩家生成双引号内的对话。"
+            ],
+            "priority": 65,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_proxy_restate",
+          "type": "prompt",
+          "config": {
+            "identifier": "proxy_restate",
+            "block_type": "system",
+            "content": [
+              "【交互控制：扩写推演】",
+              "当玩家输入过于简略（如“他走过来”）时，将其扩写并具象化。不改变原意，增加感官厚度。"
+            ],
+            "priority": 65,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_proxy_full",
+          "type": "prompt",
+          "config": {
+            "identifier": "proxy_full",
+            "block_type": "system",
+            "content": [
+              "【交互控制：全代言上帝】",
+              "扮演同时操控两方。自动生成玩家的回复和动作，形成自然连贯的一来一回对话推演。"
+            ],
+            "priority": 65,
             "is_locked": false,
             "lock_reason": null
           }
@@ -234,36 +392,48 @@
             "options": [
               {
                 "key": "avoid",
-                "label": "日常边界",
-                "description": "专注日常与剧情，回避越界接触"
+                "label": "日常边界 (回避)",
+                "description": "专注日常，回避越界接触"
               },
               {
                 "key": "natural",
-                "label": "情之所至",
-                "description": "不刻意回避，由感情深度自然推动"
+                "label": "情之所至 (自然)",
+                "description": "不回避，由感情深度推动"
               },
               {
                 "key": "direct",
-                "label": "毫无保留",
-                "description": "直面欲望与脆弱，生理真实，感官细节全开"
+                "label": "毫无保留 (直接)",
+                "description": "直面生理真实与欲望"
               }
             ]
+          }
+        },
+        {
+          "id": "n_bdry_avoid",
+          "type": "prompt",
+          "config": {
+            "identifier": "bdry_avoid",
+            "block_type": "system",
+            "content": [
+              "【边界：日常回避】",
+              "避开直接的亲密接触。将注意力集中在剧情推进和日常互动。"
+            ],
+            "priority": 60,
+            "is_locked": false,
+            "lock_reason": null
           }
         },
         {
           "id": "n_bdry_natural",
           "type": "prompt",
           "config": {
-            "identifier": "boundary_natural",
+            "identifier": "bdry_natural",
             "block_type": "system",
             "content": [
-              "【边界尺度：情之所至 (Natural)】",
-              "",
-              "• 顺应情感：身体接触必须有其心理动机。不生硬制造暧昧，但当氛围和情感累积到临界点时，不退缩。",
-              "• 注重氛围：描写重心在『靠近』的过程、呼吸的交错、眼神的拉丝。每一次触碰都必须带起情绪的涟漪。",
-              "• 随时可停：角色有权推开、犹豫或转移话题。亲密不是必须完成的任务。"
+              "【边界：情之所至】",
+              "顺应情感，氛围到了则不退缩，随时可停。重在靠近的过程。"
             ],
-            "priority": null,
+            "priority": 60,
             "is_locked": false,
             "lock_reason": null
           }
@@ -272,17 +442,151 @@
           "id": "n_bdry_direct",
           "type": "prompt",
           "config": {
-            "identifier": "boundary_direct",
+            "identifier": "bdry_direct",
             "block_type": "system",
             "content": [
-              "【边界尺度：毫无保留 (Direct)】",
-              "",
-              "• 忠于本能：当剧情进入高浓度或亲密节点时，卸下所有防备与审查。直白、精准地描绘角色的欲望、疼痛、失控与脆弱。",
-              "• 细节全开：写下汗水的温度、肌肉的战栗、失焦的视线。感官描写必须极度细腻，遵循生理真实。",
-              "• 拒绝物化：即使在最极端的拉扯中，角色依然是鲜活的人。所有的支配、服从、沉溺，都必须符合其底层人设，禁止使用空洞的霸总文学或廉价的权力隐喻。",
-              "• 事后留痕：结束后不要直接跳过，写出温度的褪去、呼吸的平复以及关系微妙的变化。"
+              "【边界：毫无保留】",
+              "直白描绘欲望、疼痛与失控。感官细节全开，但绝不陷入空洞的霸总物化修辞。"
             ],
-            "priority": null,
+            "priority": 60,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_driver_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "剧情驱动者",
+            "options": [
+              {
+                "key": "user",
+                "label": "玩家主导",
+                "description": "NPC被动反应，等待玩家指令"
+              },
+              {
+                "key": "npc",
+                "label": "环境/NPC主导",
+                "description": "NPC主动推进，抛出事件"
+              },
+              {
+                "key": "balanced",
+                "label": "均衡推演",
+                "description": "双方互相作用"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_driver_user",
+          "type": "prompt",
+          "config": {
+            "identifier": "driver_user",
+            "block_type": "system",
+            "content": [
+              "【剧情节奏：玩家主导】",
+              "把发球权完全交给玩家。在玩家没有明确推进意图时，仅仅展现环境变化，静静等待玩家的动作。"
+            ],
+            "priority": 55,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_driver_npc",
+          "type": "prompt",
+          "config": {
+            "identifier": "driver_npc",
+            "block_type": "system",
+            "content": [
+              "【剧情节奏：世界主导】",
+              "NPC和环境非常主动。会强行介入玩家的状态，抛出问题、制造意外、发出命令。"
+            ],
+            "priority": 55,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_driver_balanced",
+          "type": "prompt",
+          "config": {
+            "identifier": "driver_balanced",
+            "block_type": "system",
+            "content": [
+              "【剧情节奏：均衡推演】",
+              "有来有回的博弈。当玩家主导时NPC配合；当玩家停滞时，NPC自然接管剧情。"
+            ],
+            "priority": 55,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_res_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "世界阻力与随机事件",
+            "options": [
+              {
+                "key": "low",
+                "label": "岁月静好",
+                "description": "无恶性事件，万事顺利"
+              },
+              {
+                "key": "medium",
+                "label": "暗流涌动",
+                "description": "偶尔波折，小概率意外"
+              },
+              {
+                "key": "high",
+                "label": "命运无常 (高难)",
+                "description": "极高不可控事件，NPC常有异议"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_res_low",
+          "type": "prompt",
+          "config": {
+            "identifier": "res_low",
+            "block_type": "system",
+            "content": [
+              "【随机阻力：岁月静好】",
+              "世界充满善意。互动的阻力极低，一切请求都倾向于被满足或被温柔对待。"
+            ],
+            "priority": 52,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_res_medium",
+          "type": "prompt",
+          "config": {
+            "identifier": "res_medium",
+            "block_type": "system",
+            "content": [
+              "【随机阻力：暗流涌动】",
+              "引入一定的戏剧波折。NPC偶尔会拒绝，偶尔会有电话打断，或物品突然找不到。"
+            ],
+            "priority": 52,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_res_high",
+          "type": "prompt",
+          "config": {
+            "identifier": "res_high",
+            "block_type": "system",
+            "content": [
+              "【随机阻力：命运无常】",
+              "高强度生存/互动难度。NPC极度多疑、固执。任何行动都有高概率触发恶性变故或突发随机事件（系统有权掷骰子使玩家倒霉）。"
+            ],
+            "priority": 52,
             "is_locked": false,
             "lock_reason": null
           }
@@ -291,34 +595,54 @@
           "id": "n_mod_group",
           "type": "group_gate",
           "config": {
-            "label": "可选增强模块",
+            "label": "深度强化模块 (可选)",
             "options": [
               {
+                "key": "parallel",
+                "label": "平行事件 (双线叙事)",
+                "description": "揭示世界另一端的暗流"
+              },
+              {
                 "key": "anti_spoil",
-                "label": "认知屏障",
-                "description": "严格隔离上帝视角信息"
+                "label": "全知抵抗 (防剧透)",
+                "description": "限制NPC知道设定集外的真相"
               },
               {
-                "key": "lang_real",
-                "label": "语言真实",
-                "description": "多语言环境下的语言隔离与渐进学习"
+                "key": "status_bar",
+                "label": "角色状态栏",
+                "description": "输出Schema包含状态"
               },
               {
-                "key": "inner_mono",
-                "label": "表里裂缝",
-                "description": "输出角色的真实心理，展现反差"
+                "key": "todo_list",
+                "label": "代办事项",
+                "description": "输出Schema包含短期待办"
               },
               {
-                "key": "env_rich",
-                "label": "环境映射",
-                "description": "让环境成为情绪的共鸣腔"
-              },
-              {
-                "key": "actions",
+                "key": "options",
                 "label": "推演路标",
-                "description": "提供玩家下一步的可选动作"
+                "description": "提供玩家下一步选项"
+              },
+              {
+                "key": "monologue",
+                "label": "表里裂缝",
+                "description": "输出角色的真实心理"
               }
             ]
+          }
+        },
+        {
+          "id": "n_mod_parallel",
+          "type": "prompt",
+          "config": {
+            "identifier": "mod_parallel",
+            "block_type": "system",
+            "content": [
+              "【强化：平行双线叙事】",
+              "在每段回复的最末尾，使用简短的独立段落（如『与此同时...』）描述世界上另一端、或另一名NPC当前正在发生的事，建立宏大史诗感。"
+            ],
+            "priority": 50,
+            "is_locked": false,
+            "lock_reason": null
           }
         },
         {
@@ -328,63 +652,10 @@
             "identifier": "mod_anti_spoil",
             "block_type": "system",
             "content": [
-              "【强化：认知屏障 (防剧透)】",
-              "",
-              "• 信息隔离：角色只知道自己经历过、听到过的事。不要提前暴露悬念，不要揣测玩家没有表达出来的意图。",
-              "• 保持真实感：面对未知，角色会疑惑、警惕或做出错误的判断。允许这种信息差带来的戏剧性冲突。"
+              "【强化：全知抵抗 (认知屏障)】",
+              "NPC不可能知道世界书的所有内容。他们仅依靠自身阅历判断。对于玩家没有说出口的秘密，坚决保持『未知』状态。"
             ],
-            "priority": null,
-            "is_locked": false,
-            "lock_reason": null
-          }
-        },
-        {
-          "id": "n_mod_lang_real",
-          "type": "prompt",
-          "config": {
-            "identifier": "mod_language",
-            "block_type": "system",
-            "content": [
-              "【强化：语言真实感】",
-              "",
-              "• 语言隔离：世界上不存在万能翻译器。遇到角色不懂的语言，用描写（对方叽里咕噜说了一串）代替原文。",
-              "• 沟通本能：语言不通时，通过手势、表情、语气来推断意图，写出跨语言沟通的艰难与真实感。"
-            ],
-            "priority": null,
-            "is_locked": false,
-            "lock_reason": null
-          }
-        },
-        {
-          "id": "n_mod_inner_mono",
-          "type": "prompt",
-          "config": {
-            "identifier": "mod_inner_mono",
-            "block_type": "system",
-            "content": [
-              "【强化：表里裂缝 (内心独白)】",
-              "",
-              "• 插入时机：在角色撒谎、掩饰、动摇或极度压抑时，插入简短的内心独白。",
-              "• 展现反差：利用独白展现角色『做出来的』和『心里想的』之间的裂缝，提升人物立体感。"
-            ],
-            "priority": null,
-            "is_locked": false,
-            "lock_reason": null
-          }
-        },
-        {
-          "id": "n_mod_env_rich",
-          "type": "prompt",
-          "config": {
-            "identifier": "mod_environment",
-            "block_type": "system",
-            "content": [
-              "【强化：环境映射 (氛围强化)】",
-              "",
-              "• 环境是活的：雨滴砸在玻璃上的频率、灯光的闪烁、远处的警笛，都应该与当前场景的紧张度或情绪共振。",
-              "• 视线引导：用环境的细微变化来代替『时间流逝』的生硬描写。"
-            ],
-            "priority": null,
+            "priority": 50,
             "is_locked": false,
             "lock_reason": null
           }
@@ -396,102 +667,56 @@
             "identifier": "mod_actions",
             "block_type": "system",
             "content": [
-              "【强化：推演路标 (行动选项)】",
-              "",
-              "• 在回复末尾，向玩家提供 3-4 个可选的下一步行动。",
-              "• 选项应具体、有区分度，能导向不同的剧情分支。"
+              "【强化：推演路标】",
+              "提供 3-4 个选项以供玩家参考。"
             ],
-            "priority": null,
+            "priority": 50,
             "is_locked": false,
             "lock_reason": null
           }
         },
         {
-          "id": "n_mode",
-          "type": "mode_switch",
-          "config": {
-            "label": "记忆模式适配"
-          }
-        },
-        {
-          "id": "n_mem_stateless",
+          "id": "n_mod_inner_mono",
           "type": "prompt",
           "config": {
-            "identifier": "mem_stateless",
+            "identifier": "mod_inner_mono",
             "block_type": "system",
             "content": [
-              "【记忆模式：无状态感知 (Stateless)】",
-              "",
-              "• 当前无跨轮次摘要。你必须极度敏锐地捕捉当前对话窗口内的蛛丝马迹。",
-              "• 从玩家的动作和对白中反推场景的上下文，不突兀地抛出设定中未在当前显现的信息。"
+              "【强化：表里裂缝 (独白)】",
+              "记录角色未表露的内心独白。"
             ],
-            "priority": null,
+            "priority": 50,
             "is_locked": false,
             "lock_reason": null
           }
         },
         {
-          "id": "n_mem_legacy",
-          "type": "prompt",
-          "config": {
-            "identifier": "mem_legacy",
-            "block_type": "system",
-            "content": [
-              "【记忆模式：全局总结 (Legacy)】",
-              "",
-              "• 系统会注入早期的剧情总结和世界变量。",
-              "• 将这些总结作为背景板。角色的人际关系、既定事实不可随意更改，确保叙事的连贯性。",
-              "• 避免在对话中生硬地复述总结内容，让过去的事自然成为现在决策的依据。"
-            ],
-            "priority": null,
-            "is_locked": false,
-            "lock_reason": null
-          }
-        },
-        {
-          "id": "n_mem_mem0",
-          "type": "prompt",
-          "config": {
-            "identifier": "mem_mem0",
-            "block_type": "system",
-            "content": [
-              "【记忆模式：向量记忆 (Mem0)】",
-              "",
-              "• 你将接收到系统精准检索的长期记忆碎片（过去某次对话的具体细节、玩家的偏好）。",
-              "• 『被记住是最高级的浪漫』。在极其自然的节点，让角色无意间提及这些细节。",
-              "• 不要机械罗列记忆，将它们化作一个眼神、一个习惯性的动作或一句不经意的提起。"
-            ],
-            "priority": null,
-            "is_locked": false,
-            "lock_reason": null
-          }
-        },
-        {
-          "id": "n_rules",
-          "type": "prompt",
-          "config": {
-            "identifier": "output_rules",
-            "block_type": "system",
-            "content": [
-              "【终极执行守则】",
-              "",
-              "1. 严禁破壳：绝对不要以AI的口吻解释剧情或提供建议。你就是这个世界的化身。",
-              "2. 气口留白：绝对不要把一件事做绝。每次回复结束时，必须有一个让玩家接话的动作悬停、未完的眼神或抛出的问题。",
-              "3. 拒绝模板：每一次互动的反馈都应是定制的，拒绝套路化、机械化的描写。"
-            ],
-            "priority": null,
-            "is_locked": true,
-            "lock_reason": "通用输出守则不可移除"
-          }
-        },
-        {
-          "id": "n_thinking_schema",
+          "id": "n_schema_status",
           "type": "schema_field",
           "config": {
-            "field_name": "thinking",
-            "field_type": "string",
-            "description": "主要角色的内心思考与推理过程（chain-of-thought）。思维链模型启用时填充，便于上层应用读取。",
-            "sub_schema": null,
+            "field_name": "status_bar",
+            "field_type": "object",
+            "description": "角色的当前状态，例如体力、情绪、理智等",
+            "sub_schema": "{\"properties\": {\"mood\": {\"type\": \"string\"}, \"health\": {\"type\": \"string\"}}}",
+            "db_mapping": null,
+            "required": true,
+            "context_included": true,
+            "display": {
+              "default_expanded": true,
+              "hide_label": false
+            },
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_schema_todo",
+          "type": "schema_field",
+          "config": {
+            "field_name": "todo_list",
+            "field_type": "array",
+            "description": "角色短期的代办事项与目标清单",
+            "sub_schema": "{\"items\": {\"type\": \"string\"}}",
             "db_mapping": null,
             "required": true,
             "context_included": true,
@@ -509,8 +734,8 @@
           "config": {
             "field_name": "options",
             "field_type": "array",
-            "description": "为玩家输出 3-4 个可选的下一步行动。仅在「行动选项」GroupGate 选项被选中时纳入 schema。",
-            "sub_schema": "{\"items\": {\"type\": \"string\", \"description\": \"一条可执行的行动描述\"}}",
+            "description": "玩家可选行动",
+            "sub_schema": "{\"items\": {\"type\": \"string\"}}",
             "db_mapping": null,
             "required": true,
             "context_included": true,
@@ -528,7 +753,135 @@
           "config": {
             "field_name": "monologue",
             "field_type": "string",
-            "description": "主要角色在关键节点的内心独白。仅在「内心独白」GroupGate 选项被选中时纳入 schema。",
+            "description": "角色的真实内心独白",
+            "sub_schema": null,
+            "db_mapping": null,
+            "required": true,
+            "context_included": true,
+            "display": {
+              "default_expanded": true,
+              "hide_label": false
+            },
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_mode",
+          "type": "mode_switch",
+          "config": {
+            "label": "记忆系统桥接"
+          }
+        },
+        {
+          "id": "n_mem_stateless",
+          "type": "prompt",
+          "config": {
+            "identifier": "mem_stateless",
+            "block_type": "system",
+            "content": [
+              "【记忆模式：无状态感知】",
+              "当前无跨轮次摘要，从当前窗口反推场景。"
+            ],
+            "priority": 40,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_mem_legacy",
+          "type": "prompt",
+          "config": {
+            "identifier": "mem_legacy",
+            "block_type": "system",
+            "content": [
+              "【记忆模式：总结推演 (Legacy)】",
+              "系统会注入全局总结。将总结作为背景板，保证连贯性。"
+            ],
+            "priority": 40,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_mem_mem0",
+          "type": "prompt",
+          "config": {
+            "identifier": "mem_mem0",
+            "block_type": "system",
+            "content": [
+              "【记忆模式：向量片段 (Mem0)】",
+              "『被记住是最高级的浪漫』。将系统检索到的碎片自然融入行为。"
+            ],
+            "priority": 40,
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_legacy_group",
+          "type": "group_gate",
+          "config": {
+            "label": "Legacy 特权 (动态 Schema)",
+            "options": [
+              {
+                "key": "world_var",
+                "label": "更新世界变量",
+                "description": "输出 Schema 记录重大状态"
+              },
+              {
+                "key": "summary",
+                "label": "更新剧情总结",
+                "description": "输出 Schema 记录本轮进展"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_schema_world_vars",
+          "type": "schema_field",
+          "config": {
+            "field_name": "world_variables",
+            "field_type": "object",
+            "description": "全局世界变量更新（JSON字典）",
+            "sub_schema": null,
+            "db_mapping": null,
+            "required": true,
+            "context_included": true,
+            "display": {
+              "default_expanded": true,
+              "hide_label": false
+            },
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_schema_summary",
+          "type": "schema_field",
+          "config": {
+            "field_name": "plot_summary",
+            "field_type": "string",
+            "description": "更新后的剧情脉络总结",
+            "sub_schema": null,
+            "db_mapping": null,
+            "required": true,
+            "context_included": true,
+            "display": {
+              "default_expanded": true,
+              "hide_label": false
+            },
+            "is_locked": false,
+            "lock_reason": null
+          }
+        },
+        {
+          "id": "n_thinking_schema",
+          "type": "schema_field",
+          "config": {
+            "field_name": "thinking",
+            "field_type": "string",
+            "description": "内部分析与动机推理链",
             "sub_schema": null,
             "db_mapping": null,
             "required": true,
@@ -546,309 +899,585 @@
           "type": "sampling_params",
           "config": {
             "temperature": 0.9,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "top_p": 0.95,
-            "frequency_penalty": 0.1,
-            "presence_penalty": null,
+            "frequency_penalty": 0.15,
+            "presence_penalty": 0.05,
             "stop": null,
             "is_locked": false
           }
         },
         {
           "id": "n_end",
-          "type": "end"
+          "type": "end",
+          "config": {}
+        },
+        {
+          "id": "n_rules",
+          "type": "prompt",
+          "config": {
+            "identifier": "output_rules",
+            "block_type": "system",
+            "content": [
+              "【终极执行守则】",
+              "1. 严禁破壳：绝不以AI口吻说话。",
+              "2. 气口留白：必须留有余地，给玩家反应的空间。"
+            ],
+            "priority": 10,
+            "is_locked": true,
+            "lock_reason": "核心设定不可修改"
+          }
         }
       ],
       "edges": [
         {
-          "id": "e01",
+          "id": "e_1",
           "source": "n_start",
           "source_port": "out",
           "target": "n_core",
           "target_port": "in"
         },
         {
-          "id": "e02",
+          "id": "e_2",
           "source": "n_core",
           "source_port": "out",
           "target": "n_const",
           "target_port": "in"
         },
         {
-          "id": "e03",
+          "id": "e_3",
           "source": "n_const",
           "source_port": "out",
           "target": "n_branch",
           "target_port": "in"
         },
         {
-          "id": "e04",
-          "source": "n_branch",
-          "source_port": "out_single",
-          "target": "n_persp_gate",
-          "target_port": "in"
-        },
-        {
-          "id": "e05",
+          "id": "e_4",
           "source": "n_branch",
           "source_port": "out_online",
           "target": "n_multi",
           "target_port": "in"
         },
         {
-          "id": "e06",
+          "id": "e_5",
+          "source": "n_branch",
+          "source_port": "out_single",
+          "target": "n_persp_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_6",
+          "source": "n_multi",
+          "source_port": "out",
+          "target": "n_persp_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_7",
           "source": "n_persp_gate",
           "source_port": "out_first",
           "target": "n_persp_first",
           "target_port": "in"
         },
         {
-          "id": "e07",
+          "id": "e_8",
           "source": "n_persp_gate",
-          "source_port": "out_third",
+          "source_port": "out_third_close",
           "target": "n_persp_third",
           "target_port": "in"
         },
         {
-          "id": "e08",
+          "id": "e_9",
+          "source": "n_persp_gate",
+          "source_port": "out_third_god",
+          "target": "n_persp_god",
+          "target_port": "in"
+        },
+        {
+          "id": "e_10",
           "source": "n_persp_first",
           "source_port": "out",
-          "target": "n_style_gate",
+          "target": "n_prose_gate",
           "target_port": "in"
         },
         {
-          "id": "e09",
+          "id": "e_11",
           "source": "n_persp_third",
           "source_port": "out",
-          "target": "n_style_gate",
+          "target": "n_prose_gate",
           "target_port": "in"
         },
         {
-          "id": "e10",
-          "source": "n_multi",
+          "id": "e_12",
+          "source": "n_persp_god",
           "source_port": "out",
-          "target": "n_style_gate",
+          "target": "n_prose_gate",
           "target_port": "in"
         },
         {
-          "id": "e11",
-          "source": "n_style_gate",
-          "source_port": "out_immersive",
-          "target": "n_style_immersive",
+          "id": "e_13",
+          "source": "n_prose_gate",
+          "source_port": "out_plain",
+          "target": "n_prose_plain",
           "target_port": "in"
         },
         {
-          "id": "e12",
-          "source": "n_style_gate",
-          "source_port": "out_balanced",
-          "target": "n_style_balanced",
+          "id": "e_14",
+          "source": "n_prose_gate",
+          "source_port": "out_literary",
+          "target": "n_prose_literary",
           "target_port": "in"
         },
         {
-          "id": "e13",
-          "source": "n_style_gate",
-          "source_port": "out_light",
-          "target": "n_style_light",
+          "id": "e_15",
+          "source": "n_prose_gate",
+          "source_port": "out_cinematic",
+          "target": "n_prose_cinematic",
           "target_port": "in"
         },
         {
-          "id": "e14",
-          "source": "n_style_immersive",
+          "id": "e_16",
+          "source": "n_prose_plain",
+          "source_port": "out",
+          "target": "n_word_limit_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_17",
+          "source": "n_prose_literary",
+          "source_port": "out",
+          "target": "n_word_limit_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_18",
+          "source": "n_prose_cinematic",
+          "source_port": "out",
+          "target": "n_word_limit_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_19",
+          "source": "n_word_limit_gate",
+          "source_port": "out_short",
+          "target": "n_word_short",
+          "target_port": "in"
+        },
+        {
+          "id": "e_20",
+          "source": "n_word_limit_gate",
+          "source_port": "out_medium",
+          "target": "n_word_medium",
+          "target_port": "in"
+        },
+        {
+          "id": "e_21",
+          "source": "n_word_limit_gate",
+          "source_port": "out_long",
+          "target": "n_word_long",
+          "target_port": "in"
+        },
+        {
+          "id": "e_22",
+          "source": "n_word_short",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_23",
+          "source": "n_word_medium",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_24",
+          "source": "n_word_long",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_25",
+          "source": "n_word_limit_gate",
+          "source_port": "out_unlimited",
+          "target": "n_proxy_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_26",
+          "source": "n_proxy_gate",
+          "source_port": "out_none",
+          "target": "n_proxy_none",
+          "target_port": "in"
+        },
+        {
+          "id": "e_27",
+          "source": "n_proxy_gate",
+          "source_port": "out_action",
+          "target": "n_proxy_action",
+          "target_port": "in"
+        },
+        {
+          "id": "e_28",
+          "source": "n_proxy_gate",
+          "source_port": "out_restate",
+          "target": "n_proxy_restate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_29",
+          "source": "n_proxy_gate",
+          "source_port": "out_full",
+          "target": "n_proxy_full",
+          "target_port": "in"
+        },
+        {
+          "id": "e_30",
+          "source": "n_proxy_none",
           "source_port": "out",
           "target": "n_bound_gate",
           "target_port": "in"
         },
         {
-          "id": "e15",
-          "source": "n_style_balanced",
+          "id": "e_31",
+          "source": "n_proxy_action",
           "source_port": "out",
           "target": "n_bound_gate",
           "target_port": "in"
         },
         {
-          "id": "e16",
-          "source": "n_style_light",
+          "id": "e_32",
+          "source": "n_proxy_restate",
           "source_port": "out",
           "target": "n_bound_gate",
           "target_port": "in"
         },
         {
-          "id": "e17",
+          "id": "e_33",
+          "source": "n_proxy_full",
+          "source_port": "out",
+          "target": "n_bound_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_34",
           "source": "n_bound_gate",
           "source_port": "out_avoid",
-          "target": "n_mod_group",
+          "target": "n_bdry_avoid",
           "target_port": "in"
         },
         {
-          "id": "e18",
+          "id": "e_35",
           "source": "n_bound_gate",
           "source_port": "out_natural",
           "target": "n_bdry_natural",
           "target_port": "in"
         },
         {
-          "id": "e19",
+          "id": "e_36",
           "source": "n_bound_gate",
           "source_port": "out_direct",
           "target": "n_bdry_direct",
           "target_port": "in"
         },
         {
-          "id": "e20",
+          "id": "e_37",
+          "source": "n_bdry_avoid",
+          "source_port": "out",
+          "target": "n_driver_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_38",
           "source": "n_bdry_natural",
           "source_port": "out",
-          "target": "n_mod_group",
+          "target": "n_driver_gate",
           "target_port": "in"
         },
         {
-          "id": "e21",
+          "id": "e_39",
           "source": "n_bdry_direct",
+          "source_port": "out",
+          "target": "n_driver_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_40",
+          "source": "n_driver_gate",
+          "source_port": "out_user",
+          "target": "n_driver_user",
+          "target_port": "in"
+        },
+        {
+          "id": "e_41",
+          "source": "n_driver_gate",
+          "source_port": "out_npc",
+          "target": "n_driver_npc",
+          "target_port": "in"
+        },
+        {
+          "id": "e_42",
+          "source": "n_driver_gate",
+          "source_port": "out_balanced",
+          "target": "n_driver_balanced",
+          "target_port": "in"
+        },
+        {
+          "id": "e_43",
+          "source": "n_driver_user",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_44",
+          "source": "n_driver_npc",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_45",
+          "source": "n_driver_balanced",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in"
+        },
+        {
+          "id": "e_46",
+          "source": "n_res_gate",
+          "source_port": "out_low",
+          "target": "n_res_low",
+          "target_port": "in"
+        },
+        {
+          "id": "e_47",
+          "source": "n_res_gate",
+          "source_port": "out_medium",
+          "target": "n_res_medium",
+          "target_port": "in"
+        },
+        {
+          "id": "e_48",
+          "source": "n_res_gate",
+          "source_port": "out_high",
+          "target": "n_res_high",
+          "target_port": "in"
+        },
+        {
+          "id": "e_49",
+          "source": "n_res_low",
           "source_port": "out",
           "target": "n_mod_group",
           "target_port": "in"
         },
         {
-          "id": "e22",
+          "id": "e_50",
+          "source": "n_res_medium",
+          "source_port": "out",
+          "target": "n_mod_group",
+          "target_port": "in"
+        },
+        {
+          "id": "e_51",
+          "source": "n_res_high",
+          "source_port": "out",
+          "target": "n_mod_group",
+          "target_port": "in"
+        },
+        {
+          "id": "e_52",
+          "source": "n_mod_group",
+          "source_port": "out_parallel",
+          "target": "n_mod_parallel",
+          "target_port": "in"
+        },
+        {
+          "id": "e_53",
+          "source": "n_mod_parallel",
+          "source_port": "out",
+          "target": "n_mode",
+          "target_port": "in"
+        },
+        {
+          "id": "e_54",
           "source": "n_mod_group",
           "source_port": "out_anti_spoil",
           "target": "n_mod_anti_spoil",
           "target_port": "in"
         },
         {
-          "id": "e23",
-          "source": "n_mod_group",
-          "source_port": "out_lang_real",
-          "target": "n_mod_lang_real",
-          "target_port": "in"
-        },
-        {
-          "id": "e24",
-          "source": "n_mod_group",
-          "source_port": "out_inner_mono",
-          "target": "n_mod_inner_mono",
-          "target_port": "in"
-        },
-        {
-          "id": "e25",
-          "source": "n_mod_group",
-          "source_port": "out_env_rich",
-          "target": "n_mod_env_rich",
-          "target_port": "in"
-        },
-        {
-          "id": "e26",
-          "source": "n_mod_group",
-          "source_port": "out_actions",
-          "target": "n_mod_actions",
-          "target_port": "in"
-        },
-        {
-          "id": "e27",
+          "id": "e_55",
           "source": "n_mod_anti_spoil",
           "source_port": "out",
           "target": "n_mode",
           "target_port": "in"
         },
         {
-          "id": "e28",
-          "source": "n_mod_lang_real",
+          "id": "e_56",
+          "source": "n_mod_group",
+          "source_port": "out_status_bar",
+          "target": "n_schema_status",
+          "target_port": "in"
+        },
+        {
+          "id": "e_57",
+          "source": "n_schema_status",
           "source_port": "out",
           "target": "n_mode",
           "target_port": "in"
         },
         {
-          "id": "e30",
-          "source": "n_mod_env_rich",
+          "id": "e_58",
+          "source": "n_mod_group",
+          "source_port": "out_todo_list",
+          "target": "n_schema_todo",
+          "target_port": "in"
+        },
+        {
+          "id": "e_59",
+          "source": "n_schema_todo",
           "source_port": "out",
           "target": "n_mode",
           "target_port": "in"
         },
         {
-          "id": "e29a",
-          "source": "n_mod_inner_mono",
-          "source_port": "out",
-          "target": "n_monologue_schema",
+          "id": "e_60",
+          "source": "n_mod_group",
+          "source_port": "out_options",
+          "target": "n_mod_actions",
           "target_port": "in"
         },
         {
-          "id": "e29b",
-          "source": "n_monologue_schema",
-          "source_port": "out",
-          "target": "n_mode",
-          "target_port": "in"
-        },
-        {
-          "id": "e31a",
+          "id": "e_61",
           "source": "n_mod_actions",
           "source_port": "out",
           "target": "n_options_schema",
           "target_port": "in"
         },
         {
-          "id": "e31b",
+          "id": "e_62",
           "source": "n_options_schema",
           "source_port": "out",
           "target": "n_mode",
           "target_port": "in"
         },
         {
-          "id": "e32",
+          "id": "e_63",
+          "source": "n_mod_group",
+          "source_port": "out_monologue",
+          "target": "n_mod_inner_mono",
+          "target_port": "in"
+        },
+        {
+          "id": "e_64",
+          "source": "n_mod_inner_mono",
+          "source_port": "out",
+          "target": "n_monologue_schema",
+          "target_port": "in"
+        },
+        {
+          "id": "e_65",
+          "source": "n_monologue_schema",
+          "source_port": "out",
+          "target": "n_mode",
+          "target_port": "in"
+        },
+        {
+          "id": "e_66",
           "source": "n_mode",
           "source_port": "out_stateless",
           "target": "n_mem_stateless",
           "target_port": "in"
         },
         {
-          "id": "e33",
+          "id": "e_67",
           "source": "n_mode",
           "source_port": "out_legacy",
           "target": "n_mem_legacy",
           "target_port": "in"
         },
         {
-          "id": "e34",
+          "id": "e_68",
           "source": "n_mode",
           "source_port": "out_mem0",
           "target": "n_mem_mem0",
           "target_port": "in"
         },
         {
-          "id": "e35",
+          "id": "e_69",
+          "source": "n_mem_legacy",
+          "source_port": "out",
+          "target": "n_legacy_group",
+          "target_port": "in"
+        },
+        {
+          "id": "e_70",
+          "source": "n_legacy_group",
+          "source_port": "out_world_var",
+          "target": "n_schema_world_vars",
+          "target_port": "in"
+        },
+        {
+          "id": "e_71",
+          "source": "n_legacy_group",
+          "source_port": "out_summary",
+          "target": "n_schema_summary",
+          "target_port": "in"
+        },
+        {
+          "id": "e_72",
           "source": "n_mem_stateless",
           "source_port": "out",
           "target": "n_thinking_schema",
           "target_port": "in"
         },
         {
-          "id": "e36a",
-          "source": "n_mem_legacy",
-          "source_port": "out",
-          "target": "n_thinking_schema",
-          "target_port": "in"
-        },
-        {
-          "id": "e36b",
+          "id": "e_73",
           "source": "n_mem_mem0",
           "source_port": "out",
           "target": "n_thinking_schema",
           "target_port": "in"
         },
         {
-          "id": "e37",
+          "id": "e_74",
+          "source": "n_legacy_group",
+          "source_port": "out",
+          "target": "n_thinking_schema",
+          "target_port": "in"
+        },
+        {
+          "id": "e_75",
+          "source": "n_schema_world_vars",
+          "source_port": "out",
+          "target": "n_thinking_schema",
+          "target_port": "in"
+        },
+        {
+          "id": "e_76",
+          "source": "n_schema_summary",
+          "source_port": "out",
+          "target": "n_thinking_schema",
+          "target_port": "in"
+        },
+        {
+          "id": "e_77",
           "source": "n_rules",
           "source_port": "out",
           "target": "n_thinking_schema",
           "target_port": "in"
         },
         {
-          "id": "e39",
+          "id": "e_78",
           "source": "n_thinking_schema",
           "source_port": "out",
           "target": "n_params",
           "target_port": "in"
         },
         {
-          "id": "e38",
+          "id": "e_79",
           "source": "n_params",
           "source_port": "out",
           "target": "n_end",
@@ -856,9 +1485,5 @@
         }
       ]
     }
-  },
-  "semanticGroups": [],
-  "blocks": [],
-  "stopSequences": [],
-  "providerOverrides": []
+  }
 }
