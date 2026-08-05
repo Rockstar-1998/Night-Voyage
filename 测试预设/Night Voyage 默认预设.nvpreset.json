@@ -1484,6 +1484,10 @@
           "target_port": "in"
         }
       ]
-    }
+    },
+    "semanticGroups": [],
+    "blocks": [],
+    "stopSequences": [],
+    "providerOverrides": []
   }
 }
