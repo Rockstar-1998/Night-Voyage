@@ -71,11 +71,14 @@ impl PromptRole {
         }
     }
 
-    fn from_message_role(role: &str) -> Self {
+    fn from_message_role(role: &str) -> Result<Self, String> {
         match role {
-            "system" => Self::System,
-            "assistant" => Self::Assistant,
-            _ => Self::User,
+            "system" => Ok(Self::System),
+            "assistant" => Ok(Self::Assistant),
+            "user" => Ok(Self::User),
+            other => Err(format!(
+                "未知的 message role: {other}（仅支持 system / assistant / user）"
+            )),
         }
     }
 }
@@ -608,6 +611,7 @@ pub async fn compile_prompt(
         memory_mode: memory_mode.clone(),
         conversation_type: context.conversation_type.clone(),
         gate_selections,
+        protocol: crate::repositories::conversation_repository::ConversationRepository::resolve_conversation_protocol(db, input.conversation_id).await,
     };
 
     let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_str).map_err(|err| {
@@ -658,6 +662,29 @@ pub async fn compile_prompt(
             )
         })?;
     preset_compiler_data.params.structured_output_schema = Some(schema_string);
+
+    // 2.1 蓝图产出的 structured_output_schema 要在模型回复上真正生效，
+    //     response_mode 必须是 `structured_json`：provider_adapter 仅在
+    //     `response_mode == "structured_json"` 时才注入 `response_format`
+    //     (OpenAI) / `output_config` (Anthropic)。否则 schema 只是被塞进
+    //     params 却从不进入请求体，表现为"schema 对回复无效"（本 bug 现象：
+    //     请求体里没有任何结构化约束，模型按 PROMPT 节点写散文）。
+    //
+    //     仅在蓝图确实定义了至少一个 schema 字段（properties 非空）时才强制
+    //     切到 structured_json；空 schema（properties: {}）不切，避免把没有
+    //     schema 节点的纯蓝图对话也变成结构化输出。
+    //
+    //     若当前 provider 不支持结构化 JSON 输出，build_llm_chat_request 会
+    //     显式报错（C2 零回退，不静默降级），由调用方提示用户更换 provider。
+    let has_schema_fields = blueprint_result
+        .structured_output_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .map(|props| !props.is_empty())
+        .unwrap_or(false);
+    if has_schema_fields {
+        preset_compiler_data.params.response_mode = Some("structured_json".to_string());
+    }
 
     // 3. sampling_params: 蓝图产出的采样参数覆盖旧字段（仅 Some / 非空覆盖）
     apply_blueprint_sampling_params(
@@ -889,7 +916,30 @@ pub async fn compile_prompt(
     .await?;
     system_blocks.extend(retrieved_detail_blocks);
 
-    system_blocks.sort_by_key(|left| left.priority);
+    // Blueprint preset rules carry their own node `priority` (10..=100) and must
+    // be ordered by priority DESCENDING (highest importance first — `core_identity`
+    // leads the system prompt). This restores the pre-blueprint `priority DESC`
+    // convention (see `preset_prompt_blocks` `ORDER BY ... priority DESC ...` at
+    // `load_preset_compiler_data`) that the blueprint path regressed away by
+    // sorting ascending, which pushed `core_identity` (priority 100) to the very
+    // end and `mem_stateless` (priority 40) to the front.
+    //
+    // Meta blocks (MultiplayerProtocol=150, CharacterBase=200, PlayerBase=250,
+    // WorldBookMatch=300, …) use the kind-layer priority (>=150) and keep their
+    // ascending layering, placed AFTER all preset rules. The two groups never
+    // overlap numerically (preset rule 10..=100 < meta 150+), so this simply
+    // reverses the within-preset-rule order while preserving the existing
+    // preset-rules-before-meta boundary.
+    system_blocks.sort_by(|a, b| {
+        let a_preset = a.kind == PromptBlockKind::PresetRule;
+        let b_preset = b.kind == PromptBlockKind::PresetRule;
+        match (a_preset, b_preset) {
+            (true, true) => b.priority.cmp(&a.priority),
+            (false, false) => a.priority.cmp(&b.priority),
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+        }
+    });
 
     let mut result = PromptCompileResult {
         system_blocks,
@@ -2019,7 +2069,7 @@ async fn load_current_user_block(
     let role = PromptRole::from_message_role(
         &row.try_get::<String, _>("role")
             .unwrap_or_else(|_| "user".to_string()),
-    );
+    )?;
     let content: String = row.try_get("content").unwrap_or_default();
 
     Ok(build_block(
@@ -2139,7 +2189,7 @@ async fn load_recent_history_blocks(
         let role = PromptRole::from_message_role(
             &row.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "user".to_string()),
-        );
+        )?;
         let content: String = row.try_get("content").unwrap_or_default();
         let message_kind: String = row.try_get("message_kind").unwrap_or_default();
         debug
@@ -2208,7 +2258,7 @@ async fn load_opening_block(
     let role = PromptRole::from_message_role(
         &row.try_get::<String, _>("role")
             .unwrap_or_else(|_| "assistant".to_string()),
-    );
+    )?;
     let content: String = row.try_get("content").unwrap_or_default();
 
     if content.trim().is_empty() {
