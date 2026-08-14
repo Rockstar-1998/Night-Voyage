@@ -2915,7 +2915,13 @@ fn is_cjk_codepoint(ch: char) -> bool {
 fn source_message_id(source: &PromptBlockSource) -> i64 {
     match source {
         PromptBlockSource::Message { message_id } => *message_id,
-        _ => 0,
+        PromptBlockSource::Preset { .. }
+        | PromptBlockSource::Character { .. }
+        | PromptBlockSource::Player { .. }
+        | PromptBlockSource::WorldBook { .. }
+        | PromptBlockSource::Summary { .. }
+        | PromptBlockSource::Retrieval { .. }
+        | PromptBlockSource::Compiler => 0,
     }
 }
 
