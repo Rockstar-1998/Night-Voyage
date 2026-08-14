@@ -157,6 +157,25 @@ pub enum PromptBlockSource {
     Compiler,
 }
 
+impl PromptBlockSource {
+    /// Returns the originating message id when this block was sourced from a
+    /// user or assistant message, or `None` for any other source. The match is
+    /// exhaustive over every variant so a newly added source cannot silently
+    /// fall through to a default arm.
+    pub fn message_id(&self) -> Option<i64> {
+        match self {
+            PromptBlockSource::Message { message_id } => Some(*message_id),
+            PromptBlockSource::Preset { .. } => None,
+            PromptBlockSource::Character { .. } => None,
+            PromptBlockSource::Player { .. } => None,
+            PromptBlockSource::WorldBook { .. } => None,
+            PromptBlockSource::Summary { .. } => None,
+            PromptBlockSource::Retrieval { .. } => None,
+            PromptBlockSource::Compiler => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptBlock {
     pub kind: PromptBlockKind,
@@ -2308,9 +2327,8 @@ async fn ensure_opening_in_history(
         }
     };
 
-    let opening_message_id = match &opening.source {
-        PromptBlockSource::Message { message_id } => *message_id,
-        _ => return Ok(()),
+    let Some(opening_message_id) = opening.source.message_id() else {
+        return Ok(());
     };
 
     // 内容模板层：开场消息 content 经 minijinja 渲染。开场归属限 AI 角色卡，
