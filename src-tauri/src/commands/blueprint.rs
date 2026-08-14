@@ -154,7 +154,15 @@ pub async fn load_blueprint_gates(
                 label: label.clone(),
                 options: options.iter().map(BlueprintGateOptionDto::from).collect(),
             }),
-            _ => None,
+            NodeConfig::Start => None,
+            NodeConfig::End => None,
+            NodeConfig::Prompt(_) => None,
+            NodeConfig::SchemaField(_) => None,
+            NodeConfig::ModeSwitch(_) => None,
+            NodeConfig::RoleSwitch(_) => None,
+            NodeConfig::SamplingParams(_) => None,
+            NodeConfig::Constant(_) => None,
+            NodeConfig::Branch(_) => None,
         })
         .collect();
 
