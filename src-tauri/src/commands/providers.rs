@@ -241,12 +241,43 @@ pub async fn providers_update(
 
 #[tauri::command]
 pub async fn providers_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
+    let mut tx = state.db.begin().await.map_err(|err| err.to_string())?;
+
     sqlx::query("DELETE FROM api_providers WHERE id = ?")
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
 
+    // 级联清理引用，避免会话/角色卡留下悬空 provider 引用（违反"无效状态不可表达"）。
+    // api_provider_models 已通过 ON DELETE CASCADE 自动处理，此处不重复。
+    sqlx::query("UPDATE conversations SET provider_id = NULL WHERE provider_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "UPDATE conversations SET embedding_provider_id = NULL WHERE embedding_provider_id = ?",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "UPDATE character_cards SET default_provider_id = NULL WHERE default_provider_id = ?",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    // llm_retry_snapshots.provider_id 为 NOT NULL，无法置空，删除孤儿行
+    sqlx::query("DELETE FROM llm_retry_snapshots WHERE provider_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    tx.commit().await.map_err(|err| err.to_string())?;
     Ok(())
 }
 
