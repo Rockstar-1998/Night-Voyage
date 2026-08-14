@@ -709,7 +709,9 @@ impl RoomMessage {
                 character: character.clone(),
             })
             .ok(),
-            _ => None,
+            RoomMessage::JoinRoom { .. } => None,
+            RoomMessage::JoinSuccess { .. } => None,
+            RoomMessage::UpdateGuestCharacter { .. } => None,
         }
     }
 }
