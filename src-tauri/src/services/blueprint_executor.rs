@@ -700,9 +700,21 @@ fn resolve_constant_source(
         NodeConfig::Constant(ConstantConfig { source, .. }) => match source.as_str() {
             "conversation_type" => Ok(context.conversation_type.clone()),
             "memory_mode" => Ok(context.memory_mode.clone()),
+            "protocol" => Ok(context.protocol.clone()),
             _ => Err(BlueprintError::UnknownConstantSource(source.clone())),
         },
-        _ => Err(BlueprintError::BranchMustFollowConstant(branch_node_id.to_string())),
+        NodeConfig::Start
+        | NodeConfig::End
+        | NodeConfig::Prompt(_)
+        | NodeConfig::SchemaField(_)
+        | NodeConfig::MutexGate(_)
+        | NodeConfig::GroupGate(_)
+        | NodeConfig::ModeSwitch(_)
+        | NodeConfig::RoleSwitch(_)
+        | NodeConfig::SamplingParams(_)
+        | NodeConfig::Branch(_) => Err(BlueprintError::BranchMustFollowConstant(
+            branch_node_id.to_string(),
+        )),
     }
 }
 
@@ -974,6 +986,7 @@ mod tests {
             memory_mode: memory_mode.to_string(),
             conversation_type: "single".to_string(),
             gate_selections: HashMap::new(),
+            protocol: "chat_completions".to_string(),
         }
     }
 
@@ -982,6 +995,7 @@ mod tests {
             memory_mode: memory_mode.to_string(),
             conversation_type: conversation_type.to_string(),
             gate_selections: HashMap::new(),
+            protocol: "chat_completions".to_string(),
         }
     }
 
@@ -992,6 +1006,7 @@ mod tests {
         BlueprintExecutionContext {
             memory_mode: memory_mode.to_string(),
             conversation_type: "single".to_string(),
+            protocol: "chat_completions".to_string(),
             gate_selections: gates
                 .iter()
                 .map(|(node_id, keys)| {
@@ -1840,5 +1855,64 @@ mod tests {
             .expect("graph must serialize");
         assert!(reserialized.contains("\"type\":\"constant\""));
         assert!(reserialized.contains("\"type\":\"branch\""));
+    }
+
+    /// 验证 `Constant(protocol)` → `Branch` 按会话实际协议分流到不同出口，
+    /// 进而选中不同下游节点（此处用 prompt 验证分流正确性，真实场景为不同 sampling_params）。
+    #[tokio::test]
+    async fn test_constant_branch_protocol() {
+        let graph = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "protocol"),
+                branch(
+                    "n_branch",
+                    &[("anthropic", "out_anthropic"), ("chat_completions", "out_chat")],
+                    "out_default",
+                ),
+                prompt("n_anthropic_p", "anthropic_block", "system", "ANTHROPIC BLOCK"),
+                prompt("n_chat_p", "chat_block", "system", "CHAT BLOCK"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_anthropic", "n_anthropic_p", "in"),
+                edge("e4", "n_branch", "out_chat", "n_chat_p", "in"),
+            ],
+        );
+
+        // protocol = anthropic → 只选中 anthropic 分支的 prompt
+        let ctx_anthropic = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
+            protocol: "anthropic".to_string(),
+            gate_selections: HashMap::new(),
+        };
+        let res_anthropic = execute_blueprint(&graph, &ctx_anthropic)
+            .await
+            .expect("protocol=anthropic execution must succeed");
+        assert_eq!(
+            res_anthropic.blocks.len(),
+            1,
+            "anthropic branch should produce exactly one block"
+        );
+        assert_eq!(res_anthropic.blocks[0].content, "ANTHROPIC BLOCK");
+
+        // protocol = chat_completions → 只选中 chat 分支的 prompt
+        let ctx_chat = BlueprintExecutionContext {
+            memory_mode: "stateless".to_string(),
+            conversation_type: "single".to_string(),
+            protocol: "chat_completions".to_string(),
+            gate_selections: HashMap::new(),
+        };
+        let res_chat = execute_blueprint(&graph, &ctx_chat)
+            .await
+            .expect("protocol=chat_completions execution must succeed");
+        assert_eq!(
+            res_chat.blocks.len(),
+            1,
+            "chat_completions branch should produce exactly one block"
+        );
+        assert_eq!(res_chat.blocks[0].content, "CHAT BLOCK");
     }
 }
