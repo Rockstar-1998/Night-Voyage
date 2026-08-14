@@ -173,9 +173,10 @@ Walkthrough/          → 变更留痕记录（每次代码修改一份新文件
 
 声称"编译通过"或"构建通过"前，必须实际运行并贴出输出：
 
-- 后端改动：`cargo build`（在 `src-tauri/` 下）
-- 前端改动：`npm run build` 或 `tsc --noEmit`（区分 PC / mobile 构建配置）
-- 双端改动：两端都要跑
+- 后端改动 / 双端改动：运行 `scripts/build_dual_release.bat`。该脚本注入项目本地 Rust 工具链 PATH（`.cache/cargo/bin`）并执行 `npm run tauri build -- --no-bundle`，覆盖后端 + PC 前端。注意：本机 `cargo` / `rustc` **不在系统 PATH**，须经此脚本注入后才能直接调用 `cargo build`；不要裸跑 `cargo build`。
+- 前端改动（仅 PC）：`npm run build` 或 `npx tsc --noEmit -p tsconfig.json`
+- 前端改动（仅移动端）：`npx tsc --noEmit -p tsconfig.mobile.json`
+- 双端改动：`build_dual_release.bat` 已同时覆盖，无需重复跑前端。
 
 ### 里程碑门禁
 

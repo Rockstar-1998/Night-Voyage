@@ -150,16 +150,20 @@ pub async fn conversations_create(
     )
     .await?;
 
-    if let Some(embed_id) = embedding_provider_id {
-        let purpose: String =
-            sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
-                .bind(embed_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|err| err.to_string())?
-                .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
-        if purpose != "embedding" {
-            return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+    // embedding_provider_id 仅对 mem0 模式有意义；非 mem0（stateless/legacy）
+    // 跳过校验，避免 mem0 专属字段在非 mem0 会话创建路径上误伤（低耦合 / 无效状态不可表达）。
+    if memory_mode == "mem0" {
+        if let Some(embed_id) = embedding_provider_id {
+            let purpose: String =
+                sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
+                    .bind(embed_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
+            if purpose != "embedding" {
+                return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+            }
         }
     }
 
@@ -344,22 +348,38 @@ pub async fn conversations_update_bindings(
         None => None,
     };
 
-    if let Some(Some(embed_id)) = embedding_provider_id {
-        let purpose: String =
-            sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
-                .bind(embed_id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|err| err.to_string())?
-                .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
-        if purpose != "embedding" {
-            return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+    // 按会话当前 memory_mode 分流：embedding_provider_id 仅对 mem0 模式有意义，
+    // 非 mem0（stateless/legacy）跳过校验与更新，避免 mem0 专属字段在非 mem0
+    // 会话保存路径上误伤（违反低耦合与"无效状态不可表达"原则）。
+    let current_memory_mode: String = sqlx::query_scalar(
+        "SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| format!("conversations_update_bindings: 会话不存在 id={}", conversation_id))?;
+    let embedding_update_enabled = current_memory_mode == "mem0";
+
+    if embedding_update_enabled {
+        if let Some(Some(embed_id)) = embedding_provider_id {
+            let purpose: String =
+                sqlx::query_scalar("SELECT purpose FROM api_providers WHERE id = ? LIMIT 1")
+                    .bind(embed_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .ok_or_else(|| "embedding_provider_id 指向的 API 档案不存在".to_string())?;
+            if purpose != "embedding" {
+                return Err("embedding_provider_id 指向的档案不是 embedding 用途".to_string());
+            }
         }
     }
 
-    let embedding_clause = match &embedding_provider_id {
-        None => "",
-        Some(_) => "embedding_provider_id = ?,",
+    let embedding_clause = if embedding_update_enabled && embedding_provider_id.is_some() {
+        "embedding_provider_id = ?,"
+    } else {
+        ""
     };
     let update_sql = format!(
         "UPDATE conversations SET
@@ -388,7 +408,7 @@ pub async fn conversations_update_bindings(
         .bind(provider_id)
         .bind(next_chat_mode)
         .bind(next_policy);
-    if embedding_provider_id.is_some() {
+    if embedding_update_enabled && embedding_provider_id.is_some() {
         query = query.bind(embedding_provider_id.flatten());
     }
     query
