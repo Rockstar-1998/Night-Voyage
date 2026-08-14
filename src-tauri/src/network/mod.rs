@@ -205,6 +205,13 @@ pub enum RoomMessage {
         code: String,
         message: String,
     },
+    /// 兼容模式通知：结构化 JSON 解析失败时，模型原文已整体转入 narrative 字段。
+    CompatibilityMode {
+        conversation_id: i64,
+        round_id: i64,
+        message_id: i64,
+        reason: String,
+    },
 }
 
 // ─── Flat Event Payloads for Tauri Emissions ───
@@ -273,6 +280,15 @@ pub struct StreamObjectFieldCompletePayload {
     pub message_id: i64,
     pub field_key: String,
     pub json: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibilityModePayload {
+    pub conversation_id: i64,
+    pub round_id: i64,
+    pub message_id: i64,
+    pub reason: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -405,6 +421,8 @@ impl RoomMessage {
     /// Map this message to the Tauri event name used on the frontend.
     pub fn event_name(&self) -> &'static str {
         match self {
+            RoomMessage::JoinRoom { .. } => "room:join_room",
+            RoomMessage::JoinSuccess { .. } => "room:join_success",
             RoomMessage::MemberJoined { .. } => "room:member_joined",
             RoomMessage::MemberLeft { .. } => "room:member_left",
             RoomMessage::PlayerMessage { .. } => "room:player_message",
@@ -417,6 +435,7 @@ impl RoomMessage {
             RoomMessage::MessageReset { .. } => "room:message_reset",
             RoomMessage::RoomClosed { .. } => "room:room_closed",
             RoomMessage::Error { .. } => "room:error",
+            RoomMessage::CompatibilityMode { .. } => "room:compatibility_mode",
             RoomMessage::ContextSnapshot { .. } => "room:context_snapshot",
             RoomMessage::SchemaToggle { .. } => "room:schema_toggle",
             RoomMessage::TokenUsage { .. } => "room:token_usage",
@@ -427,7 +446,7 @@ impl RoomMessage {
             RoomMessage::RewoundToRound { .. } => "room:rewound_to_round",
             RoomMessage::ContextWindowChanged { .. } => "room:context_window_changed",
             RoomMessage::GuestCharacterUpdated { .. } => "room:guest_character_updated",
-            _ => "room:message",
+            RoomMessage::UpdateGuestCharacter { .. } => "room:update_guest_character",
         }
     }
 
@@ -554,6 +573,18 @@ impl RoomMessage {
             RoomMessage::Error { code, message } => serde_json::to_value(ErrorPayload {
                 code: code.clone(),
                 message: message.clone(),
+            })
+            .ok(),
+            RoomMessage::CompatibilityMode {
+                conversation_id,
+                round_id,
+                message_id,
+                reason,
+            } => serde_json::to_value(CompatibilityModePayload {
+                conversation_id: *conversation_id,
+                round_id: *round_id,
+                message_id: *message_id,
+                reason: reason.clone(),
             })
             .ok(),
             RoomMessage::RoundStateUpdate { round_state } => {
