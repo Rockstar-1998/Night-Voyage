@@ -115,7 +115,7 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     const provider = embeddingProviders().find((item) => item.id === providerId);
     return provider
       ? `当前会话已绑定 Embedding 档案：${provider.name}`
-      : `当前会话已绑定 Embedding 档案 #${providerId}`;
+      : '当前会话未绑定 Embedding 档案。';
   });
 
   const memoryModeLabel = createMemo(() => {
@@ -205,7 +205,14 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
     setBindingPresetId(props.selectedPresetId != null ? String(props.selectedPresetId) : '');
     setBindingWorldBookId(props.selectedWorldBookId != null ? String(props.selectedWorldBookId) : '');
     setBindingProviderId(props.selectedProviderId != null ? String(props.selectedProviderId) : '');
-    setBindingEmbeddingProviderId(props.selectedEmbeddingProviderId != null ? String(props.selectedEmbeddingProviderId) : '');
+    // Embedding 仅在 mem0 模式有意义；且只采纳真实存在于 embedding 档案列表中的 id，
+    // 杜绝悬空/失效 id（如已删除 provider 残留的 0）污染下拉框（对应后端"无效状态不可表达"）。
+    const embeddingId = props.selectedEmbeddingProviderId;
+    const embeddingInit =
+      props.memoryMode === 'mem0' && embeddingId != null && embeddingProviders().some((p) => p.id === embeddingId)
+        ? String(embeddingId)
+        : '';
+    setBindingEmbeddingProviderId(embeddingInit);
     setSnapshotWindowInput(props.mem0SnapshotWindow != null ? String(props.mem0SnapshotWindow) : '20');
     return null;
   });
