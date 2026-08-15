@@ -22,7 +22,9 @@ use crate::repositories::round_repository::RoundRepository;
 use crate::services::chat_service::{
     broadcast_stream_end, emit_llm_stream_event, emit_object_field_complete_event,
     emit_round_state, emit_stream_message_stop, emit_structured_field_delta_event,
-    finalize_streamed_response, flush_text_delta_event, save_llm_debug_log,
+    build_compatibility_fallback_json, emit_compatibility_mode_event,
+    finalize_streamed_response, flush_text_delta_event, save_agent_debug_log,
+    save_llm_debug_log,
 };
 use crate::services::prompt_compiler::{
     PromptBudget, PromptCompileInput, PromptCompileMode, PromptCompileResult,
@@ -659,6 +661,17 @@ async fn stream_llm_response(
             Some(&compiled_prompt.system_blocks),
             debug_log_dir.as_deref(),
         );
+        save_agent_debug_log(
+            conversation_id,
+            round_id,
+            &provider.provider_kind,
+            &request.model,
+            &request_body,
+            &text,
+            true,
+            Some(&compiled_prompt.system_blocks),
+            debug_log_dir.as_deref(),
+        );
         return Err(format!("LLM 请求失败: {} {}", status, text));
     }
 
@@ -673,6 +686,7 @@ async fn stream_llm_response(
                 assistant_message_id,
                 &compiled_prompt,
                 compiled_prompt.params.response_mode.as_deref(),
+                compiled_prompt.params.structured_output_schema.as_deref(),
             )
             .await
         }
@@ -686,6 +700,7 @@ async fn stream_llm_response(
                 assistant_message_id,
                 &compiled_prompt,
                 compiled_prompt.params.response_mode.as_deref(),
+                compiled_prompt.params.structured_output_schema.as_deref(),
             )
             .await
         }
@@ -737,6 +752,17 @@ async fn stream_llm_response(
         }).to_string(),
     };
     save_llm_debug_log(
+        conversation_id,
+        round_id,
+        &provider.provider_kind,
+        &request.model,
+        &request_body,
+        &debug_response_body,
+        true,
+        Some(&compiled_prompt.system_blocks),
+        debug_log_dir.as_deref(),
+    );
+    save_agent_debug_log(
         conversation_id,
         round_id,
         &provider.provider_kind,
@@ -807,6 +833,7 @@ async fn stream_openai_text_response(
     assistant_message_id: i64,
     _compiled_prompt: &PromptCompileResult,
     response_mode: Option<&str>,
+    schema_json: Option<&str>,
 ) -> Result<StreamResponseData, String> {
     let mut buffer = String::new();
     let mut full_content = String::new();
@@ -816,6 +843,8 @@ async fn stream_openai_text_response(
     let mut content_parts: Vec<PendingMessageContentPart> = Vec::new();
     let mut content_part_lookup: HashMap<String, usize> = HashMap::new();
     let mut finish_reason: Option<String> = None;
+    let provider_kind: &str = "openai_compatible";
+    let mut raw_prose = String::new();
     let mut prompt_tokens: Option<i64> = None;
     let mut completion_tokens: Option<i64> = None;
     let mut last_abort_check = Instant::now();
@@ -889,7 +918,23 @@ async fn stream_openai_text_response(
                             }
                         }
                         Err(err) => {
-                            dbg_eprintln!("[structured_output] finish error: {}", err);
+                            dbg_eprintln!("[structured_output] finish error, entering compatibility mode: {}", err);
+                            if !raw_prose.trim().is_empty() {
+                                structured_json_content = Some(build_compatibility_fallback_json(
+                                    &raw_prose,
+                                    schema_json,
+                                ));
+                                if let Err(e) = emit_compatibility_mode_event(
+                                    app,
+                                    conversation_id,
+                                    round_id,
+                                    assistant_message_id,
+                                    provider_kind,
+                                    "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                                ) {
+                                    dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
+                                }
+                            }
                         }
                     }
                 }
@@ -945,6 +990,7 @@ async fn stream_openai_text_response(
             {
                 if !delta.is_empty() {
                     if let Some(ref mut parser) = structured_parser {
+                        raw_prose.push_str(delta);
                         let has_backslash = delta.contains('\\');
                         let has_raw_newline = delta.contains('\n');
                         if has_backslash || has_raw_newline {
@@ -1095,7 +1141,23 @@ async fn stream_openai_text_response(
                 }
             }
             Err(err) => {
-                dbg_eprintln!("[structured_output] finish error: {}", err);
+                dbg_eprintln!("[structured_output] finish error, entering compatibility mode: {}", err);
+                if !raw_prose.trim().is_empty() {
+                    structured_json_content = Some(build_compatibility_fallback_json(
+                        &raw_prose,
+                        schema_json,
+                    ));
+                    if let Err(e) = emit_compatibility_mode_event(
+                        app,
+                        conversation_id,
+                        round_id,
+                        assistant_message_id,
+                        provider_kind,
+                        "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                    ) {
+                        dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
+                    }
+                }
             }
         }
     }
@@ -1156,6 +1218,7 @@ async fn stream_anthropic_text_response(
     assistant_message_id: i64,
     _compiled_prompt: &PromptCompileResult,
     response_mode: Option<&str>,
+    schema_json: Option<&str>,
 ) -> Result<StreamResponseData, String> {
     let mut buffer = String::new();
     let mut full_content = String::new();
@@ -1165,6 +1228,8 @@ async fn stream_anthropic_text_response(
     let mut content_parts: Vec<PendingMessageContentPart> = Vec::new();
     let mut content_part_lookup: HashMap<String, usize> = HashMap::new();
     let mut latest_stop_reason: Option<String> = None;
+    let provider_kind: &str = "anthropic";
+    let mut raw_prose = String::new();
     let mut pending_tool_use: Option<PendingToolUseSkeleton> = None;
     let mut prompt_tokens: Option<i64> = None;
     let mut completion_tokens: Option<i64> = None;
@@ -1355,6 +1420,7 @@ async fn stream_anthropic_text_response(
                                 .unwrap_or_default();
                             if !delta.is_empty() {
                                 if let Some(ref mut parser) = structured_parser {
+                                    raw_prose.push_str(delta);
                                     let events = parser.feed(delta);
                                     for event in events {
                                         match event {
@@ -1693,7 +1759,23 @@ async fn stream_anthropic_text_response(
                                 }
                             }
                             Err(err) => {
-                                dbg_eprintln!("[structured_output] finish error: {}", err);
+                                dbg_eprintln!("[structured_output] finish error, entering compatibility mode: {}", err);
+                                if !raw_prose.trim().is_empty() {
+                                    structured_json_content = Some(build_compatibility_fallback_json(
+                                        &raw_prose,
+                                        schema_json,
+                                    ));
+                                    if let Err(e) = emit_compatibility_mode_event(
+                                        app,
+                                        conversation_id,
+                                        round_id,
+                                        assistant_message_id,
+                                        provider_kind,
+                                        "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                                    ) {
+                                        dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1813,7 +1895,23 @@ async fn stream_anthropic_text_response(
                 }
             }
             Err(err) => {
-                dbg_eprintln!("[structured_output] finish error: {}", err);
+                dbg_eprintln!("[structured_output] finish error, entering compatibility mode: {}", err);
+                if !raw_prose.trim().is_empty() {
+                    structured_json_content = Some(build_compatibility_fallback_json(
+                        &raw_prose,
+                        schema_json,
+                    ));
+                    if let Err(e) = emit_compatibility_mode_event(
+                        app,
+                        conversation_id,
+                        round_id,
+                        assistant_message_id,
+                        provider_kind,
+                        "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                    ) {
+                        dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
+                    }
+                }
             }
         }
     }

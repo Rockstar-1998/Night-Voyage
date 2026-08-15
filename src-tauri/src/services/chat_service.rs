@@ -16,7 +16,8 @@ use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
 use crate::services::memory_service::MemoryMessage;
 use crate::services::prompt_compiler::{
-    validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot,
+    validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot, PromptBlock,
+    PromptBlockSource,
 };
 use crate::utils::now_ts;
 use crate::dbg_eprintln;
@@ -1601,6 +1602,89 @@ pub fn emit_object_field_complete_event(
     Ok(())
 }
 
+/// 兼容模式回退：当结构化 JSON 解析失败时，把模型原始散文整体塞进 `narrative`
+/// 字段，并按 schema 的 `properties` 为其余字段填入类型默认值（string→""、
+/// number/integer→0、boolean→false、array→[]、object→{}），保证落库内容非空、
+/// 且对 `strict:false` 的消费者保持结构可解析。绝不静默吞错：调用方应同时广播
+/// `CompatibilityMode` 通知。
+pub fn build_compatibility_fallback_json(raw_prose: &str, schema_json: Option<&str>) -> String {
+    let mut map = serde_json::Map::new();
+    if let Some(schema_str) = schema_json {
+        if let Ok(schema) = serde_json::from_str::<serde_json::Value>(schema_str) {
+            if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+                for (key, prop) in props {
+                    if key == "narrative" {
+                        continue;
+                    }
+                    let default = match prop.get("type").and_then(|t| t.as_str()) {
+                        Some("string") => serde_json::Value::String(String::new()),
+                        Some("integer") | Some("number") => serde_json::json!(0),
+                        Some("boolean") => serde_json::Value::Bool(false),
+                        Some("array") => serde_json::Value::Array(Vec::new()),
+                        Some("object") => serde_json::Value::Object(serde_json::Map::new()),
+                        _ => serde_json::Value::Null,
+                    };
+                    map.insert(key.clone(), default);
+                }
+            }
+        }
+    }
+    map.insert(
+        "narrative".to_string(),
+        serde_json::Value::String(raw_prose.to_string()),
+    );
+    serde_json::Value::Object(map).to_string()
+}
+
+/// 显式广播"兼容模式已开启"通知：主机通过 `llm-stream-event` 直接推送，联机房客
+/// 通过 `room:compatibility_mode` 广播。不静默降级——前端必须可见地提示用户。
+pub fn emit_compatibility_mode_event(
+    app: &AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+    message_id: i64,
+    provider_kind: &str,
+    reason: &str,
+) -> Result<(), String> {
+    emit_llm_stream_event(
+        app,
+        conversation_id,
+        round_id,
+        message_id,
+        provider_kind,
+        "compatibility_mode",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        let reason = reason.to_string();
+        async move {
+            let state = app.state::<crate::AppState>();
+            let host_server = state.host_server.lock().await;
+            if let Some(server) = host_server.as_ref() {
+                let server = server.lock().await;
+                let msg = crate::network::RoomMessage::CompatibilityMode {
+                    conversation_id,
+                    round_id,
+                    message_id,
+                    reason,
+                };
+                server.broadcast_message(&msg).await;
+            }
+        }
+    });
+
+    Ok(())
+}
+
 pub async fn finalize_streamed_response(
     db: &SqlitePool,
     round_id: i64,
@@ -1762,6 +1846,107 @@ pub fn save_llm_debug_log(
         dbg_eprintln!("[llm-debug] failed to write log {}: {}", filename, e);
     } else {
         dbg_eprintln!("[llm-debug] saved to {}", full_path.display());
+    }
+}
+
+/// 仅保留 source=Preset 的块，按原合并规则以 "\n\n" 拼接（trim、跳过空块）。
+/// 用于 agent debug 日志：系统提示只输出对话预设部分，剔除角色卡/世界书/摘要等。
+fn preset_only_system_content(blocks: Option<&[PromptBlock]>) -> String {
+    match blocks {
+        Some(blocks) => blocks
+            .iter()
+            .filter(|b| matches!(b.source, PromptBlockSource::Preset { .. }))
+            .map(|b| b.content.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        None => String::new(),
+    }
+}
+
+/// 将 request JSON 内的系统提示内容替换为 preset_content。
+/// 覆盖 OpenAI 兼容（`messages[].role=="system"`）与 Anthropic（顶层 `system`）两种形态。
+fn replace_system_content(request: &mut serde_json::Value, preset_content: &str) {
+    if let Some(messages) = request.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        for m in messages.iter_mut() {
+            if m.get("role").and_then(|r| r.as_str()) == Some("system") {
+                if let Some(c) = m.get_mut("content") {
+                    *c = serde_json::Value::String(preset_content.to_string());
+                }
+            }
+        }
+    }
+    if let Some(sys) = request.get_mut("system") {
+        *sys = serde_json::Value::String(preset_content.to_string());
+    }
+}
+
+/// 新增的 agent debug 友好型日志类：复用 `save_llm_debug_log` 同一次调用的数据，
+/// 但系统提示只保留对话预设（Preset）部分、不输出 `system_blocks_metadata`、整份 JSON 美化输出。
+/// 落盘到 `agent_debug_logs/`（目录机制与 `save_llm_debug_log` 一致，受 `log_dir_override` 控制）。
+pub fn save_agent_debug_log(
+    conversation_id: i64,
+    round_id: i64,
+    provider_kind: &str,
+    model: &str,
+    request_body: &serde_json::Value,
+    response_body: &str,
+    is_streaming: bool,
+    system_blocks: Option<&[PromptBlock]>,
+    log_dir_override: Option<&std::path::Path>,
+) {
+    let timestamp = now_ts();
+    let safe_model = model.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let filename = format!(
+        "agent_req_{}_cid{}_rid{}_{}.json",
+        timestamp, conversation_id, round_id, safe_model
+    );
+
+    let log_dir = if let Some(dir) = log_dir_override {
+        dir.join("agent_debug_logs")
+    } else {
+        let mut dir = std::path::PathBuf::from(".");
+        if let Ok(cargo_manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            dir = std::path::PathBuf::from(&cargo_manifest)
+                .parent()
+                .unwrap()
+                .to_path_buf();
+        }
+        dir.push("agent_debug_logs");
+        dir
+    };
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        dbg_eprintln!("[agent-debug] failed to create log dir {}: {}", log_dir.display(), e);
+        return;
+    }
+
+    let preset_content = preset_only_system_content(system_blocks);
+    let mut request_value = request_body.clone();
+    replace_system_content(&mut request_value, &preset_content);
+
+    let combined = serde_json::json!({
+        "conversation_id": conversation_id,
+        "round_id": round_id,
+        "provider_kind": provider_kind,
+        "model": model,
+        "timestamp": timestamp,
+        "is_streaming": is_streaming,
+        "request": request_value,
+        "response": if response_body.len() > 100_000 {
+            format!("[TRUNCATED, {} chars]", response_body.len())
+        } else {
+            response_body.to_string()
+        }
+    });
+
+    // 美化输出（自动换行），agent debug 友好
+    let output = serde_json::to_string_pretty(&combined).unwrap_or_else(|_| combined.to_string());
+
+    let full_path = log_dir.join(&filename);
+    if let Err(e) = std::fs::write(&full_path, output) {
+        dbg_eprintln!("[agent-debug] failed to write log {}: {}", filename, e);
+    } else {
+        dbg_eprintln!("[agent-debug] saved to {}", full_path.display());
     }
 }
 
