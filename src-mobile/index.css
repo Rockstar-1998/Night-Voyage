@@ -1,6 +1,7 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 
 @source "../src-mobile/**/*.{tsx,ts}";
+@source "../index-mobile.html";
 
 @theme {
   --color-xuanqing: #060C14;
