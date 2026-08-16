@@ -17,7 +17,7 @@ use crate::repositories::round_repository::RoundRepository;
 use crate::services::memory_service::MemoryMessage;
 use crate::services::prompt_compiler::{
     validate_output_text_with_retry_snapshot, RetryOutputValidatorSnapshot, PromptBlock,
-    PromptBlockSource,
+    PromptBlockKind, PromptBlockSource,
 };
 use crate::utils::now_ts;
 use crate::dbg_eprintln;
@@ -1849,17 +1849,29 @@ pub fn save_llm_debug_log(
     }
 }
 
-/// 仅保留 source=Preset 的块，按原合并规则以 "\n\n" 拼接（trim、跳过空块）。
-/// 用于 agent debug 日志：系统提示只输出对话预设部分，剔除角色卡/世界书/摘要等。
+/// 仅保留「对话预设」相关块：`kind == PresetRule`（核心叙事引擎等预设规则）
+/// 以及 `source == Preset`（用户自定义预设块），按优先级顺序以 "\n\n" 拼接
+/// （trim、跳过空块）。剔除角色卡(Character)/世界书(WorldBook)/玩家(Player)等。
+/// 用于 agent debug 日志：系统提示只输出对话预设部分，不再输出角色卡与世界书。
 fn preset_only_system_content(blocks: Option<&[PromptBlock]>) -> String {
     match blocks {
-        Some(blocks) => blocks
-            .iter()
-            .filter(|b| matches!(b.source, PromptBlockSource::Preset { .. }))
-            .map(|b| b.content.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n"),
+        Some(blocks) => {
+            let mut preset_blocks: Vec<&PromptBlock> = blocks
+                .iter()
+                .filter(|b| {
+                    matches!(b.kind, PromptBlockKind::PresetRule)
+                        || matches!(b.source, PromptBlockSource::Preset { .. })
+                })
+                .collect();
+            // 按合并优先级升序重建，与系统提示内的实际顺序一致
+            preset_blocks.sort_by_key(|b| b.priority);
+            preset_blocks
+                .iter()
+                .map(|b| b.content.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        }
         None => String::new(),
     }
 }
@@ -1882,7 +1894,7 @@ fn replace_system_content(request: &mut serde_json::Value, preset_content: &str)
 }
 
 /// 新增的 agent debug 友好型日志类：复用 `save_llm_debug_log` 同一次调用的数据，
-/// 但系统提示只保留对话预设（Preset）部分、不输出 `system_blocks_metadata`、整份 JSON 美化输出。
+/// 但系统提示只保留对话预设（PresetRule）部分、不输出 `system_blocks_metadata`、整份 JSON 美化输出。
 /// 落盘到 `agent_debug_logs/`（目录机制与 `save_llm_debug_log` 一致，受 `log_dir_override` 控制）。
 pub fn save_agent_debug_log(
     conversation_id: i64,
