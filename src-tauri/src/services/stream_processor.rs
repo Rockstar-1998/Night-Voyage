@@ -960,7 +960,7 @@ async fn stream_openai_text_response(
                                     round_id,
                                     assistant_message_id,
                                     provider_kind,
-                                    "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                                    "结构化 JSON 解析失败，已启用兼容模式：流式解析未完成或结构非法，原文已整体转入 narrative 字段。",
                                 ) {
                                     dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
                                 }
@@ -1801,7 +1801,7 @@ async fn stream_anthropic_text_response(
                                         round_id,
                                         assistant_message_id,
                                         provider_kind,
-                                        "结构化 JSON 解析失败，已启用兼容模式：模型回复未返回合法 JSON，原文已整体转入 narrative 字段。",
+                                        "结构化 JSON 解析失败，已启用兼容模式：流式解析未完成或结构非法，原文已整体转入 narrative 字段。",
                                     ) {
                                         dbg_eprintln!("[compatibility_mode] failed to emit notice: {}", e);
                                     }

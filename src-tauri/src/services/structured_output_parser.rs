@@ -27,7 +27,8 @@ enum Phase {
     ExpectColon,
     ExpectValue,
     InStringValue,
-    InObjectValue,
+    InContainerValue,
+    InScalarValue,
     ExpectCommaOrEnd,
     Complete,
 }
@@ -195,12 +196,25 @@ impl StructuredOutputParser {
                             self.active_string_key = self.current_key.clone();
                         }
                         '{' => {
-                            self.phase = Phase::InObjectValue;
+                            self.phase = Phase::InContainerValue;
                             self.object_depth = 1;
                             self.object_raw.clear();
                             self.object_raw.push(ch);
                             self.object_in_string = false;
                             self.object_escape_next = false;
+                        }
+                        '[' => {
+                            self.phase = Phase::InContainerValue;
+                            self.object_depth = 1;
+                            self.object_raw.clear();
+                            self.object_raw.push(ch);
+                            self.object_in_string = false;
+                            self.object_escape_next = false;
+                        }
+                        '-' | '0'..='9' | 't' | 'f' | 'n' => {
+                            self.phase = Phase::InScalarValue;
+                            self.current_string.clear();
+                            self.current_string.push(ch);
                         }
                         _ if ch.is_whitespace() => {}
                         _ => {
@@ -259,7 +273,7 @@ impl StructuredOutputParser {
                     self.pos += ch_len;
                 }
 
-                Phase::InObjectValue => {
+                Phase::InContainerValue => {
                     self.object_raw.push(ch);
                     if self.object_in_string {
                         if self.object_escape_next {
@@ -274,39 +288,37 @@ impl StructuredOutputParser {
                             '"' => {
                                 self.object_in_string = true;
                             }
-                            '{' => {
+                            '{' | '[' => {
                                 self.object_depth += 1;
                             }
-                            '}' => {
+                            '}' | ']' => {
                                 self.object_depth -= 1;
                                 if self.object_depth == 0 {
-                                    match serde_json::from_str::<Map<String, Value>>(
-                                        &self.object_raw,
-                                    ) {
-                                        Ok(map) => {
-                                            if let Some(key) = self.current_key.take() {
-                                                events.push(StructuredOutputEvent::ObjectFieldComplete {
-                                                    key: key.clone(),
-                                                    value: map.clone(),
-                                                });
-                                                self.fields.insert(key, Value::Object(map));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            events.push(StructuredOutputEvent::ParseError(
-                                                format!(
-                                                    "failed to parse object for key '{:?}': {}",
-                                                    self.current_key, e
-                                                ),
-                                            ));
-                                            return events;
-                                        }
-                                    }
-                                    self.object_raw.clear();
-                                    self.phase = Phase::ExpectCommaOrEnd;
+                                    self.complete_container_value(&mut events);
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                    self.pos += ch_len;
+                }
+
+                Phase::InScalarValue => {
+                    match ch {
+                        ',' => {
+                            self.complete_scalar_value();
+                            self.phase = Phase::ExpectKeyOrEnd;
+                        }
+                        '}' => {
+                            self.complete_scalar_value();
+                            self.phase = Phase::Complete;
+                        }
+                        _ if ch.is_whitespace() => {
+                            self.complete_scalar_value();
+                            self.phase = Phase::ExpectCommaOrEnd;
+                        }
+                        _ => {
+                            self.current_string.push(ch);
                         }
                     }
                     self.pos += ch_len;
@@ -345,6 +357,55 @@ impl StructuredOutputParser {
         }
 
         events
+    }
+
+    fn complete_container_value(&mut self, events: &mut Vec<StructuredOutputEvent>) {
+        let raw = std::mem::take(&mut self.object_raw);
+        match serde_json::from_str::<Value>(&raw) {
+            Ok(value) => {
+                if let Some(key) = self.current_key.take() {
+                    match value {
+                        Value::Object(map) => {
+                            events.push(StructuredOutputEvent::ObjectFieldComplete {
+                                key: key.clone(),
+                                value: map.clone(),
+                            });
+                            self.fields.insert(key, Value::Object(map));
+                        }
+                        other => {
+                            self.fields.insert(key, other);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                events.push(StructuredOutputEvent::ParseError(format!(
+                    "failed to parse container value for key '{:?}': {}",
+                    self.current_key, e
+                )));
+            }
+        }
+        self.phase = Phase::ExpectCommaOrEnd;
+    }
+
+    fn complete_scalar_value(&mut self) {
+        let raw = std::mem::take(&mut self.current_string);
+        if raw.is_empty() {
+            return;
+        }
+        if let Some(key) = self.current_key.take() {
+            match serde_json::from_str::<Value>(&raw) {
+                Ok(value) => {
+                    self.fields.insert(key, value);
+                }
+                Err(e) => {
+                    dbg_eprintln!(
+                        "[structured_output] failed to parse scalar value for key '{:?}': {} (raw={:?})",
+                        key, e, raw
+                    );
+                }
+            }
+        }
     }
 
     pub fn finish(self) -> Result<StructuredOutputResult, String> {
@@ -625,5 +686,88 @@ mod tests {
 
         let result = parser.finish().unwrap();
         assert_eq!(result.fields.get("key").unwrap().as_str(), Some("value"));
+    }
+
+    #[test]
+    fn test_empty_array_field() {
+        let mut parser = StructuredOutputParser::new();
+        let result = parser.feed(r#"{"todo_list": []}"#);
+        let _ = result;
+        let result = parser.finish().unwrap();
+        assert!(result.fields.get("todo_list").unwrap().is_array());
+        assert_eq!(result.fields.get("todo_list").unwrap().as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_array_of_objects_field() {
+        let mut parser = StructuredOutputParser::new();
+        let events = parser.feed(r#"{"todo_list": [{"a": "去"}, {"b": "停"}]}"#);
+        let _ = events;
+        let result = parser.finish().unwrap();
+        let arr = result.fields.get("todo_list").unwrap().as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].get("a").unwrap().as_str(), Some("去"));
+        assert_eq!(arr[1].get("b").unwrap().as_str(), Some("停"));
+    }
+
+    #[test]
+    fn test_nested_array_inside_object() {
+        let mut parser = StructuredOutputParser::new();
+        let events = parser.feed(r#"{"options": [{"label": "是", "tags": [1, 2]}, {"label": "否"}]}"#);
+        let _ = events;
+        let result = parser.finish().unwrap();
+        let arr = result.fields.get("options").unwrap().as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let inner = arr[0].get("tags").unwrap().as_array().unwrap();
+        assert_eq!(inner.len(), 2);
+        assert_eq!(inner[0].as_i64(), Some(1));
+    }
+
+    #[test]
+    fn test_scalar_fields_number_bool_null() {
+        let mut parser = StructuredOutputParser::new();
+        let result = parser.feed(r#"{"count": 3, "done": true, "note": null}"#);
+        let _ = result;
+        let result = parser.finish().unwrap();
+        assert_eq!(result.fields.get("count").unwrap().as_i64(), Some(3));
+        assert_eq!(result.fields.get("done").unwrap().as_bool(), Some(true));
+        assert!(result.fields.get("note").unwrap().is_null());
+    }
+
+    #[test]
+    fn test_negative_and_float_number() {
+        let mut parser = StructuredOutputParser::new();
+        let result = parser.feed(r#"{"delta": -1.5, "big": 1.2e3}"#);
+        let _ = result;
+        let result = parser.finish().unwrap();
+        assert_eq!(result.fields.get("delta").unwrap().as_f64(), Some(-1.5));
+        assert_eq!(result.fields.get("big").unwrap().as_f64(), Some(1200.0));
+    }
+
+    #[test]
+    fn test_real_debug_log_shape_no_compat_mode() {
+        let mut parser = StructuredOutputParser::new();
+        let json = r#"{"thinking":"","status_bar":{},"todo_list":[],"options":[],"narrative":"你好，我是测试"}"#;
+        let events = parser.feed(json);
+        let _ = events;
+        let result = parser.finish().unwrap();
+        assert!(result.fields.get("todo_list").unwrap().is_array());
+        assert!(result.fields.get("options").unwrap().is_array());
+        assert!(result.fields.get("status_bar").unwrap().is_object());
+        assert_eq!(
+            result.fields.get("narrative").unwrap().as_str(),
+            Some("你好，我是测试")
+        );
+    }
+
+    #[test]
+    fn test_incremental_array_feed() {
+        let mut parser = StructuredOutputParser::new();
+        let e1 = parser.feed(r#"{"todo_list": [{"a": "#);
+        let e2 = parser.feed(r#""去"}, {"b": "停"}]}"#);
+        let _ = (e1, e2);
+        let result = parser.finish().unwrap();
+        let arr = result.fields.get("todo_list").unwrap().as_array().unwrap();
+        assert_eq!(arr.len(), 2);
     }
 }
