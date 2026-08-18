@@ -122,6 +122,11 @@ async fn is_round_aborted(db: &SqlitePool, round_id: i64, assistant_message_id: 
     }
 }
 
+/// Maximum number of LLM request attempts for a single chat round when
+/// automatic retry is enabled (i.e. after the user clicks "自动重试").
+/// The initial send is not auto-retry and is not counted here.
+const MAX_CHAT_AUTO_RETRY_ATTEMPTS: i64 = 4;
+
 pub fn spawn_stream_task(
     app: AppHandle,
     db: SqlitePool,
@@ -148,6 +153,31 @@ pub fn spawn_stream_task(
                 .await
                 .map(|s| s.attempt_count)
                 .unwrap_or(0);
+
+            // Cap automatic retries to avoid hammering a permanently failing provider.
+            if auto_retry_enabled && attempt_count > MAX_CHAT_AUTO_RETRY_ATTEMPTS {
+                let error = format!(
+                    "已达到最大自动重试次数（{} 次），请检查 provider 网络或稍后手动重试",
+                    MAX_CHAT_AUTO_RETRY_ATTEMPTS
+                );
+                dbg_eprintln!(
+                    "[chat] spawn_stream_task: max auto retries reached, conversation_id={}, round_id={}, attempt_count={}",
+                    conversation_id, round_id, attempt_count
+                );
+                let _ = RoundRepository::mark_failed(&db, round_id).await;
+                let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
+                let _ = app.emit(
+                    "llm-stream-error",
+                    StreamErrorEvent {
+                        conversation_id,
+                        round_id,
+                        message_id: assistant_message_id,
+                        error,
+                    },
+                );
+                broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+                break;
+            }
 
             let stream_result = stream_llm_response(
                 app.clone(),

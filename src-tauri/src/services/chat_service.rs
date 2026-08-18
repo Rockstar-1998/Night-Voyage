@@ -1053,7 +1053,25 @@ impl ChatService {
             .ok_or_else(|| "未找到该轮次的重试快照".to_string())?;
 
         if snapshot.status == "running" {
-            return Err("该轮次正在重试中，请勿重复操作".to_string());
+            // A previous retry task may have died (panic / process kill) and left
+            // the snapshot stuck as "running". If the round is no longer streaming
+            // or the last start timestamp is stale, treat the snapshot as dead and
+            // allow the user to retry. Otherwise, reject the duplicate request.
+            let round = RoundRepository::load_state(&db, conversation_id, Some(round_id)).await?;
+            let is_actively_streaming = round.status == "streaming";
+            let started_recently = snapshot
+                .last_started_at
+                .map(|t| now_ts().saturating_sub(t) < 30_000)
+                .unwrap_or(false);
+            if is_actively_streaming && started_recently {
+                return Err("该轮次正在重试中，请勿重复操作".to_string());
+            }
+            RetrySnapshotRepository::mark_failed(
+                &db,
+                round_id,
+                "前一次重试任务已中断，重置后重新尝试",
+            )
+            .await?;
         }
 
         let assistant_message_id = snapshot.assistant_message_id;

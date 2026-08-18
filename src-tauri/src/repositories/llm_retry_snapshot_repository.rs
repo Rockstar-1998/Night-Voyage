@@ -16,6 +16,7 @@ pub struct RetrySnapshotRecord {
     pub provider_id: i64,
     pub status: String,
     pub attempt_count: i64,
+    pub last_started_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +75,7 @@ impl RetrySnapshotRepository {
         round_id: i64,
     ) -> Result<Option<RetrySnapshotRecord>, String> {
         let row = sqlx::query(
-            "SELECT assistant_message_id, provider_id, status, attempt_count
+            "SELECT assistant_message_id, provider_id, status, attempt_count, last_started_at
              FROM llm_retry_snapshots
              WHERE round_id = ?
              LIMIT 1",
@@ -240,6 +241,7 @@ impl RetrySnapshotRepository {
             provider_id: row.try_get("provider_id").map_err(|err| err.to_string())?,
             status: row.try_get("status").map_err(|err| err.to_string())?,
             attempt_count: row.try_get("attempt_count").map_err(|err| err.to_string())?,
+            last_started_at: row.try_get("last_started_at").ok(),
         })
     }
 }
