@@ -297,20 +297,42 @@ const StructuredResponseRenderer: Component<{
           );
         }}
       </For>
+      {/* Object fields: read-only key-value display (not clickable) */}
+      <For each={fieldEntries()}>
+        {([key, field]) => (
+          <Show when={field.kind === 'object'}>
+            <div class="mt-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
+              <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-accent/60">{key}</div>
+              <div class="flex flex-col gap-1.5">
+                <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
+                  {([k, v]) => (
+                    <div class="flex gap-3 text-sm">
+                      <span class="shrink-0 text-mist-solid/45">{k}</span>
+                      <span class="text-mist-solid/80 leading-relaxed">{v}</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </div>
+          </Show>
+        )}
+      </For>
+
+      {/* Array fields: clickable choices (player options) */}
       <For each={fieldEntries()}>
         {([_key, field]) => (
-          <Show when={field.kind === 'object'}>
+          <Show when={field.kind === 'array'}>
             <div class="flex flex-col gap-2 mt-4">
-              <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
-                {([optKey, optValue]) => (
+              <For each={(field as { kind: 'array'; value: string[] }).value}>
+                {(optValue, i) => (
                   <button
                     class="group flex flex-col md:flex-row items-start md:items-center gap-4 px-5 py-3.5 bg-xuanqing/40 border border-white/5 hover:border-accent/40 hover:bg-white/[0.04] transition-all text-left rounded-none w-full relative overflow-hidden"
                     onClick={() => {
-                      props.onChoiceSelect?.(optKey, optValue);
+                      props.onChoiceSelect?.(String(i() + 1), optValue);
                     }}
                   >
                     <div class="absolute inset-y-0 left-0 w-[2px] bg-white/10 group-hover:bg-accent transition-colors"></div>
-                    <span class="text-accent font-black tracking-widest uppercase text-xs w-4 shrink-0 mt-0.5">{optKey}</span>
+                    <span class="text-accent font-black tracking-widest uppercase text-xs w-4 shrink-0 mt-0.5">{`${i() + 1}`}</span>
                     <span class="text-mist-solid/80 text-sm leading-relaxed">{optValue}</span>
                   </button>
                 )}

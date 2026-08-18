@@ -941,6 +941,8 @@ async fn stream_openai_text_response(
                                     append_content_part_text(&mut content_parts[content_index], value.as_str().unwrap_or(""));
                                 } else if value.is_object() {
                                     content_parts[content_index].json_value = Some(value.to_string());
+                                } else if value.is_array() {
+                                    content_parts[content_index].json_value = Some(value.to_string());
                                 }
                                 if part_type == "structured_output" {
                                     content_parts[content_index].tool_name = Some(key);

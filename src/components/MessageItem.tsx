@@ -23,6 +23,7 @@ export interface ChatMessage {
   isActiveInRound?: boolean;
   error?: string;
   structuredFields?: Record<string, string>;
+  compatibilityMode?: boolean;
 }
 
 interface MessageItemProps {
@@ -68,7 +69,8 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
       if (!sf) return null;
       const fields: Record<string, StructuredField> = {};
       for (const [key, value] of Object.entries(sf)) {
-        if (value.trimStart().startsWith('{')) {
+        const trimmed = value.trimStart();
+        if (trimmed.startsWith('{')) {
           try {
             const parsed = JSON.parse(value);
             if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
@@ -76,8 +78,18 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
               for (const [k, v] of Object.entries(parsed)) {
                 if (typeof v === 'string') stringEntries[k] = v;
               }
-              if (Object.keys(stringEntries).length > 0) {
+  if (Object.keys(stringEntries).length > 0) {
                 fields[key] = { kind: 'object', value: stringEntries };
+              }
+            }
+          } catch { /* not valid JSON yet */ }
+        } else if (trimmed.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+              const items = parsed.filter((v: unknown): v is string => typeof v === 'string');
+              if (items.length > 0) {
+                fields[key] = { kind: 'array', value: items };
               }
             }
           } catch { /* not valid JSON yet */ }
@@ -146,6 +158,11 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             <Show when={props.message.error}>
               <span class="text-xs bg-red-500/15 text-red-300 px-2 py-0.5 rounded-full font-medium border border-red-500/20">
                 Error
+              </span>
+            </Show>
+            <Show when={props.message.compatibilityMode}>
+              <span class="text-xs bg-amber-500/15 text-amber-200 px-2 py-0.5 rounded-full font-medium border border-amber-500/20">
+                兼容模式
               </span>
             </Show>
           </h3>
@@ -223,6 +240,13 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
 
           <Show when={props.message.error}>
             <div class="mt-3 text-xs text-red-300/90 whitespace-pre-wrap">{props.message.error}</div>
+          </Show>
+
+          <Show when={props.message.compatibilityMode}>
+            <div class="mt-3 flex items-start gap-2 text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 leading-relaxed">
+              <span class="shrink-0 font-semibold">兼容模式已开启</span>
+              <span>模型未返回合法的结构化 JSON，原文已整体转入 <code class="px-1 rounded bg-black/20">narrative</code> 字段。可点击「重新生成」尝试获取标准格式输出。</span>
+            </div>
           </Show>
 
           <Show when={props.message.sender === 'ai' && !!props.message.error && !!props.message.roundId && props.profile.canRegenerate}>

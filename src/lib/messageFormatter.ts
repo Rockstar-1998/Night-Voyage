@@ -69,8 +69,8 @@ export interface FormatErrorNode {
 }
 
 export interface StructuredField {
-  kind: 'string' | 'object';
-  value: string | Record<string, string>;
+  kind: 'string' | 'object' | 'array';
+  value: string | Record<string, string> | string[];
 }
 
 export interface StructuredResponseNode {
@@ -217,6 +217,11 @@ export function parseStructuredResponse(jsonContent: string, displayConfig?: Rec
         }
         if (Object.keys(stringEntries).length > 0) {
           fields[key] = { kind: 'object', value: stringEntries };
+        }
+      } else if (Array.isArray(value)) {
+        const items = value.filter((v): v is string => typeof v === 'string');
+        if (items.length > 0) {
+          fields[key] = { kind: 'array', value: items };
         }
       }
     }
