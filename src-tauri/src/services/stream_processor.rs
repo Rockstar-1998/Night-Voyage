@@ -831,9 +831,18 @@ async fn execute_provider_http_request(
             let is_body = err.is_body();
             let is_decode = err.is_decode();
             let is_redirect = err.is_redirect();
+            let cause = {
+                let first = std::error::Error::source(&err);
+                let second = first.and_then(std::error::Error::source);
+                match (first, second) {
+                    (Some(f), Some(s)) => format!("{} <- {}", f, s),
+                    (Some(f), None) => f.to_string(),
+                    _ => "<none>".to_string(),
+                }
+            };
             format!(
-                "HTTP 请求发送失败: {} | connect={} timeout={} request={} body={} decode={} redirect={}",
-                err, is_connect, is_timeout, is_request, is_body, is_decode, is_redirect
+                "HTTP 请求发送失败: {} | connect={} timeout={} request={} body={} decode={} redirect={} | cause={}",
+                err, is_connect, is_timeout, is_request, is_body, is_decode, is_redirect, cause
             )
         })?;
     let status = response.status();
