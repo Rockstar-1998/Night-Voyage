@@ -816,35 +816,51 @@ async fn execute_provider_http_request(
         http_request.body.to_string().len(),
     );
     let client = crate::services::http_client::shared_permissive_http_client();
-    let mut request_builder = client.post(&http_request.url);
-    for header in &http_request.headers {
-        request_builder = request_builder.header(&header.name, &header.value);
-    }
-    let response = request_builder
-        .json(&http_request.body)
-        .send()
-        .await
-        .map_err(|err| {
-            let is_connect = err.is_connect();
-            let is_timeout = err.is_timeout();
-            let is_request = err.is_request();
-            let is_body = err.is_body();
-            let is_decode = err.is_decode();
-            let is_redirect = err.is_redirect();
-            let cause = {
-                let first = std::error::Error::source(&err);
-                let second = first.and_then(std::error::Error::source);
-                match (first, second) {
-                    (Some(f), Some(s)) => format!("{} <- {}", f, s),
-                    (Some(f), None) => f.to_string(),
-                    _ => "<none>".to_string(),
+    // 传输层重试：仅针对连接级失败（is_connect/is_request），与用户的内容级 auto_retry 开关解耦。
+    // 死连接已被 hyper 移出池，重试会新建/复用活连接；失败发生在取得任何响应字节前，重发幂等。
+    const TRANSPORT_RETRY_LIMIT: usize = 1;
+    let mut attempt = 0usize;
+    let response = loop {
+        let mut attempt_builder = client.post(&http_request.url);
+        for header in &http_request.headers {
+            attempt_builder = attempt_builder.header(&header.name, &header.value);
+        }
+        match attempt_builder.json(&http_request.body).send().await {
+            Ok(resp) => break resp,
+            Err(err) => {
+                let is_connect = err.is_connect();
+                let is_timeout = err.is_timeout();
+                let is_request = err.is_request();
+                let is_body = err.is_body();
+                let is_decode = err.is_decode();
+                let is_redirect = err.is_redirect();
+                let cause = {
+                    let first = std::error::Error::source(&err);
+                    let second = first.and_then(std::error::Error::source);
+                    match (first, second) {
+                        (Some(f), Some(s)) => format!("{} <- {}", f, s),
+                        (Some(f), None) => f.to_string(),
+                        _ => "<none>".to_string(),
+                    }
+                };
+                let formatted = format!(
+                    "HTTP 请求发送失败: {} | connect={} timeout={} request={} body={} decode={} redirect={} | cause={}",
+                    err, is_connect, is_timeout, is_request, is_body, is_decode, is_redirect, cause
+                );
+                let is_transport_connection_error = is_connect || is_request;
+                if is_transport_connection_error && attempt < TRANSPORT_RETRY_LIMIT {
+                    dbg_eprintln!(
+                        "[chat] HTTP 连接级失败，传输层自动重试 (第 {} 次): {}",
+                        attempt + 1,
+                        formatted
+                    );
+                    attempt += 1;
+                    continue;
                 }
-            };
-            format!(
-                "HTTP 请求发送失败: {} | connect={} timeout={} request={} body={} decode={} redirect={} | cause={}",
-                err, is_connect, is_timeout, is_request, is_body, is_decode, is_redirect, cause
-            )
-        })?;
+                return Err(formatted);
+            }
+        }
+    };
     let status = response.status();
     let content_encoding = response.headers()
         .get("content-encoding")
