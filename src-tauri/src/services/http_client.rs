@@ -12,7 +12,9 @@ pub fn shared_http_client() -> &'static Client {
     SHARED_CLIENT.get_or_init(|| {
         Client::builder()
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
-            .no_proxy()
+            // 尊重系统/环境变量代理（HTTPS_PROXY/HTTP_PROXY 及 Windows 系统代理）。
+            // 否则国际端点（如 integrate.api.nvidia.com）在需要代理的网络下会直接 connection error。
+            // 未配置代理时此设置等价于无代理，无副作用。
             .build()
             .expect("failed to build shared HTTP client")
     })
@@ -23,7 +25,8 @@ pub fn shared_permissive_http_client() -> &'static Client {
         Client::builder()
             .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
-            .no_proxy()
+            // 尊重系统/环境变量代理：国际端点（NVIDIA 等）在需代理的网络下，无代理会被 connection error 阻断。
+            // 未配置代理时此设置无副作用。
             // 禁用 keep-alive 空闲池：每次请求强制新建连接并重新 TLS 握手。
             // 原因：Akamai/NVIDIA 边缘对空闲连接超时关得很快，reqwest 池会复用已死连接，
             // 发请求阶段才暴露 `connection error`（见 2026-08-21 NVIDIA 自定义 provider 报错）。
