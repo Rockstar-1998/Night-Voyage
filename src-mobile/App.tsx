@@ -3,6 +3,7 @@ import { createStore } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 import { MessageSquare, Settings, Users, Book, LayoutGrid } from 'lucide-solid';
 import { SessionList } from './components/SessionList';
+import { MobileChatView } from './components/MobileChatView';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { CharacterGallery } from './components/characters/CharacterGallery';
@@ -216,16 +217,12 @@ function App() {
                                     onDeleteConversation={handleDeleteConversation}
                                 />
                             </Show>
-                            <Show when={activeView() === 'chat'}>
-                                <div class="min-h-full w-full flex flex-col items-center justify-center px-6 text-center">
-                                    <div class="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4">
-                                        <MessageSquare size={32} class="text-mist-solid/40" />
-                                    </div>
-                                    <h2 class="text-lg font-bold text-white mb-2">对话界面</h2>
-                                    <p class="text-sm text-mist-solid/50 leading-relaxed">
-                                        会话 ID: {selectedConversationId()}<br/>移动端单聊与群聊发消息界面正在开发中。
-                                    </p>
-                                </div>
+                            <Show when={activeView() === 'chat' && selectedConversationId() != null}>
+                                <MobileChatView
+                                    conversationId={selectedConversationId()!}
+                                    providerId={sessions.find((s) => s.id === selectedConversationId())?.providerId}
+                                    onBack={() => setActiveView('sessions')}
+                                />
                             </Show>
                         </Show>
 
