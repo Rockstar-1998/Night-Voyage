@@ -234,7 +234,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
 
 const StructuredResponseRenderer: Component<{
   fields: Record<string, StructuredField>;
-  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean }>;
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
@@ -254,7 +254,29 @@ const StructuredResponseRenderer: Component<{
         {([key, field], index) => {
           const isCollapsed = () => props.displayConfig[key]?.defaultCollapsed ?? false;
           const isHidden = () => props.displayConfig[key]?.hideLabel ?? false;
+          const isBody = () => props.displayConfig[key]?.body ?? false;
           const fieldPath = () => `structured:${index()}:${key}`;
+
+          // 叙事正文（body）：渲染为消息主体，与 thinking 折叠区在视觉上明确区分，
+          // 不套用折叠标签，直接以带强调边线的正文块呈现。
+          if (isBody() && field.kind === 'string') {
+            return (
+              <div class="my-1 px-3 py-2 border-l-2 border-accent/60 bg-accent/[0.05] rounded-r-md">
+                <MessageFormatRenderer
+                  nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
+                  defaultExpanded={props.defaultExpanded}
+                  onChoiceSelect={props.onChoiceSelect}
+                  onSchemaToggle={props.onSchemaToggle}
+                  isStreaming={props.isStreaming}
+                  toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
+                  streamKey={childStreamKey(props.streamKey, `${fieldPath()}:body`)}
+                  formatConfig={props.formatConfig}
+                  worldBookKeywords={props.worldBookKeywords}
+                />
+              </div>
+            );
+          }
+
           return (
             <Show
               when={field.kind === 'string' && !isHidden()}

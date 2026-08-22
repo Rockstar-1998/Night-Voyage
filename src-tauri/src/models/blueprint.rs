@@ -189,6 +189,10 @@ pub struct FieldDisplayConfig {
     pub default_expanded: bool,
     #[serde(default)]
     pub hide_label: bool,
+    /// 是否为「叙事正文」（消息主体）。渲染时应作为主消息体展示，与 thinking 折叠区
+    /// 在视觉上明确区分。由蓝图编译器在缺少正文基线时注入。
+    #[serde(default)]
+    pub body: bool,
 }
 
 fn default_true() -> bool { true }
@@ -249,6 +253,7 @@ pub struct RoleSwitchConfig {
 /// `source` 指定会话属性键名，当前支持：
 /// - `"conversation_type"` → 输出 `context.conversation_type`（`"single"` / `"online"`）
 /// - `"memory_mode"` → 输出 `context.memory_mode`（`"stateless"` / `"legacy"` / `"mem0"`）
+/// - `"protocol"` → 输出 `context.protocol`（`"anthropic"` / `"chat_completions"`）
 ///
 /// 出口端口：`out`。值不通过运行时管道传递，而是由下游 BranchNode 通过入边回溯
 /// 读取 ConstantNode 的 `source` 配置，直接从 context 取值（详见 spec §3.1）。
@@ -309,11 +314,13 @@ pub struct GateSelection {
 ///
 /// `memory_mode` 取值：`"legacy"` / `"mem0"` / `"stateless"`，驱动 ModeSwitch 节点。
 /// `conversation_type` 取值：`"single"` / `"online"`（未来扩展 `"agent"`），驱动 RoleSwitch 节点。
+/// `protocol` 取值：`"anthropic"` / `"chat_completions"`，驱动 `protocol` 分支（Constant + Branch）。
 /// `gate_selections` 键为 [`BlueprintNode::id`]（节点 ID 已唯一，gate_id 已移除）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlueprintExecutionContext {
     pub memory_mode: String,
     pub conversation_type: String,
+    pub protocol: String,
     pub gate_selections: HashMap<String, GateSelection>,
 }
 

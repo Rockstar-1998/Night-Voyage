@@ -76,7 +76,7 @@ export interface StructuredField {
 export interface StructuredResponseNode {
   kind: 'structured_response';
   fields: Record<string, StructuredField>;
-  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean }>;
 }
 
 export const DEFAULT_FORMAT_CONFIG: MessageFormatConfig = {

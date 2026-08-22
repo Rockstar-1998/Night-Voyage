@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
     BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph, CompiledBlock,
-    CompiledSamplingParams, ConstantConfig, NodeConfig, SchemaFieldConfig,
+    CompiledSamplingParams, ConstantConfig, FieldDisplayConfig, NodeConfig, SchemaFieldConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -154,7 +154,83 @@ pub async fn execute_blueprint(
 
     traverse(graph, &start_id, context, &mut result, &mut visited, &mut path)?;
 
+    // 强制核心基线：每个蓝图预设都必须包含「内部推理 thinking」与「叙事正文 text」。
+    // 否则模型只能把正文塞进某个 string 字段（如 thinking），导致回复无可读正文。
+    // 仅当字段缺失时插入，绝不覆盖蓝图作者显式定义的字段——是「组合」而非「继承」。
+    inject_core_schema_baseline(&mut result);
+
     Ok(result)
+}
+
+/// 注入结构化输出的核心基线字段，保证每个蓝图预设都有叙事正文（body）。
+///
+/// 基线字段以「组合」方式叠加：仅当蓝图未显式定义该字段时才插入。这避免了让每个
+/// 蓝图作者手动记得加 `text` 的脆弱约定，契合 AGENTS.md「组合优于继承」——公共基线
+/// 通过编译器注入，而非要求每个节点重复声明。
+fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult) {
+    // 先不可变读，确定缺失的核心字段；避免与后续可变借用冲突。
+    let missing: Vec<&str> = {
+        let props = result
+            .structured_output_schema
+            .get("properties")
+            .and_then(|v| v.as_object());
+        let mut miss = Vec::new();
+        for name in ["thinking", "text"] {
+            if props.and_then(|p| p.get(name)).is_none() {
+                miss.push(name);
+            }
+        }
+        miss
+    };
+    if missing.is_empty() {
+        return;
+    }
+
+    // 注入属性与 display_config（可变写）。
+    for name in &missing {
+        let desc = if *name == "thinking" {
+            "模型的内部推理过程（角色动机、策略分析），不对外展示给玩家"
+        } else {
+            "对外展示的叙事正文：角色的行为、对话与环境描写，是回复的主体内容"
+        };
+        if let Some(props) = result
+            .structured_output_schema
+            .get_mut("properties")
+            .and_then(|v| v.as_object_mut())
+        {
+            props.insert(
+                (*name).to_string(),
+                serde_json::json!({
+                    "type": "string",
+                    "description": desc,
+                }),
+            );
+        }
+        // text 标记为消息主体，渲染时与 thinking 折叠区在视觉上明确区分。
+        if *name == "text" {
+            result.display_config.insert(
+                (*name).to_string(),
+                FieldDisplayConfig {
+                    default_expanded: true,
+                    hide_label: true,
+                    body: true,
+                },
+            );
+        }
+    }
+
+    // 把缺失字段加入 required（独立的可变借用）。
+    if let Some(req) = result
+        .structured_output_schema
+        .get_mut("required")
+        .and_then(|v| v.as_array_mut())
+    {
+        for name in &missing {
+            if !req.iter().any(|v| v.as_str() == Some(*name)) {
+                req.push(serde_json::Value::String((*name).to_string()));
+            }
+        }
+    }
 }
 
 /// Recursive DFS traversal. `path` tracks the current DFS stack (for cycle
@@ -829,6 +905,9 @@ mod tests {
                 description: desc.to_string(),
                 sub_schema: None,
                 db_mapping: None,
+                required: true,
+                context_included: true,
+                display: Default::default(),
                 is_locked: false,
                 lock_reason: None,
             }),
@@ -851,6 +930,9 @@ mod tests {
                 description: desc.to_string(),
                 sub_schema: None,
                 db_mapping: Some(mapping.to_string()),
+                required: true,
+                context_included: true,
+                display: Default::default(),
                 is_locked: false,
                 lock_reason: None,
             }),
@@ -1051,22 +1133,27 @@ mod tests {
         assert_eq!(result.blocks[0].block_type, "system");
         assert_eq!(result.blocks[0].content, "You are a narrator.");
 
-        // One schema property
+        // 核心基线（thinking + text）由编译器强制注入，叠加蓝图显式字段。
         let props = result.structured_output_schema["properties"]
             .as_object()
             .expect("properties must be an object");
-        assert_eq!(props.len(), 1, "exactly one property expected");
-        assert!(props.contains_key("world_variables"));
+        assert!(props.contains_key("world_variables"), "explicit field present");
+        assert!(props.contains_key("thinking"), "core thinking baseline injected");
+        assert!(props.contains_key("text"), "core text (body) baseline injected");
         assert_eq!(props["world_variables"]["type"], "object");
         assert_eq!(props["world_variables"]["description"], "world state");
 
-        // required array contains the field
+        // required array contains the explicit field plus injected core fields
         let required = result.structured_output_schema["required"]
             .as_array()
             .expect("required must be an array");
         assert!(
             required.iter().any(|v| v == "world_variables"),
             "world_variables must be in required"
+        );
+        assert!(
+            required.iter().any(|v| v == "text"),
+            "core text baseline must be in required"
         );
 
         // db_mapping recorded

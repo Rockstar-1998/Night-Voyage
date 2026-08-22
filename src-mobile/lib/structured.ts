@@ -10,6 +10,7 @@ export interface StructuredField {
 export interface StructuredDisplayConfig {
   defaultCollapsed?: boolean;
   hideLabel?: boolean;
+  body?: boolean;
 }
 
 export interface StructuredResponse {

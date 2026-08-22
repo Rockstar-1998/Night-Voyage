@@ -22,7 +22,17 @@ export const MobileStructuredRenderer: Component<MobileStructuredRendererProps> 
         {([key, field]) => {
           const isHidden = () => props.response.displayConfig[key]?.hideLabel ?? false;
           const isCollapsed = () => props.response.displayConfig[key]?.defaultCollapsed ?? false;
+          const isBody = () => props.response.displayConfig[key]?.body ?? false;
           const [expanded, setExpanded] = createSignal(!isCollapsed());
+
+          // 叙事正文（body）：渲染为消息主体，与 thinking 折叠区在视觉上明确区分。
+          if (isBody() && field.kind === 'string') {
+            return (
+              <div class="my-1 px-3 py-2 border-l-2 border-accent/70 bg-accent/[0.05] rounded-r-md whitespace-pre-wrap text-sm text-mist-solid leading-relaxed">
+                {(field as { kind: 'string'; value: string }).value}
+              </div>
+            );
+          }
 
           return (
             <Show

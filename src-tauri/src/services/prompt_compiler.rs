@@ -735,6 +735,7 @@ pub async fn compile_prompt(
                     serde_json::json!({
                         "defaultCollapsed": !v.default_expanded,
                         "hideLabel": v.hide_label,
+                        "body": v.body,
                     }),
                 )
             })
