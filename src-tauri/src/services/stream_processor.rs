@@ -1096,6 +1096,23 @@ async fn stream_openai_text_response(
                                         "openai_compatible", &key, content_index as i64, &json_str,
                                     )?;
                                 }
+                                crate::services::structured_output_parser::StructuredOutputEvent::ArrayFieldComplete { key, value } => {
+                                    let json_str = value.to_string();
+                                    let next_index = content_parts.len() as i64;
+                                    let part_type = map_structured_field_part_type(&key);
+                                    let content_index = ensure_content_part_by_key(
+                                        &mut content_parts, &mut content_part_lookup,
+                                        &key, next_index, part_type,
+                                    );
+                                    content_parts[content_index].json_value = Some(json_str.clone());
+                                    if part_type == "structured_output" {
+                                        content_parts[content_index].tool_name = Some(key.clone());
+                                    }
+                                    emit_object_field_complete_event(
+                                        app, conversation_id, round_id, assistant_message_id,
+                                        "openai_compatible", &key, content_index as i64, &json_str,
+                                    )?;
+                                }
                                 crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
                                     dbg_eprintln!("[structured_output] parse error: {}", err);
                                 }
@@ -1517,6 +1534,23 @@ async fn stream_anthropic_text_response(
                                                     "anthropic", &key, content_index as i64, &json_str,
                                                 )?;
                                             }
+                                            crate::services::structured_output_parser::StructuredOutputEvent::ArrayFieldComplete { key, value } => {
+                                                let json_str = value.to_string();
+                                                let next_index = content_parts.len() as i64;
+                                                let part_type = map_structured_field_part_type(&key);
+                                                let content_index = ensure_content_part_by_key(
+                                                    &mut content_parts, &mut content_part_lookup,
+                                                    &key, next_index, part_type,
+                                                );
+                                                content_parts[content_index].json_value = Some(json_str.clone());
+                                                if part_type == "structured_output" {
+                                                    content_parts[content_index].tool_name = Some(key.clone());
+                                                }
+                                                emit_object_field_complete_event(
+                                                    app, conversation_id, round_id, assistant_message_id,
+                                                    "anthropic", &key, content_index as i64, &json_str,
+                                                )?;
+                                            }
                                             crate::services::structured_output_parser::StructuredOutputEvent::ParseError(err) => {
                                                 dbg_eprintln!("[structured_output] parse error: {}", err);
                                             }
@@ -1559,6 +1593,23 @@ async fn stream_anthropic_text_response(
                                         }
                                         crate::services::structured_output_parser::StructuredOutputEvent::ObjectFieldComplete { key, value } => {
                                             let json_str = serde_json::Value::Object(value).to_string();
+                                            let next_index = content_parts.len() as i64;
+                                            let part_type = map_structured_field_part_type(&key);
+                                            let content_index = ensure_content_part_by_key(
+                                                &mut content_parts, &mut content_part_lookup,
+                                                &key, next_index, part_type,
+                                            );
+                                            content_parts[content_index].json_value = Some(json_str.clone());
+                                            if part_type == "structured_output" {
+                                                content_parts[content_index].tool_name = Some(key.clone());
+                                            }
+                                            emit_object_field_complete_event(
+                                                app, conversation_id, round_id, assistant_message_id,
+                                                "anthropic", &key, content_index as i64, &json_str,
+                                            )?;
+                                        }
+                                        crate::services::structured_output_parser::StructuredOutputEvent::ArrayFieldComplete { key, value } => {
+                                            let json_str = value.to_string();
                                             let next_index = content_parts.len() as i64;
                                             let part_type = map_structured_field_part_type(&key);
                                             let content_index = ensure_content_part_by_key(

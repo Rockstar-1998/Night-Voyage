@@ -11,6 +11,14 @@ pub enum StructuredOutputEvent {
         key: String,
         value: Map<String, Value>,
     },
+    /// 数组（容器）字段完成事件。与 ObjectFieldComplete 并行：对象字段走
+    /// ObjectFieldComplete，数组字段走 ArrayFieldComplete。两者都携带已解析的
+    /// `serde_json::Value`，由下游统一转成 JSON 字符串推给 UI（前端
+    /// `object_field_complete`/`structuredFields` 已支持 `[` 开头的数组 JSON）。
+    ArrayFieldComplete {
+        key: String,
+        value: Value,
+    },
     ParseError(String),
 }
 
@@ -371,6 +379,13 @@ impl StructuredOutputParser {
                                 value: map.clone(),
                             });
                             self.fields.insert(key, Value::Object(map));
+                        }
+                        Value::Array(arr) => {
+                            events.push(StructuredOutputEvent::ArrayFieldComplete {
+                                key: key.clone(),
+                                value: Value::Array(arr.clone()),
+                            });
+                            self.fields.insert(key, Value::Array(arr));
                         }
                         other => {
                             self.fields.insert(key, other);
