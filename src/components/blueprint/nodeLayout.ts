@@ -323,6 +323,74 @@ export function bezierPath(from: Position, to: Position): string {
   return `M ${from.x},${from.y} C ${from.x},${c1y} ${to.x},${c2y} ${to.x},${to.y}`;
 }
 
+// ─── Execution order (render-only topological order) ───
+
+/**
+ * Compute a deterministic execution-order index for each node in the graph.
+ *
+ * Rules:
+ * - Start from the `start` node if one exists; otherwise start from every
+ *   node with no incoming edges.
+ * - Walk the graph in BFS along output → input edges so downstream nodes are
+ *   numbered after their dependencies.
+ * - Branching gates/switches naturally get consecutive numbers following their
+ *   parent.
+ * - Nodes unreachable from the start (or from any source) are not assigned an
+ *   order and will not display a label.
+ *
+ * This is a render-only helper: the real backend executor decides the actual
+ * runtime order. The returned numbers are only for visual orientation.
+ */
+export function computeExecutionOrder(
+  graph: BlueprintGraph,
+): Map<string, number> {
+  const incoming = new Map<string, Set<string>>();
+  const outgoing = new Map<string, Set<string>>();
+  for (const e of graph.edges) {
+    let outs = outgoing.get(e.source);
+    if (!outs) {
+      outs = new Set<string>();
+      outgoing.set(e.source, outs);
+    }
+    outs.add(e.target);
+    let ins = incoming.get(e.target);
+    if (!ins) {
+      ins = new Set<string>();
+      incoming.set(e.target, ins);
+    }
+    ins.add(e.source);
+  }
+
+  const startNode = graph.nodes.find((n) => n.type === 'start');
+  const queue: string[] = [];
+  if (startNode) {
+    queue.push(startNode.id);
+  } else {
+    for (const n of graph.nodes) {
+      if (!incoming.has(n.id) || incoming.get(n.id)!.size === 0) {
+        queue.push(n.id);
+      }
+    }
+  }
+
+  const order = new Map<string, number>();
+  let next = 1;
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    order.set(id, next++);
+    const targets = outgoing.get(id);
+    if (targets) {
+      for (const t of targets) {
+        if (!visited.has(t)) queue.push(t);
+      }
+    }
+  }
+  return order;
+}
+
 // ─── Cycle detection (DFS) ───
 
 /**

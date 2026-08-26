@@ -48,6 +48,7 @@ import type {
 import {
   bezierPath,
   clampZoom,
+  computeExecutionOrder,
   computeNodeLayout,
   CONNECTION_REJECT_MESSAGES,
   ConnectingFrom,
@@ -131,6 +132,9 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
   const [connectMousePos, setConnectMousePos] = createSignal<Position | null>(null);
 
   const view = () => props.viewTransform;
+
+  /** Render-only execution order for the current graph. */
+  const executionOrder = createMemo(() => computeExecutionOrder(props.graph));
 
   // ─── Coordinate conversion ───
 
@@ -456,9 +460,34 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                   opacity={0.32}
                   pointer-events="none"
                 />
+                {/* Execution order badge */}
+                <Show when={executionOrder().get(node.id)}>
+                  {(order) => (
+                    <g pointer-events="none">
+                      <circle
+                        cx={12}
+                        cy={HEADER_HEIGHT / 2}
+                        r={9}
+                        fill={layout.accentColor}
+                        stroke="white"
+                        stroke-width={1}
+                      />
+                      <text
+                        x={12}
+                        y={HEADER_HEIGHT / 2 + 4}
+                        font-size="10"
+                        font-weight="700"
+                        fill="white"
+                        text-anchor="middle"
+                      >
+                        {order()}
+                      </text>
+                    </g>
+                  )}
+                </Show>
                 {/* Title */}
                 <text
-                  x={12}
+                  x={executionOrder().get(node.id) ? 28 : 12}
                   y={HEADER_HEIGHT / 2 + 4}
                   font-size="13"
                   font-weight="600"

@@ -294,6 +294,68 @@ export function bezierPath(from: Position, to: Position): string {
   return `M ${from.x},${from.y} C ${from.x},${c1y} ${to.x},${c2y} ${to.x},${to.y}`;
 }
 
+// ─── 执行顺序（纯渲染用的拓扑排序）───
+
+/**
+ * 计算每个节点的执行顺序序号（仅用于显示）。
+ *
+ * 规则：
+ * - 优先从 `start` 节点开始 BFS；不存在 start 时从所有入度为 0 的节点开始。
+ * - 沿 output → input 边遍历，下游节点排在依赖节点之后。
+ * - 无法从起点到达的节点不分配序号，不显示标签。
+ *
+ * 注意：这只是渲染辅助，真正的执行顺序由后端执行器决定。
+ */
+export function computeExecutionOrder(
+  graph: BlueprintGraph,
+): Map<string, number> {
+  const incoming = new Map<string, Set<string>>();
+  const outgoing = new Map<string, Set<string>>();
+  for (const e of graph.edges) {
+    let outs = outgoing.get(e.source);
+    if (!outs) {
+      outs = new Set<string>();
+      outgoing.set(e.source, outs);
+    }
+    outs.add(e.target);
+    let ins = incoming.get(e.target);
+    if (!ins) {
+      ins = new Set<string>();
+      incoming.set(e.target, ins);
+    }
+    ins.add(e.source);
+  }
+
+  const startNode = graph.nodes.find((n) => n.type === 'start');
+  const queue: string[] = [];
+  if (startNode) {
+    queue.push(startNode.id);
+  } else {
+    for (const n of graph.nodes) {
+      if (!incoming.has(n.id) || incoming.get(n.id)!.size === 0) {
+        queue.push(n.id);
+      }
+    }
+  }
+
+  const order = new Map<string, number>();
+  let next = 1;
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    order.set(id, next++);
+    const targets = outgoing.get(id);
+    if (targets) {
+      for (const t of targets) {
+        if (!visited.has(t)) queue.push(t);
+      }
+    }
+  }
+  return order;
+}
+
 // ─── 环路检测（DFS）───
 
 function buildAdjacency(
