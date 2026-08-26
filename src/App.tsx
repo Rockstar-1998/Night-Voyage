@@ -116,6 +116,7 @@ import {
   listenRoomContextWindowChanged,
   listenRoomGuestCharacterUpdated,
   listenRoomSwipeActivated,
+  listenRoomCompatibilityMode,
   roomRequestContext,
   roomOpen,
   roomClose,
@@ -141,6 +142,7 @@ import {
   type RoomContextWindowChangedEvent,
   type RoomGuestCharacterUpdatedEvent,
   type RoomSwipeActivatedEvent,
+  type RoomCompatibilityModeEvent,
   type RoomHostCharacter,
   type RoomJoinResult,
   type TokenUsageReport,
@@ -2099,6 +2101,11 @@ function App() {
           setRetryNotice(null);
           break;
         }
+        case 'compatibility_mode': {
+          console.warn('[llm-stream-event] compatibility mode entered', payload);
+          updateMessageContent(payload.messageId, () => ({ compatibilityMode: true }));
+          break;
+        }
         case 'thinking_delta': {
           console.debug('[llm-stream-event] hidden thinking delta', payload);
           break;
@@ -2260,6 +2267,18 @@ function App() {
       });
       setReplyStatus('responding');
       setAbortingRoundId(payload.roundId);
+    });
+
+    const roomCompatibilityModeUnlisten = await listenRoomCompatibilityMode((payload: RoomCompatibilityModeEvent) => {
+      console.warn('[room-compatibility_mode] received', {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        reason: payload.reason,
+      });
+      if (payload.conversationId !== selectedConversationId()) return;
+      // Host already receives compatibility notice via llm-stream-event; skip to avoid duplicates
+      if (!activeRoomClientSession()) return;
+      updateMessageContent(payload.messageId, () => ({ compatibilityMode: true }));
     });
 
     const roomStreamRetryUnlisten = await listenRoomStreamRetry((payload: RoomStreamRetryEvent) => {
@@ -2666,6 +2685,7 @@ function App() {
       roomContextWindowChangedUnlisten();
       roomGuestCharacterUpdatedUnlisten();
       roomSwipeActivatedUnlisten();
+      roomCompatibilityModeUnlisten();
       memoryErrorUnlisten();
     });
   });

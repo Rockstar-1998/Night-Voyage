@@ -149,7 +149,34 @@ pub fn build_llm_chat_request(
         .capability_checks
         .push(format!("thinking_enabled={}", thinking.is_some()));
 
-    let system = merge_system_blocks(&result.system_blocks);
+    // structured_json 模式下，仅靠 `response_format` 不足以保证模型输出 JSON：
+    // 经本地 proxy（如 antigravity-proxy）时 response_format 常被忽略，且系统提示里
+    // 可能残留散文格式指令（「电影镜头」「推演路标」等）。因此在这里向 system 末尾
+    // 追加一条权威的 JSON 输出指令，明确覆盖上述散文格式要求，并指示模型把叙事散文
+    // 放进 `narrative` 字段（response_format 用 strict:false，允许 schema 外额外字段）。
+    // 这样即便 proxy 不强制 response_format，模型也能按 schema 产出结构化 JSON，
+    // 避免结构化解析器把散文判为「LLM 响应为空」（见 llm_debug 中
+    // `incomplete JSON: parser stopped at phase BeforeObject`）。
+    let system = if result.params.response_mode.as_deref() == Some("structured_json")
+        && result
+            .params
+            .structured_output_schema
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    {
+        let mut sys = merge_system_blocks(&result.system_blocks);
+        sys.push(build_structured_json_directive(
+            result
+                .params
+                .structured_output_schema
+                .as_deref()
+                .unwrap_or("{}"),
+        ));
+        sys
+    } else {
+        merge_system_blocks(&result.system_blocks)
+    };
     let mut messages = Vec::new();
     messages.extend(result.history_blocks.iter().map(block_to_llm_message));
     messages.push(block_to_llm_message(&result.current_user_block));
@@ -282,6 +309,51 @@ fn merge_system_blocks(blocks: &[crate::services::prompt_compiler::PromptBlock])
         .into_iter()
         .map(|(_, contents)| contents.join("\n\n"))
         .collect()
+}
+
+/// 构造 structured_json 模式下的 JSON 输出指令，追加到 system 末尾。
+/// 从 JSON Schema 提取顶层字段名/类型/必填标记/描述，生成可读的字段清单，并强制要求：
+/// 1) 仅输出一个 JSON 对象，无额外散文/Markdown；
+/// 2) 覆盖系统提示中残留的散文格式指令；
+/// 3) 叙事散文放入额外的 `narrative` 字段（response_format 用 strict:false，允许 schema 外字段）。
+fn build_structured_json_directive(schema_json: &str) -> String {
+    let mut fields: Vec<String> = Vec::new();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(schema_json) {
+        if let Some(props) = value.get("properties").and_then(|p| p.as_object()) {
+            for (name, meta) in props {
+                let desc = meta
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let ty = meta
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("any");
+                let required = value
+                    .get("required")
+                    .and_then(|r| r.as_array())
+                    .map(|arr| arr.iter().any(|v| v.as_str() == Some(name)))
+                    .unwrap_or(false);
+                let mark = if required { "（必填）" } else { "（可选）" };
+                fields.push(format!("- `{}` ({}{})：{}", name, ty, mark, desc));
+            }
+        }
+    }
+    let field_list = if fields.is_empty() {
+        "（以下方 JSON Schema 的 properties 为准）".to_string()
+    } else {
+        fields.join("\n")
+    };
+    format!(
+        "【输出格式：严格 JSON】\n\
+你必须以且仅以一个 JSON 对象作为完整回复，不得输出任何 JSON 以外的解释、散文或 Markdown 代码块标记。\n\
+忽略本提示中其它所有关于「散文格式」「电影镜头」「推演路标文本标记」等输出样式的指令——它们已被本条规则覆盖。\n\
+JSON 必须严格符合下方给定的 JSON Schema。除 schema 规定的字段外，额外包含一个 `narrative` 字段（string），用于承载本轮的叙事散文（电影感描写、对话、动作等）。\n\
+字段清单：\n{}\n\
+严禁返回散文或伪 XML；若返回非 JSON 文本，将被视为无效响应。",
+        field_list
+    )
 }
 
 fn block_to_llm_message(block: &crate::services::prompt_compiler::PromptBlock) -> LlmMessage {

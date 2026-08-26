@@ -1047,3 +1047,10 @@ export interface RoomSwipeActivatedEvent {
   roundId: number;
   messageId: number;
 }
+
+export interface RoomCompatibilityModeEvent {
+  conversationId: number;
+  roundId: number;
+  messageId: number;
+  reason: string;
+}

@@ -27,10 +27,13 @@ import {
   presetsRename,
   presetsDuplicate,
   presetsUpdate,
+  presetsExport,
+  presetsImport,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
 import { MobilePresetDetailView } from './MobilePresetDetailView';
 import { showToast, showConfirm } from '../Toast';
+import { autoLayout as autoLayoutGraph } from './mobileNodeLayout';
 
 // ─── Props ───
 
@@ -55,12 +58,18 @@ function createEmptyGraph(): BlueprintGraph {
 
 /// Ensure Start/End nodes have an in-memory `config: {}` placeholder after
 /// loading from DB (the serialized JSON omits it per Rust serde convention).
+/// Also default missing `position` to {x: 0, y: 0} for portable presets that
+/// strip position data (Rust schema treats position as optional since v2).
 function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
   return nodes.map((n) => {
+    let next = n;
     if ((n.type === 'start' || n.type === 'end') && n.config === undefined) {
-      return { ...n, config: {} } as BlueprintNode;
+      next = { ...n, config: {} } as BlueprintNode;
     }
-    return n;
+    if (!next.position || typeof next.position.x !== 'number' || typeof next.position.y !== 'number') {
+      next = { ...next, position: { x: 0, y: 0 } };
+    }
+    return next;
   });
 }
 
@@ -83,9 +92,25 @@ function parseGraph(json: string): BlueprintGraph {
   if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
     throw new Error('blueprint_graph JSON 结构无效');
   }
+  const nodes = normalizeLoadedNodes(parsed.nodes);
+  // 如果导入节点位置全为 (0,0)（便携 JSON 剥离 position 的特征），
+  // 自动调用 autoLayout 让编辑器打开即可用，不让用户看到一堆重叠节点。
+  const allAtOrigin =
+    nodes.length > 0 && nodes.every((n) => n.position.x === 0 && n.position.y === 0);
+  if (allAtOrigin) {
+    const positions = autoLayoutGraph(nodes, parsed.edges);
+    return {
+      version: 2,
+      nodes: nodes.map((n) => {
+        const pos = positions.get(n.id);
+        return pos ? { ...n, position: pos } : n;
+      }),
+      edges: parsed.edges,
+    };
+  }
   return {
     version: 2,
-    nodes: normalizeLoadedNodes(parsed.nodes),
+    nodes,
     edges: parsed.edges,
   };
 }
@@ -253,6 +278,63 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     }
   };
 
+  // ─── 导出/导入（便携格式 .nvpreset.json，复用后端 presets_export / presets_import）───
+  // 文件读写走 WebView DOM（Blob 下载 / <input type=file> 读文本）。
+
+  let presetImportInput: HTMLInputElement | undefined;
+
+  const sanitizeFileName = (name: string): string =>
+    name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '预设';
+
+  const handleExportPreset = async (preset: PresetSummary) => {
+    if (presetBusy() !== null) return;
+    setPresetBusy(preset.id);
+    try {
+      const payloadJson = await presetsExport(preset.id);
+      const blob = new Blob([payloadJson], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${sanitizeFileName(preset.name)}.nvpreset.json`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      showToast('已导出预设', 'success');
+    } catch (err) {
+      showToast(
+        `导出预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
+  const handleImportFileChange = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (presetBusy() !== null) return;
+    setPresetBusy(-1);
+    try {
+      const payloadJson = await file.text();
+      const imported = await presetsImport(payloadJson);
+      showToast(`已导入预设「${imported.preset.name}」`, 'success');
+      await refreshPresets();
+    } catch (err) {
+      showToast(
+        `导入预设失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+        5000,
+      );
+    } finally {
+      setPresetBusy(null);
+    }
+  };
+
   const handleSaveGraph = async (graph: BlueprintGraph) => {
     // 持久化蓝图到后端：加载 PresetDetail → 构建完整更新 payload → presetsUpdate。
     // 与 PC 端 BlueprintEditor.handleSave 逻辑对齐（presets_update 是全行直接赋值，
@@ -370,6 +452,28 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
               </div>
             </button>
 
+            {/* 导入预设（从 .nvpreset.json 文件） */}
+            <input
+              ref={presetImportInput}
+              type="file"
+              accept=".json,.nvpreset.json,application/json"
+              class="hidden"
+              onChange={(e) => void handleImportFileChange(e)}
+            />
+            <button
+              onClick={() => presetImportInput?.click()}
+              disabled={presetBusy() !== null}
+              class="w-full mb-4 p-4 rounded-2xl border border-white/10 bg-white/5 flex items-center gap-3 active:scale-[0.99] transition-transform disabled:opacity-50"
+            >
+              <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-mist-solid/80">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              </div>
+              <div class="flex-1 text-left">
+                <div class="text-[14px] font-bold text-white">导入预设</div>
+                <div class="text-[11px] text-mist-solid/50">从 .nvpreset.json 文件导入</div>
+              </div>
+            </button>
+
             {/* 加载状态 */}
             <Show when={loading()}>
               <div class="flex items-center justify-center py-12">
@@ -463,6 +567,18 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
                             disabled={presetBusy() !== null}
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            class="p-1.5 rounded-lg text-mist-solid/50 hover:text-amber-300 hover:bg-amber-500/15 transition-colors"
+                            aria-label="导出预设"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleExportPreset(preset);
+                            }}
+                            disabled={presetBusy() !== null}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
                           </button>
                           <button
                             type="button"

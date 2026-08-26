@@ -920,9 +920,14 @@ async fn stream_openai_text_response(
                 "[chat] bytes_stream error: {} | timeout={} body={} decode={}",
                 err, is_timeout, is_body, is_decode
             );
+            let category = if is_timeout {
+                "流式响应读取超时"
+            } else {
+                "流式响应解码失败"
+            };
             format!(
-                "流式响应解码失败: {} | timeout={} body={} decode={}",
-                err, is_timeout, is_body, is_decode
+                "{}: {} | timeout={} body={} decode={}",
+                category, err, is_timeout, is_body, is_decode
             )
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));

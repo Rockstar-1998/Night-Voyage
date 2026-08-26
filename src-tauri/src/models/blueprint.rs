@@ -99,13 +99,46 @@ impl BlueprintNode {
 }
 
 /// 蓝图连线，从源节点输出端口指向目标节点输入端口。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `order` 用于在同一源节点 + 同一出口端口连出多条边时，定义分支选取与合并遍历的
+/// 稳定顺序（端口优先级优先，order 其次）。旧版蓝图（v2 早期）不含该字段，
+/// 通过 `deserialize_with` 缺省为 `0`，保证向后兼容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlueprintEdge {
     pub id: String,
     pub source: String,
     pub source_port: String,
     pub target: String,
     pub target_port: String,
+    #[serde(default)]
+    pub order: i32,
+}
+
+impl<'de> Deserialize<'de> for BlueprintEdge {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            id: String,
+            source: String,
+            source_port: String,
+            target: String,
+            target_port: String,
+            #[serde(default)]
+            order: i32,
+        }
+        let h = Helper::deserialize(deserializer)?;
+        Ok(BlueprintEdge {
+            id: h.id,
+            source: h.source,
+            source_port: h.source_port,
+            target: h.target,
+            target_port: h.target_port,
+            order: h.order,
+        })
+    }
 }
 
 /// 完整蓝图图，包含版本号、节点列表与连线列表。

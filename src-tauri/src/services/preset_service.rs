@@ -740,6 +740,9 @@ mod tests {
                         description: "世界状态".to_string(),
                         sub_schema: None,
                         db_mapping: Some("world_variables".to_string()),
+                        required: true,
+                        context_included: true,
+                        display: Default::default(),
                         is_locked: false,
                         lock_reason: None,
                     }),
@@ -1044,6 +1047,7 @@ mod tests {
             memory_mode: "stateless".to_string(),
             conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
+            protocol: "chat_completions".to_string(),
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1129,6 +1133,7 @@ mod tests {
             memory_mode: "stateless".to_string(),
             conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
+            protocol: "chat_completions".to_string(),
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1267,6 +1272,7 @@ mod tests {
             memory_mode: "stateless".to_string(),
             conversation_type: "single".to_string(),
             gate_selections: gates,
+            protocol: "chat_completions".to_string(),
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1399,6 +1405,7 @@ mod tests {
             memory_mode: "stateless".to_string(),
             conversation_type: "single".to_string(),
             gate_selections: gates,
+            protocol: "chat_completions".to_string(),
         };
 
         let result = execute_blueprint(&graph, &ctx)

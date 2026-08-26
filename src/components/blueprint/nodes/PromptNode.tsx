@@ -20,6 +20,8 @@ import { Component, Show } from 'solid-js';
 import type { PromptConfig } from '../../../lib/blueprint/types';
 import type { NodeConfigComponentProps } from '../NodeConfigPanel';
 import { Select } from '../../ui/Select';
+import { PlaceholderToolbar } from '../../ui/PlaceholderToolbar';
+import { insertAtCursor, PLACEHOLDER_TOKENS } from '../../../lib/insertAtCursor';
 
 const BLOCK_TYPES = [
   'system',
@@ -44,6 +46,7 @@ const LABEL_CLASS = 'text-[10px] text-mist-solid/40 uppercase tracking-widest';
 
 export const PromptNode: Component<NodeConfigComponentProps<PromptConfig>> = (props) => {
   const update = (updates: Partial<PromptConfig>) => props.onUpdate(updates);
+  let contentRef: HTMLTextAreaElement | undefined;
 
   const handleLockToggle = (checked: boolean) => {
     if (checked) {
@@ -88,14 +91,25 @@ export const PromptNode: Component<NodeConfigComponentProps<PromptConfig>> = (pr
         />
       </div>
 
-      <div class="space-y-1">
-        <label class={LABEL_CLASS}>content</label>
+      <div class="space-y-2">
+        <label class={LABEL_CLASS}>content（支持变量占位符）</label>
+        <PlaceholderToolbar
+          tokens={PLACEHOLDER_TOKENS}
+          disabled={props.isLocked}
+          onInsert={(template) =>
+            contentRef &&
+            insertAtCursor(contentRef, template, props.config.content, (next) => update({ content: next }))
+          }
+        />
         <textarea
+          ref={(el) => {
+            contentRef = el;
+          }}
           value={props.config.content}
           disabled={props.isLocked}
           onInput={(e) => update({ content: e.currentTarget.value })}
           class={TEXTAREA_CLASS}
-          placeholder="提示词内容…"
+          placeholder="提示词内容…支持 {{ character.name }} 等占位符"
         />
       </div>
 

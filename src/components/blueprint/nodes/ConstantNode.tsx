@@ -43,6 +43,7 @@ export const ConstantNode: Component<NodeConfigComponentProps<ConstantConfig>> =
         >
           <option value="conversation_type">conversation_type（single / online）</option>
           <option value="memory_mode">memory_mode（stateless / legacy / mem0）</option>
+          <option value="protocol">protocol（anthropic / chat_completions）</option>
         </select>
         <p class="text-[10px] text-mist-solid/35 mt-1">
           运行时读取会话对应属性，输出值供下游 Branch 节点按值匹配走分支。

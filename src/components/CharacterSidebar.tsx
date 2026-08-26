@@ -2,6 +2,8 @@ import { Component, For, Show, Switch, Match, createMemo, createSignal } from 's
 import { Select } from './ui/Select';
 import { Download, Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
+import { PlaceholderToolbar } from './ui/PlaceholderToolbar';
+import { insertAtCursor, PLACEHOLDER_TOKENS } from '../lib/insertAtCursor';
 import { WorkspaceTransitionStage } from './WorkspaceTransitionStage';
 import {
   resolveImageSrc,
@@ -586,32 +588,56 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                       <Plus size={14} />
                     </IconButton>
                   </div>
-                  <For each={formData().firstMessages}>
-                    {(msg, idx) => (
-                      <div class="flex gap-2">
-                        <textarea
-                          value={msg}
-                          onInput={(e) => {
-                            const next = [...formData().firstMessages];
-                            next[idx()] = e.currentTarget.value;
-                            setFormData({ ...formData(), firstMessages: next });
-                          }}
-                          class="flex-1 bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-20 custom-scrollbar"
-                        />
-                        <IconButton
-                          onClick={() => {
-                            const next = formData().firstMessages.filter((_, index) => index !== idx());
-                            setFormData({ ...formData(), firstMessages: next });
-                          }}
-                          label="删除首条消息"
-                          tone="danger"
-                          size="sm"
-                        >
-                          <Trash2 size={14} />
-                        </IconButton>
-                      </div>
-                    )}
-                  </For>
+                  <div class="space-y-3">
+                    <For each={formData().firstMessages}>
+                      {(msg, idx) => {
+                        let ta: HTMLTextAreaElement | undefined;
+                        return (
+                          <div class="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2">
+                              <span class="text-[10px] font-medium uppercase tracking-widest text-mist-solid/35">
+                                开局 #{idx() + 1}
+                              </span>
+                              <IconButton
+                                onClick={() => {
+                                  const next = formData().firstMessages.filter((_, index) => index !== idx());
+                                  setFormData({ ...formData(), firstMessages: next });
+                                }}
+                                label="删除首条消息"
+                                tone="danger"
+                                size="sm"
+                              >
+                                <Trash2 size={14} />
+                              </IconButton>
+                            </div>
+                            <PlaceholderToolbar
+                              tokens={PLACEHOLDER_TOKENS}
+                              onInsert={(template) =>
+                                ta &&
+                                insertAtCursor(ta, template, msg, (next) => {
+                                  const arr = [...formData().firstMessages];
+                                  arr[idx()] = next;
+                                  setFormData({ ...formData(), firstMessages: arr });
+                                })
+                              }
+                            />
+                            <textarea
+                              ref={(el) => {
+                                ta = el;
+                              }}
+                              value={msg}
+                              onInput={(e) => {
+                                const next = [...formData().firstMessages];
+                                next[idx()] = e.currentTarget.value;
+                                setFormData({ ...formData(), firstMessages: next });
+                              }}
+                              class="w-full bg-transparent border border-white/10 rounded-lg py-2 px-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-20 custom-scrollbar resize-y"
+                            />
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/5">

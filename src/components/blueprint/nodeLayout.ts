@@ -17,12 +17,18 @@ import type {
 } from '../../lib/blueprint/types';
 
 // ─── Layout constants (graph coordinates, independent of zoom) ───
+// 竖向蓝图：节点端口在上下边缘（输入在顶部、输出在底部），连线走向改为垂直。
+// 因此原先的「宽度/行高」语义反转：「列宽」对应节点水平尺寸，「节点垂直跨度」
+// 由端口堆叠决定，但竖向布局下端口改为左右排列（见 computeNodeLayout）。
 
 export const NODE_WIDTH = 200;
 export const HEADER_HEIGHT = 36;
+/** 竖向布局下，单排端口（顶部/底部）占用的垂直高度。 */
 export const PORT_ROW_HEIGHT = 22;
+/** 竖向布局下，单排端口（顶部/底部）内相邻端口的水平间距。 */
+export const PORT_COL_WIDTH = 28;
 export const PORT_RADIUS = 6;
-/** Minimum horizontal distance used to compute bezier control points. */
+/** Minimum vertical distance used to compute vertical bezier control points. */
 export const BEZIER_MIN_SPAN = 80;
 /** Zoom clamp range. */
 export const MIN_ZOOM = 0.2;
@@ -241,26 +247,33 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
 export function computeNodeLayout(node: BlueprintNode): NodeLayout {
   const inputs = getInputPorts(node);
   const outputs = getOutputPorts(node);
-  const rows = Math.max(inputs.length, outputs.length, 1);
-  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * rows;
-  const width = NODE_WIDTH;
+  // 竖向布局：输入端口排顶部一行，输出端口排底部一行（按端口数水平均分）。
+  // 节点宽度需容纳最多的一排端口（每端口 PORT_COL_WIDTH），至少 NODE_WIDTH。
+  const cols = Math.max(inputs.length, outputs.length, 1);
+  const contentWidth = Math.max(NODE_WIDTH, cols * PORT_COL_WIDTH);
+  const width = contentWidth;
+  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * 2;
 
   const ports: PortLayout[] = [];
+  // 输入端口：顶部边缘（y=0），水平居中均分
   for (let i = 0; i < inputs.length; i++) {
+    const x = width / 2 + (i - (inputs.length - 1) / 2) * PORT_COL_WIDTH;
     ports.push({
       port: inputs[i].port,
       kind: 'input' as const,
-      x: 0,
-      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      x,
+      y: 0,
       label: inputs[i].label,
     });
   }
+  // 输出端口：底部边缘（y=height），水平居中均分
   for (let i = 0; i < outputs.length; i++) {
+    const x = width / 2 + (i - (outputs.length - 1) / 2) * PORT_COL_WIDTH;
     ports.push({
       port: outputs[i].port,
       kind: 'output' as const,
-      x: width,
-      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      x,
+      y: height,
       label: outputs[i].label,
     });
   }
@@ -298,15 +311,16 @@ export function getPortPosition(
 // ─── Bezier path ───
 
 /**
- * Compute a smooth cubic-bezier path between two points. Control points are
- * offset horizontally to produce the classic "node graph" curve; the offset
- * is clamped to `BEZIER_MIN_SPAN / 2` so short distances still look curved.
+ * Compute a smooth cubic-bezier path between two points for a vertical
+ * blueprint. Control points are offset vertically (since output ports sit at
+ * the node bottom and input ports at the top), producing a vertical "node
+ * graph" curve; the offset is clamped to `BEZIER_MIN_SPAN / 2`.
  */
 export function bezierPath(from: Position, to: Position): string {
-  const dx = Math.max(Math.abs(to.x - from.x), BEZIER_MIN_SPAN) / 2;
-  const c1x = from.x + dx;
-  const c2x = to.x - dx;
-  return `M ${from.x},${from.y} C ${c1x},${from.y} ${c2x},${to.y} ${to.x},${to.y}`;
+  const dy = Math.max(Math.abs(to.y - from.y), BEZIER_MIN_SPAN) / 2;
+  const c1y = from.y + dy;
+  const c2y = to.y - dy;
+  return `M ${from.x},${from.y} C ${from.x},${c1y} ${to.x},${c2y} ${to.x},${to.y}`;
 }
 
 // ─── Cycle detection (DFS) ───
@@ -472,6 +486,100 @@ export function isEdgeLocked(
   const targetNode = graph.nodes.find((n) => n.id === edge.target);
   if (!sourceNode || !targetNode) return false;
   return isNodeLocked(sourceNode) || isNodeLocked(targetNode);
+}
+
+// ─── Auto layout ───
+
+/**
+ * Auto-arrange nodes into a layered layout (topological sort) for a vertical
+ * blueprint.
+ *
+ * Topological depth becomes the Y axis (top → bottom): layer 0 sits at the top,
+ * deeper layers stack downward. Within a layer, nodes are spread horizontally
+ * along X. Merge nodes (multiple incoming edges) naturally land after all
+ * their parents. This mirrors the pre-vertical behaviour but swaps the axes so
+ * the dominant flow direction is downward.
+ *
+ * @param nodes  Blueprint nodes (order preserved)
+ * @param edges  Blueprint edges
+ * @returns      Map from node ID to new position
+ */
+export function autoLayout(
+  nodes: ReadonlyArray<BlueprintNode>,
+  edges: ReadonlyArray<BlueprintEdge>,
+): Map<string, Position> {
+  // ── Layout constants ──
+  const LAYER_HEIGHT = 200;  // vertical span per topological layer (node + gap)
+  const COL_SPACING = 240;   // horizontal spacing between nodes in same layer
+  const LAYER_VPAD = 20;     // breathing room at the top
+  const COL_VPAD = 20;       // breathing room at the left
+
+  // ── 1. Build adjacency structures ──
+  const inDegree = new Map<string, number>();
+  const outEdges = new Map<string, string[]>();
+  for (const n of nodes) {
+    inDegree.set(n.id, 0);
+    outEdges.set(n.id, []);
+  }
+  for (const e of edges) {
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+    const list = outEdges.get(e.source);
+    if (list) list.push(e.target);
+  }
+
+  // ── 2. BFS topological layering ──
+  // layer[start] = 0; layer[node] = max(parent layers) + 1
+  const layers = new Map<string, number>();
+  const queue: string[] = [];
+  for (const n of nodes) {
+    if ((inDegree.get(n.id) ?? 0) === 0) {
+      layers.set(n.id, 0);
+      queue.push(n.id);
+    }
+  }
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const layer = layers.get(id)!;
+    for (const target of outEdges.get(id) ?? []) {
+      const newLayer = layer + 1;
+      const existing = layers.get(target);
+      if (existing === undefined || newLayer > existing) {
+        layers.set(target, newLayer);
+      }
+      const remaining = (inDegree.get(target) ?? 0) - 1;
+      inDegree.set(target, remaining);
+      if (remaining <= 0) {
+        queue.push(target);
+      }
+    }
+  }
+  // Fallback for unreachable nodes (cycles, orphans)
+  for (const n of nodes) {
+    if (!layers.has(n.id)) layers.set(n.id, 0);
+  }
+
+  // ── 3. Group by layer ──
+  const byLayer = new Map<number, string[]>();
+  for (const [id, layer] of layers) {
+    let list = byLayer.get(layer);
+    if (!list) {
+      list = [];
+      byLayer.set(layer, list);
+    }
+    list.push(id);
+  }
+
+  // ── 4. Assign positions ──
+  const positions = new Map<string, Position>();
+  for (const [layer, ids] of byLayer) {
+    ids.forEach((id, i) => {
+      positions.set(id, {
+        x: Math.round(COL_VPAD + i * (COL_SPACING + LAYER_VPAD)),
+        y: Math.round(LAYER_VPAD + layer * LAYER_HEIGHT),
+      });
+    });
+  }
+  return positions;
 }
 
 // ─── Zoom clamp ───

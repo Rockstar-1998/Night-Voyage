@@ -2,6 +2,10 @@ use sqlx::{Row, SqlitePool, Transaction};
 
 use crate::models::ApiProvider;
 
+/// 对话协议（LLM 传输协议）取值，供蓝图 `protocol` 分支使用。
+pub const PROTOCOL_ANTHROPIC: &str = "anthropic";
+pub const PROTOCOL_CHAT_COMPLETIONS: &str = "chat_completions";
+
 pub struct ConversationRepository;
 
 impl ConversationRepository {
@@ -171,6 +175,35 @@ impl ConversationRepository {
             max_context_tokens: row.try_get("max_context_tokens").ok(),
             temperature: row.try_get("temperature").ok(),
         })
+    }
+
+    /// 解析会话实际使用的 LLM 传输协议，供蓝图 `protocol` 分支使用。
+    ///
+    /// 解析逻辑与 `chat_service` 一致：取会话绑定的 provider 的 `provider_kind`。
+    /// `provider_kind == "anthropic"` → [`PROTOCOL_ANTHROPIC`]，否则（含 provider
+    /// 缺失或加载失败）回退 [`PROTOCOL_CHAT_COMPLETIONS`]。回退是显式默认值，非静默吞错。
+    pub async fn resolve_conversation_protocol(
+        db: &SqlitePool,
+        conversation_id: i64,
+    ) -> String {
+        let provider_id: Option<i64> = sqlx::query_scalar(
+            "SELECT provider_id FROM conversations WHERE id = ? LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+
+        match provider_id {
+            Some(pid) => match Self::load_provider(db, pid).await {
+                Ok(p) if p.provider_kind == PROTOCOL_ANTHROPIC => {
+                    PROTOCOL_ANTHROPIC.to_string()
+                }
+                _ => PROTOCOL_CHAT_COMPLETIONS.to_string(),
+            },
+            None => PROTOCOL_CHAT_COMPLETIONS.to_string(),
+        }
     }
 
     /// Persist the JSON-serialised guest character card payload for a specific

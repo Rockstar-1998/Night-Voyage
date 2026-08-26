@@ -55,7 +55,7 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   mode_switch: '按会话记忆模式三分支（legacy/mem0/stateless）',
   role_switch: '已废弃：被常量+分支替代，旧图仍可执行',
   sampling_params: '采样参数（temperature/max_tokens 等）',
-  constant: '读取会话属性（如 conversation_type）输出值',
+  constant: '读取会话属性（如 conversation_type / memory_mode / protocol）输出值',
   branch: '接收上游常量值，按 cases 匹配走对应出口',
 };
 

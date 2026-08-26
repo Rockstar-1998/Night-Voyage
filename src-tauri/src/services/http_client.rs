@@ -24,7 +24,13 @@ pub fn shared_permissive_http_client() -> &'static Client {
     SHARED_PERMISSIVE_CLIENT.get_or_init(|| {
         Client::builder()
             .danger_accept_invalid_certs(true)
-            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            // LLM 流式响应可能耗时极长（本地大模型预填充 + 长生成可达数十分钟），
+            // 整体请求超时会在合法生成中途中断响应，因此将整体超时设为一小时。
+            // 通过 read_timeout 检测真正僵死的连接：若连续 10 分钟未收到任何字节，
+            // 才视为连接已死并报错。该客户端仅用于 LLM/provider 稀疏调用，
+            // 故长超时不会阻塞其它非 LLM 请求（那些请求使用 shared_http_client）。
+            .timeout(Duration::from_secs(3600))
+            .read_timeout(Duration::from_secs(600))
             // 尊重系统/环境变量代理：国际端点（NVIDIA 等）在需代理的网络下，无代理会被 connection error 阻断。
             // 未配置代理时此设置无副作用。
             // 禁用 keep-alive 空闲池：每次请求强制新建连接并重新 TLS 握手。

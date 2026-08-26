@@ -22,10 +22,14 @@ import type {
 } from '../../../src/lib/blueprint/types';
 
 // ─── 布局常量（图坐标，与缩放无关）───
+// 竖向蓝图：端口在上下边缘（输入顶部、输出底部），连线垂直走向（见 computeNodeLayout）。
 
 export const NODE_WIDTH = 200;
 export const HEADER_HEIGHT = 36;
+/** 竖向布局下，单排端口（顶部/底部）占用的垂直高度。 */
 export const PORT_ROW_HEIGHT = 22;
+/** 竖向布局下，单排端口（顶部/底部）内相邻端口水平间距 */
+export const PORT_COL_WIDTH = 28;
 export const PORT_RADIUS = 7;
 export const BEZIER_MIN_SPAN = 80;
 export const MIN_ZOOM = 0.3;
@@ -228,26 +232,29 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
 export function computeNodeLayout(node: BlueprintNode): NodeLayout {
   const inputs = getInputPorts(node);
   const outputs = getOutputPorts(node);
-  const rows = Math.max(inputs.length, outputs.length, 1);
-  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * rows;
-  const width = NODE_WIDTH;
+  // 竖向布局：输入端口排顶部一行，输出端口排底部一行（按端口数水平均分）。
+  const cols = Math.max(inputs.length, outputs.length, 1);
+  const width = Math.max(NODE_WIDTH, cols * PORT_COL_WIDTH);
+  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * 2;
 
   const ports: PortLayout[] = [];
   for (let i = 0; i < inputs.length; i++) {
+    const x = width / 2 + (i - (inputs.length - 1) / 2) * PORT_COL_WIDTH;
     ports.push({
       port: inputs[i].port,
       kind: 'input' as const,
-      x: 0,
-      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      x,
+      y: 0,
       label: inputs[i].label,
     });
   }
   for (let i = 0; i < outputs.length; i++) {
+    const x = width / 2 + (i - (outputs.length - 1) / 2) * PORT_COL_WIDTH;
     ports.push({
       port: outputs[i].port,
       kind: 'output' as const,
-      x: width,
-      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      x,
+      y: height,
       label: outputs[i].label,
     });
   }
@@ -281,10 +288,10 @@ export function getPortPosition(
 // ─── 贝塞尔路径 ───
 
 export function bezierPath(from: Position, to: Position): string {
-  const dx = Math.max(Math.abs(to.x - from.x), BEZIER_MIN_SPAN) / 2;
-  const c1x = from.x + dx;
-  const c2x = to.x - dx;
-  return `M ${from.x},${from.y} C ${c1x},${from.y} ${c2x},${to.y} ${to.x},${to.y}`;
+  const dy = Math.max(Math.abs(to.y - from.y), BEZIER_MIN_SPAN) / 2;
+  const c1y = from.y + dy;
+  const c2y = to.y - dy;
+  return `M ${from.x},${from.y} C ${from.x},${c1y} ${to.x},${c2y} ${to.x},${to.y}`;
 }
 
 // ─── 环路检测（DFS）───
@@ -416,6 +423,84 @@ export function isEdgeLocked(
   return isNodeLocked(sourceNode) || isNodeLocked(targetNode);
 }
 
+// ─── Auto layout ───
+
+/**
+ * 拓扑分层自动布局：将节点按 BFS 深度分层，每列纵向排列。
+ * 与 PC 端 nodeLayout.ts 同名函数行为对齐（C5 独立实现）。
+ */
+export function autoLayout(
+  nodes: ReadonlyArray<BlueprintNode>,
+  edges: ReadonlyArray<BlueprintEdge>,
+): Map<string, Position> {
+  // 竖向蓝图：拓扑深度对应 Y 轴（自上而下），同层节点横向铺开。
+  const LAYER_HEIGHT = 200;
+  const COL_SPACING = 240;
+  const LAYER_VPAD = 20;
+  const COL_VPAD = 20;
+
+  const inDegree = new Map<string, number>();
+  const outEdges = new Map<string, string[]>();
+  for (const n of nodes) {
+    inDegree.set(n.id, 0);
+    outEdges.set(n.id, []);
+  }
+  for (const e of edges) {
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+    const list = outEdges.get(e.source);
+    if (list) list.push(e.target);
+  }
+
+  const layers = new Map<string, number>();
+  const queue: string[] = [];
+  for (const n of nodes) {
+    if ((inDegree.get(n.id) ?? 0) === 0) {
+      layers.set(n.id, 0);
+      queue.push(n.id);
+    }
+  }
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const layer = layers.get(id)!;
+    for (const target of outEdges.get(id) ?? []) {
+      const newLayer = layer + 1;
+      const existing = layers.get(target);
+      if (existing === undefined || newLayer > existing) {
+        layers.set(target, newLayer);
+      }
+      const remaining = (inDegree.get(target) ?? 0) - 1;
+      inDegree.set(target, remaining);
+      if (remaining <= 0) {
+        queue.push(target);
+      }
+    }
+  }
+  for (const n of nodes) {
+    if (!layers.has(n.id)) layers.set(n.id, 0);
+  }
+
+  const byLayer = new Map<number, string[]>();
+  for (const [id, layer] of layers) {
+    let list = byLayer.get(layer);
+    if (!list) {
+      list = [];
+      byLayer.set(layer, list);
+    }
+    list.push(id);
+  }
+
+  const positions = new Map<string, Position>();
+  for (const [layer, ids] of byLayer) {
+    ids.forEach((id, i) => {
+      positions.set(id, {
+        x: Math.round(COL_VPAD + i * (COL_SPACING + LAYER_VPAD)),
+        y: Math.round(LAYER_VPAD + layer * LAYER_HEIGHT),
+      });
+    });
+  }
+  return positions;
+}
+
 // ─── 缩放钳制 ───
 
 export function clampZoom(zoom: number): number {
@@ -477,6 +562,9 @@ export function createNode(
           description: '',
           sub_schema: null,
           db_mapping: null,
+          required: true,
+          context_included: true,
+          display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
         },
@@ -554,6 +642,8 @@ export function createNode(
           frequency_penalty: null,
           presence_penalty: null,
           stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
           is_locked: false,
         },
       };

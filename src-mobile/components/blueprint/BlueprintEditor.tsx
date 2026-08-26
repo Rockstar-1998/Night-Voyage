@@ -38,6 +38,7 @@ import {
   createNode,
   NODE_WIDTH,
   ViewTransform,
+  autoLayout,
 } from './mobileNodeLayout';
 import { MobileBlueprintCanvas } from './MobileBlueprintCanvas';
 import { MobileNodeConfigPanel } from './MobileNodeConfigPanel';
@@ -65,7 +66,7 @@ const ADDABLE_NODE_TYPES: Array<{ type: NodeType; label: string; desc: string }>
   { type: 'mutex_gate', label: 'MutexGate', desc: '互斥组，单选' },
   { type: 'group_gate', label: 'GroupGate', desc: '普通组，多选' },
   { type: 'mode_switch', label: 'ModeSwitch', desc: '三模式分支' },
-  { type: 'constant', label: 'Constant', desc: '读取会话属性（如 conversation_type）输出值' },
+  { type: 'constant', label: 'Constant', desc: '读取会话属性（如 conversation_type / memory_mode / protocol）输出值' },
   { type: 'branch', label: 'Branch', desc: '接收上游常量值，按 cases 匹配走对应出口' },
   { type: 'sampling_params', label: 'SamplingParams', desc: '采样参数' },
   { type: 'start', label: 'Start', desc: '链表起点（每图唯一）' },
@@ -304,6 +305,22 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     showToast(`已添加 ${type} 节点`, 'success', 1500);
   };
 
+  // ─── 整理布局 ───
+
+  const handleAutoLayout = () => {
+    const g = graph();
+    const positions = autoLayout(g.nodes, g.edges);
+    setGraph((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => {
+        const pos = positions.get(n.id);
+        return pos ? { ...n, position: pos } : n;
+      }),
+    }));
+    setIsDirty(true);
+    showToast('节点已自动整理', 'success', 1500);
+  };
+
   // ─── 保存整个蓝图 ───
 
   const handleSaveGraph = () => {
@@ -355,6 +372,13 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             {nodeCount()} 节点 · {edgeCount()} 连线{isDirty() ? ' · 未保存' : ''}
           </span>
         </div>
+        <button
+          onClick={handleAutoLayout}
+          class="shrink-0 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-mist-solid/70 text-[12px] font-bold active:scale-95 transition-transform"
+          aria-label="整理布局"
+        >
+          整理
+        </button>
         <button
           onClick={() => setIsAddSheetOpen(true)}
           class="shrink-0 px-3 py-1.5 rounded-lg bg-accent/15 border border-accent/30 text-accent text-[12px] font-bold active:scale-95 transition-transform"

@@ -1,32 +1,42 @@
 /**
- * SchemaField node config editor (Task 9).
+ * SchemaField node config editor.
  *
  * Edits a SchemaFieldConfig: field_name / field_type / description /
- * sub_schema (JSON) / db_mapping / is_locked / lock_reason.
+ * sub_schema (structured editor for object/array) / db_mapping /
+ * required / context_included / display (default_expanded, hide_label) /
+ * is_locked / lock_reason.
  *
- * The sub_schema is a JSON object edited via a textarea: the local text
- * signal holds the in-progress string, and on blur we parse + validate +
- * commit. Parse errors are shown inline without losing the user's text.
- *
- * Migrated from SchemaConfigPanel: field_name/field_type/description map to
- * the old key editor; sub_schema replaces the old properties/items editor
- * with a raw JSON surface (the spec stores sub_schema as an opaque object).
+ * sub_schema is rendered by `<SubSchemaEditor>` which adapts UI to field_type
+ * (object: mode switch + sub-key list; array: items type; others: empty).
+ * A collapsible "高级模式 (JSON)" textarea lets power users edit the raw
+ * JSON directly.
  *
  * Constraints:
  * - C1 Frontend Render-Only: edits forwarded via onUpdate, no backend calls.
- * - C3 Responsiveness: SolidJS fine-grained props; sub_schema text is a
- *   local signal so keystrokes don't re-render the parent.
+ * - C3 Responsiveness: SolidJS fine-grained props; JSON advanced mode holds
+ *   local text signal so keystrokes don't re-render the parent.
  * - C5 Mobile Frontend Independence: PC-only, lives under `src/`.
  * - C2 Zero-Fallback: invalid JSON shows an error and does NOT silently
- *   commit a null/partial value — the user must fix it or clear the field.
+ *   commit a null/partial value.
  */
 
-import { Component, Show, createMemo, createSignal } from 'solid-js';
-import type { SchemaFieldConfig } from '../../../lib/blueprint/types';
+import { Component, Show } from 'solid-js';
+import type {
+  FieldDisplayConfig,
+  SchemaFieldConfig,
+} from '../../../lib/blueprint/types';
 import type { NodeConfigComponentProps } from '../NodeConfigPanel';
 import { Select } from '../../ui/Select';
+import { SubSchemaEditor } from './SubSchemaEditor';
 
-const FIELD_TYPES = ['string', 'object', 'array', 'number', 'boolean'] as const;
+const FIELD_TYPES = [
+  'string',
+  'object',
+  'array',
+  'number',
+  'integer',
+  'boolean',
+] as const;
 
 const DB_MAPPING_OPTIONS = [
   { label: '（不持久化）', value: '' },
@@ -37,45 +47,13 @@ const DB_MAPPING_OPTIONS = [
 const INPUT_CLASS =
   'w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
-const TEXTAREA_CLASS =
-  'w-full bg-transparent border border-white/15 rounded-lg py-2 px-2 text-xs text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed resize-y min-h-[120px] font-mono';
-
 const LABEL_CLASS = 'text-[10px] text-mist-solid/40 uppercase tracking-widest';
 
-const hasSubSchema = (fieldType: string): boolean =>
-  fieldType === 'object' || fieldType === 'array';
+const CHECKBOX_ROW =
+  'flex items-center gap-2 text-xs text-mist-solid/70 cursor-pointer';
 
 export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConfig>> = (props) => {
-  // Local signal mirrors the stringified sub_schema so the user can type
-  // freely; we only commit to props.config.sub_schema on blur, after parse.
-  const [subSchemaText, setSubSchemaText] = createSignal(
-    props.config.sub_schema === null ? '' : JSON.stringify(props.config.sub_schema, null, 2),
-  );
-  const [subSchemaError, setSubSchemaError] = createSignal<string | null>(null);
-
   const update = (updates: Partial<SchemaFieldConfig>) => props.onUpdate(updates);
-
-  const showSubSchema = createMemo(() => hasSubSchema(props.config.field_type));
-
-  const handleSubSchemaBlur = () => {
-    const text = subSchemaText().trim();
-    if (text === '') {
-      setSubSchemaError(null);
-      update({ sub_schema: null });
-      return;
-    }
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setSubSchemaError('sub_schema 必须是 JSON 对象（{}）');
-        return;
-      }
-      setSubSchemaError(null);
-      update({ sub_schema: parsed as Record<string, unknown> });
-    } catch (e) {
-      setSubSchemaError('JSON 解析失败：' + (e as Error).message);
-    }
-  };
 
   const handleLockToggle = (checked: boolean) => {
     if (checked) {
@@ -88,6 +66,19 @@ export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConf
   const handleDbTypeChange = (val: string) => {
     update({ db_mapping: val === '' ? null : val });
   };
+
+  const handleSubSchemaChange = (next: Record<string, unknown> | null) => {
+    update({ sub_schema: next });
+  };
+
+  const updateDisplay = (patch: Partial<FieldDisplayConfig>) => {
+    // Old presets may lack `display`; default it so spread never hits undefined.
+    const base = props.config.display ?? { default_expanded: true, hide_label: false };
+    update({ display: { ...base, ...patch } });
+  };
+
+  // Old presets (pre-display/required/context_included fields) may omit these.
+  const display = props.config.display ?? { default_expanded: true, hide_label: false };
 
   return (
     <div class="space-y-4">
@@ -125,23 +116,14 @@ export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConf
         />
       </div>
 
-      <Show when={showSubSchema()}>
-        <div class="space-y-1">
-          <label class={LABEL_CLASS}>sub_schema（JSON 对象）</label>
-          <textarea
-            value={subSchemaText()}
-            disabled={props.isLocked}
-            onInput={(e) => setSubSchemaText(e.currentTarget.value)}
-            onBlur={handleSubSchemaBlur}
-            class={TEXTAREA_CLASS}
-            placeholder={'{"properties": {"location": {"type": "string"}}}'}
+      <Show when={props.config.field_type === 'object' || props.config.field_type === 'array'}>
+        <div class="space-y-1 pt-2 border-t border-white/10">
+          <label class={LABEL_CLASS}>sub_schema</label>
+          <SubSchemaEditor
+            fieldType={props.config.field_type}
+            subSchema={props.config.sub_schema}
+            onChange={handleSubSchemaChange}
           />
-          <Show when={subSchemaError()}>
-            <p class="text-xs text-red-400">{subSchemaError()}</p>
-          </Show>
-          <p class="text-[10px] text-mist-solid/35">
-            失焦时解析。留空 = null。无效 JSON 不会覆盖已有值。
-          </p>
         </div>
       </Show>
 
@@ -156,7 +138,65 @@ export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConf
       </div>
 
       <div class="space-y-1 pt-2 border-t border-white/10">
-        <label class="flex items-center gap-2 text-xs text-mist-solid/70 cursor-pointer">
+        <label class={LABEL_CLASS}>schema 行为</label>
+        <div class="space-y-1.5">
+          <label class={CHECKBOX_ROW}>
+            <input
+              type="checkbox"
+              checked={props.config.required ?? true}
+              onChange={(e) => update({ required: e.currentTarget.checked })}
+              class="accent-accent"
+            />
+            required（加入 schema `required` 数组）
+          </label>
+          <label class={CHECKBOX_ROW}>
+            <input
+              type="checkbox"
+              checked={props.config.context_included ?? false}
+              onChange={(e) =>
+                update({ context_included: e.currentTarget.checked })
+              }
+              class="accent-accent"
+            />
+            context_included（注入下一轮对话上下文）
+          </label>
+        </div>
+        <p class="text-[10px] text-mist-solid/35 mt-1">
+          注：若 db_mapping 已设置，该字段值会自动经由 world_variable / plot_summary
+          块进入下一轮上下文，context_included 过滤对其无意义。
+        </p>
+      </div>
+
+      <div class="space-y-1 pt-2 border-t border-white/10">
+        <label class={LABEL_CLASS}>显示偏好</label>
+        <div class="space-y-1.5">
+          <label class={CHECKBOX_ROW}>
+            <input
+              type="checkbox"
+              checked={display.default_expanded}
+              onChange={(e) =>
+                updateDisplay({ default_expanded: e.currentTarget.checked })
+              }
+              class="accent-accent"
+            />
+            default_expanded（消息列表默认展开）
+          </label>
+          <label class={CHECKBOX_ROW}>
+            <input
+              type="checkbox"
+              checked={display.hide_label}
+              onChange={(e) =>
+                updateDisplay({ hide_label: e.currentTarget.checked })
+              }
+              class="accent-accent"
+            />
+            hide_label（消息列表隐藏字段标签）
+          </label>
+        </div>
+      </div>
+
+      <div class="space-y-1 pt-2 border-t border-white/10">
+        <label class={CHECKBOX_ROW}>
           <input
             type="checkbox"
             checked={props.config.is_locked}

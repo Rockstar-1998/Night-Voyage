@@ -159,7 +159,61 @@ pub async fn execute_blueprint(
     // 仅当字段缺失时插入，绝不覆盖蓝图作者显式定义的字段——是「组合」而非「继承」。
     inject_core_schema_baseline(&mut result);
 
+    // 按语义固定顺序重排 schema 字段（properties + required 同步）。
+    // 理由：serde_json 的 Map 保留首次插入顺序，而插入顺序由 DFS 遍历（端口/order）
+    // 决定，导致核心字段（text 由基线追加在末尾）位置不可控。本地模型对字段顺序敏感，
+    // 且 OpenAI 严格模式（strict）要求 required 与 properties 顺序一致。固定顺序
+    // 彻底消除乱序，且为未来切换 strict 模式铺路。
+    order_schema_properties(&mut result);
+
     Ok(result)
+}
+
+/// Schema 字段的语义固定顺序：先推理（thinking）→ 再正文（text）→ 其余字段按字母序。
+/// 这是「核心字段始终排在最前且稳定」的可读契约，避免模型把正文误填进别的字段。
+fn schema_field_priority(name: &str) -> usize {
+    match name {
+        "thinking" => 0,
+        "text" => 1,
+        _ => 2,
+    }
+}
+
+/// 对结构化输出 schema 的 `properties` 与 `required` 重排：
+/// 1. properties：thinking/text 优先，其余按字段名升序（确定性、可复现）。
+/// 2. required：与 properties 重排后的顺序保持一致（strict 模式硬性要求）。
+fn order_schema_properties(result: &mut BlueprintExecutionResult) {
+    let schema = &mut result.structured_output_schema;
+    let props = match schema.get_mut("properties").and_then(|v| v.as_object_mut()) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let mut ordered: Vec<(String, serde_json::Value)> = props
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    ordered.sort_by(|a, b| {
+        schema_field_priority(&a.0)
+            .cmp(&schema_field_priority(&b.0))
+            .then(a.0.cmp(&b.0))
+    });
+
+    let new_props = serde_json::Map::from_iter(ordered.iter().cloned());
+    *props = new_props;
+
+    // required 同步按重排后的字段顺序（仅保留确实存在于 properties 的字段）。
+    if let Some(req) = schema.get_mut("required").and_then(|v| v.as_array_mut()) {
+        let ordered_names: Vec<serde_json::Value> = ordered
+            .iter()
+            .filter(|(k, _)| {
+                let exists = req.iter().any(|v| v.as_str() == Some(k.as_str()));
+                exists
+            })
+            .map(|(k, _)| serde_json::Value::String(k.clone()))
+            .collect();
+        *req = ordered_names;
+    }
 }
 
 /// 注入结构化输出的核心基线字段，保证每个蓝图预设都有叙事正文（body）。
@@ -556,14 +610,68 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
 /// 3. Intersect all sets → common descendants.
 /// 4. Return the first common descendant in DFS order from the first branch head.
 /// 5. If no common descendant, fall back to the End node.
+/// 返回从 `source` 连出的所有目标节点，按「出口端口优先级 → 边 order」稳定排序。
+///
+/// 出口端口优先级：由 `output_port_priority` 决定（Gate/ModeSwitch 的多选端口
+/// 顺序），其余端口回退到 `out` 优先、其余按字母序，保证同端口多条边按 `order` 升序。
+/// 这是「执行顺序绑定在出口端口 + order」语义的核心：一个出口连多条线时，
+/// 先按端口顺序、再按 order 确定遍历/合并顺序，而非依赖 edges 数组的存储顺序。
+fn ordered_outgoing_targets<'a>(
+    graph: &'a BlueprintGraph,
+    source: &str,
+) -> Vec<&'a BlueprintEdge> {
+    let mut edges: Vec<&BlueprintEdge> = graph
+        .edges
+        .iter()
+        .filter(|e| e.source == source)
+        .collect();
+    edges.sort_by(|a, b| {
+        output_port_priority(graph, &a.source_port)
+            .cmp(&output_port_priority(graph, &b.source_port))
+            .then(a.order.cmp(&b.order))
+            .then(a.target.cmp(&b.target))
+    });
+    edges
+}
+
+/// 计算某出口端口的排序优先级。Gate/ModeSwitch 节点按 `options`/固定分支顺序
+/// 赋予 0..N 的优先级；非多出口节点（单 `out` 端口）一律返回 0，由同端口内的
+/// `order` 字段进一步区分。端口顺序未知时回退到字母序，保证确定性。
+fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usize {
+    let node = match graph.nodes.iter().find(|n| n.id == source) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
+    let ordered_ports: Vec<String> = match &node.config {
+        NodeConfig::MutexGate(cfg) => {
+            cfg.options.iter().map(|o| format!("out_{}", o.key)).collect()
+        }
+        NodeConfig::GroupGate(cfg) => {
+            cfg.options.iter().map(|o| format!("out_{}", o.key)).collect()
+        }
+        NodeConfig::ModeSwitch(_) => {
+            vec!["out_legacy", "out_mem0", "out_stateless"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        }
+        NodeConfig::RoleSwitch(_) => {
+            vec!["out_single", "out_online"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        }
+        _ => return 0,
+    };
+    ordered_ports.iter().position(|p| p == port).unwrap_or(usize::MAX)
+}
+
 fn find_merge_node(
     graph: &BlueprintGraph,
     gate_node_id: &str,
 ) -> Result<String, BlueprintError> {
-    let branch_heads: Vec<String> = graph
-        .edges
-        .iter()
-        .filter(|e| e.source == gate_node_id)
+    let branch_heads: Vec<String> = ordered_outgoing_targets(graph, gate_node_id)
+        .into_iter()
         .map(|e| e.target.clone())
         .collect();
 

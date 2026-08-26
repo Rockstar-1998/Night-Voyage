@@ -203,6 +203,7 @@ function createEmptyGraph(): BlueprintGraph {
         source_port: 'out',
         target: 'n_end',
         target_port: 'in',
+        order: 0,
       },
     ],
   };
@@ -467,6 +468,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       source_port: sourcePort,
       target,
       target_port: targetPort,
+      order: 0,
     };
     setGraph('edges', (prev) => [...prev, edge]);
     setDirty(true);

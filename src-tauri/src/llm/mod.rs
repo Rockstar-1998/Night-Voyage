@@ -113,11 +113,16 @@ pub enum LlmToolChoice {
 pub fn build_openai_structured_json_response_format(schema_json: &str) -> Result<serde_json::Value, String> {
     let schema_value: serde_json::Value = serde_json::from_str(schema_json)
         .map_err(|e| format!("invalid JSON Schema: {}", e))?;
+    // `strict: false` (非严格 structured outputs)：蓝图 SchemaField 支持
+    // `required: false` 的可选字段，这些字段不会进入 schema 的 `required`
+    // 数组；而 OpenAI 严格模式要求"所有属性要么在 required 中、要么类型含
+    // null"，否则请求会被拒绝。非严格模式仍按 JSON Schema 约束模型输出形状，
+    // 同时兼容带可选字段的蓝图 schema 与更多 OpenAI 兼容 provider。
     Ok(serde_json::json!({
         "type": "json_schema",
         "json_schema": {
             "name": "night_voyage_response",
-            "strict": true,
+            "strict": false,
             "schema": schema_value
         }
     }))

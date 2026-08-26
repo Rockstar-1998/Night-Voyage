@@ -28,6 +28,7 @@ import type {
   RoomStreamStructuredFieldDeltaEvent,
   RoomSwipeActivatedEvent,
   RoomTokenUsageEvent,
+  RoomCompatibilityModeEvent,
 } from './types';
 
 // ─── Room Commands ───
@@ -247,6 +248,18 @@ export async function listenRoomStreamRetry(
       messageId: event.payload.messageId,
       error: event.payload.error,
       attemptCount: event.payload.attemptCount,
+    });
+    handler(event.payload);
+  });
+}
+
+export async function listenRoomCompatibilityMode(
+  handler: (payload: RoomCompatibilityModeEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RoomCompatibilityModeEvent>('room:compatibility_mode', (event) => {
+    console.debug('[room-compatibility_mode]', {
+      conversationId: event.payload.conversationId,
+      messageId: event.payload.messageId,
     });
     handler(event.payload);
   });

@@ -42,6 +42,12 @@ export interface BlueprintEdge {
   source_port: string;
   target: string;
   target_port: string;
+  /**
+   * 同一源节点 + 同一出口端口连出多条边时的分支/合并遍历顺序。
+   * 端口优先级（Gate/ModeSwitch 的多选端口顺序）优先，order 其次。
+   * 缺省视为 0，向后兼容旧版蓝图（与 Rust `#[serde(default)]` 语义一致）。
+   */
+  order?: number;
 }
 
 // ─── Node configs (snake_case — matches graph JSON in blueprint_graph column) ───
@@ -108,7 +114,7 @@ export interface RoleSwitchConfig {
 
 export interface ConstantConfig {
   label: string;
-  // 会话属性键名："conversation_type"（输出 single/online）| "memory_mode"
+  // 会话属性键名："conversation_type"（输出 single/online）| "memory_mode" | "protocol"（输出 anthropic / chat_completions）
   source: string;
 }
 
@@ -173,6 +179,7 @@ export interface GateSelection {
 export interface BlueprintExecutionContext {
   memoryMode: 'legacy' | 'mem0' | 'stateless';
   conversationType: 'single' | 'online';
+  protocol: string;
   gateSelections: Record<string, GateSelection>;
 }
 

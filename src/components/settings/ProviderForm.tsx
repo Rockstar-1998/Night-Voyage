@@ -73,6 +73,16 @@ export const ProviderForm: Component<ProviderFormProps> = (props) => {
     });
   });
 
+  // Reset form when entering "create new" mode, so a previously selected
+  // provider's id does not leak into the new payload and cause an update
+  // instead of a create.
+  createEffect(() => {
+    if (!props.isCreatingNew) return;
+    setForm({ ...EMPTY_FORM });
+    setIsSaved(false);
+    setSaveError(null);
+  });
+
   const currentModels = createMemo(() => {
     const providerId = props.selectedProviderId;
     if (providerId == null || !props.modelsByProvider) return [];

@@ -228,6 +228,7 @@ const FIELD_TYPE_OPTIONS = [
   { value: 'object', label: 'object' },
   { value: 'array', label: 'array' },
   { value: 'number', label: 'number' },
+  { value: 'integer', label: 'integer' },
   { value: 'boolean', label: 'boolean' },
 ];
 
@@ -304,6 +305,36 @@ const SchemaFieldForm: Component<{
           onChange={(v) => props.onChange({ ...props.config, db_mapping: v === '' ? null : v })}
           options={DB_MAPPING_OPTIONS}
         />
+      </div>
+      <div>
+        <FieldLabel label="Schema 行为" />
+        <div class="flex flex-col gap-1.5">
+          <Toggle
+            checked={props.config.required}
+            onChange={(v) => props.onChange({ ...props.config, required: v })}
+            label="required（加入 schema required 数组）"
+          />
+          <Toggle
+            checked={props.config.context_included}
+            onChange={(v) => props.onChange({ ...props.config, context_included: v })}
+            label="context_included（注入下一轮上下文）"
+          />
+        </div>
+      </div>
+      <div>
+        <FieldLabel label="显示偏好" />
+        <div class="flex flex-col gap-1.5">
+          <Toggle
+            checked={props.config.display.default_expanded}
+            onChange={(v) => props.onChange({ ...props.config, display: { ...props.config.display, default_expanded: v } })}
+            label="default_expanded（消息列表默认展开）"
+          />
+          <Toggle
+            checked={props.config.display.hide_label}
+            onChange={(v) => props.onChange({ ...props.config, display: { ...props.config.display, hide_label: v } })}
+            label="hide_label（消息列表隐藏字段标签）"
+          />
+        </div>
       </div>
       <div>
         <Toggle
@@ -481,6 +512,7 @@ const ConstantForm: Component<{
       >
         <option value="conversation_type">conversation_type（single / online）</option>
         <option value="memory_mode">memory_mode（stateless / legacy / mem0）</option>
+        <option value="protocol">protocol（anthropic / chat_completions）</option>
       </select>
     </div>
     <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
@@ -658,6 +690,27 @@ const SamplingParamsForm: Component<{
       </div>
       <div>
         <Toggle
+          checked={props.config.thinking_enabled ?? false}
+          onChange={(v) => props.onChange({ ...props.config, thinking_enabled: v ? true : null })}
+          label="thinking_enabled（开启思考/推理，仅 Anthropic 生效）"
+        />
+      </div>
+      <div>
+        <FieldLabel label="thinking_budget_tokens（思考预算，≥128）" />
+        <NumberInput
+          value={props.config.thinking_budget_tokens}
+          placeholder="留空表示不设置"
+          step="1"
+          onInput={(v) =>
+            props.onChange({
+              ...props.config,
+              thinking_budget_tokens: v === null ? null : Math.max(128, Math.trunc(v)),
+            })
+          }
+        />
+      </div>
+      <div>
+        <Toggle
           checked={props.config.is_locked}
           onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
           label="锁定（条目锁）"
@@ -774,6 +827,9 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           description: '',
           sub_schema: null,
           db_mapping: null,
+          required: true,
+          context_included: true,
+          display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
         },
@@ -840,6 +896,8 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           frequency_penalty: null,
           presence_penalty: null,
           stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
           is_locked: false,
         },
       };

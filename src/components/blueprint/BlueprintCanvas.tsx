@@ -553,11 +553,11 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                     <g>
                       <Show when={port.label}>
                         <text
-                          x={port.kind === 'output' ? layout.width - 14 : 14}
-                          y={port.y + 3}
-                          font-size="10"
+                          x={port.x}
+                          y={port.kind === 'output' ? port.y + 12 : port.y - 6}
+                          font-size="9"
                           fill="rgba(255,255,255,0.7)"
-                          text-anchor={port.kind === 'output' ? 'end' : 'start'}
+                          text-anchor="middle"
                           pointer-events="none"
                         >
                           {port.label}
