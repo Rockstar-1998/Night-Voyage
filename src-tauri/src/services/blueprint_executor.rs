@@ -8,8 +8,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
-    BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph, CompiledBlock,
-    CompiledSamplingParams, ConstantConfig, FieldDisplayConfig, NodeConfig, SchemaFieldConfig,
+    BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
+    CompiledBlock, CompiledSamplingParams, ConstantConfig, FieldDisplayConfig, NodeConfig,
+    SchemaFieldConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -626,8 +627,8 @@ fn ordered_outgoing_targets<'a>(
         .filter(|e| e.source == source)
         .collect();
     edges.sort_by(|a, b| {
-        output_port_priority(graph, &a.source_port)
-            .cmp(&output_port_priority(graph, &b.source_port))
+        output_port_priority(graph, &a.source, &a.source_port)
+            .cmp(&output_port_priority(graph, &b.source, &b.source_port))
             .then(a.order.cmp(&b.order))
             .then(a.target.cmp(&b.target))
     });
