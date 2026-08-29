@@ -29,6 +29,7 @@ import {
   presetsUpdate,
   presetsExport,
   presetsImport,
+  normalizeBlueprintGraph,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
 import { MobilePresetDetailView } from './MobilePresetDetailView';
@@ -87,8 +88,13 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
 }
 
 /// 从后端 blueprint_graph JSON 字符串解析为 BlueprintGraph。
-function parseGraph(json: string): BlueprintGraph {
-  const parsed = JSON.parse(json) as BlueprintGraph;
+///
+/// 先经后端归一化命令改写旧拓扑（Constant 串在 exec 链上 → value 引脚拓扑）；
+/// 规则由后端裁定（C1），前端不复制改写逻辑。`migrated` 为 true 时调用方必须
+/// 可见地提示用户保存，禁止静默迁移（C2）。
+async function parseGraph(json: string): Promise<{ graph: BlueprintGraph; migrated: boolean }> {
+  const migration = await normalizeBlueprintGraph(json);
+  const parsed = JSON.parse(migration.graphJson) as BlueprintGraph;
   if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
     throw new Error('blueprint_graph JSON 结构无效');
   }
@@ -97,21 +103,23 @@ function parseGraph(json: string): BlueprintGraph {
   // 自动调用 autoLayout 让编辑器打开即可用，不让用户看到一堆重叠节点。
   const allAtOrigin =
     nodes.length > 0 && nodes.every((n) => n.position.x === 0 && n.position.y === 0);
-  if (allAtOrigin) {
-    const positions = autoLayoutGraph(nodes, parsed.edges);
-    return {
-      version: 2,
-      nodes: nodes.map((n) => {
-        const pos = positions.get(n.id);
-        return pos ? { ...n, position: pos } : n;
-      }),
-      edges: parsed.edges,
-    };
-  }
+  const nodesWithPositions = allAtOrigin
+    ? (() => {
+        const positions = autoLayoutGraph(nodes, parsed.edges);
+        return nodes.map((n) => {
+          const pos = positions.get(n.id);
+          return pos ? { ...n, position: pos } : n;
+        });
+      })()
+    : nodes;
+
   return {
-    version: 2,
-    nodes,
-    edges: parsed.edges,
+    graph: {
+      version: 2,
+      nodes: nodesWithPositions,
+      edges: parsed.edges,
+    },
+    migrated: migration.migrated,
   };
 }
 
@@ -164,11 +172,21 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     try {
       const detail = await presetsGet(preset.id);
       const rawGraph = detail.preset.blueprintGraph;
-      const graph = rawGraph && rawGraph.trim() !== ''
-        ? parseGraph(rawGraph)
-        : createEmptyGraph();
+      let graph: BlueprintGraph;
+      let migrated = false;
+      if (rawGraph && rawGraph.trim() !== '') {
+        const parsed = await parseGraph(rawGraph);
+        graph = parsed.graph;
+        migrated = parsed.migrated;
+      } else {
+        graph = createEmptyGraph();
+      }
       setViewingPreset(null);
       setEditingPreset({ presetId: preset.id, graph, title: `编辑：${preset.name}` });
+      if (migrated) {
+        // 迁移必须可见：提示用户保存，绝不静默改写（C2）。
+        showToast('蓝图结构已升级为 value 引脚拓扑，请保存使其生效', 'warning', 5000);
+      }
     } catch (err) {
       showToast(
         `加载预设失败：${err instanceof Error ? err.message : String(err)}`,
@@ -375,7 +393,9 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
       // 更新编辑中的图（用保存后的回传图重新解析，确保状态一致）
       setEditingPreset({
         presetId: editing.presetId,
-        graph: updated.preset.blueprintGraph ? parseGraph(updated.preset.blueprintGraph) : createEmptyGraph(),
+        graph: updated.preset.blueprintGraph
+          ? (await parseGraph(updated.preset.blueprintGraph)).graph
+          : createEmptyGraph(),
         title: `编辑：${updated.preset.name}`,
       });
       const sizeKb = (new Blob([json]).size / 1024).toFixed(1);

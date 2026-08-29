@@ -28,6 +28,8 @@ export const NODE_TYPES = [
   'sampling_params',
   'constant',
   'branch',
+  'sampling_params_openai',
+  'sampling_params_anthropic',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -35,6 +37,17 @@ export interface Position {
   x: number;
   y: number;
 }
+
+/**
+ * 引脚种类（UE 式分类）。
+ * - `exec`：执行流引脚，驱动节点执行顺序
+ * - `value`：值数据引脚，承载会话属性值（真数据流）
+ * - `bool`：判定节点的分支出口，本质是执行流出口，仅作为 output 存在
+ */
+export type PortKind = 'exec' | 'value' | 'bool';
+
+/** 引脚方向。 */
+export type PortDirection = 'input' | 'output';
 
 export interface BlueprintEdge {
   id: string;
@@ -84,6 +97,12 @@ export interface SchemaFieldConfig {
   display: FieldDisplayConfig;
   is_locked: boolean;
   lock_reason: string | null;
+  /**
+   * 字段在结构化输出 schema 中的顺序权重。作者可编辑以控制
+   * `properties` / `required` 的排列顺序。排序按 (order, 遍历插入序) 稳定排序；
+   * 缺省视为 0。核心基线字段 thinking/text 由执行器注入负 order 固定在前。
+   */
+  order: number;
 }
 
 export interface GateOption {
@@ -129,12 +148,45 @@ export interface BranchConfig {
   default_port: string;
 }
 
+/**
+ * legacy 通用采样参数配置。保留以兼容旧图，编辑器不再允许新建。
+ * 运行时按协议方言裁剪：OpenAI 方言忽略 thinking_*，Anthropic 方言忽略
+ * frequency_penalty / presence_penalty。
+ */
 export interface SamplingParamsConfig {
   temperature: number | null;
   max_tokens: number | null;
   top_p: number | null;
   frequency_penalty: number | null;
   presence_penalty: number | null;
+  stop: string[] | null;
+  thinking_enabled: boolean | null;
+  thinking_budget_tokens: number | null;
+  is_locked: boolean;
+}
+
+/**
+ * OpenAI / chat_completions 协议专用采样参数配置。
+ * 只含 OpenAI 兼容路径支持的字段（thinking 在 OpenAI 路径会直接报错）。
+ */
+export interface OpenAiSamplingParamsConfig {
+  temperature: number | null;
+  max_tokens: number | null;
+  top_p: number | null;
+  frequency_penalty: number | null;
+  presence_penalty: number | null;
+  stop: string[] | null;
+  is_locked: boolean;
+}
+
+/**
+ * Anthropic 协议专用采样参数配置。
+ * 只含 Anthropic 支持的字段（Anthropic 不支持 frequency/presence penalty）。
+ */
+export interface AnthropicSamplingParamsConfig {
+  temperature: number | null;
+  max_tokens: number | null;
+  top_p: number | null;
   stop: string[] | null;
   thinking_enabled: boolean | null;
   thinking_budget_tokens: number | null;
@@ -154,7 +206,9 @@ export type NodeConfig =
   | { type: 'role_switch'; config: RoleSwitchConfig }
   | { type: 'constant'; config: ConstantConfig }
   | { type: 'branch'; config: BranchConfig }
-  | { type: 'sampling_params'; config: SamplingParamsConfig };
+  | { type: 'sampling_params'; config: SamplingParamsConfig }
+  | { type: 'sampling_params_openai'; config: OpenAiSamplingParamsConfig }
+  | { type: 'sampling_params_anthropic'; config: AnthropicSamplingParamsConfig };
 
 export type BlueprintNode = NodeConfig & {
   id: string;

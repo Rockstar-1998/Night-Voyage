@@ -45,6 +45,7 @@ import {
   type Position,
 } from '../../lib/blueprint/types';
 import {
+  normalizeBlueprintGraph,
   presetsGet,
   presetsUpdate,
   type CreatePresetPayload,
@@ -98,6 +99,7 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
+          order: 0,
         },
       };
     case 'mutex_gate':
@@ -155,6 +157,32 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           top_p: null,
           frequency_penalty: null,
           presence_penalty: null,
+          stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_openai':
+      return {
+        type: 'sampling_params_openai',
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
+          frequency_penalty: null,
+          presence_penalty: null,
+          stop: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_anthropic':
+      return {
+        type: 'sampling_params_anthropic',
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
           stop: null,
           thinking_enabled: null,
           thinking_budget_tokens: null,
@@ -349,7 +377,11 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       if (rawGraph && rawGraph.trim() !== '') {
         // Preset already has a blueprint graph — parse it.
         try {
-          const parsed = JSON.parse(rawGraph) as BlueprintGraph;
+          // 旧图归一化：真数据流引入后 Constant 成为无 exec 入口的纯值节点，
+          // 旧拓扑（Constant 串在 exec 链上）由后端改写为
+          // 「上游 → Branch(in)」+「Constant → Branch(value)」（C1，规则在后端）。
+          const migration = await normalizeBlueprintGraph(rawGraph);
+          const parsed = JSON.parse(migration.graphJson) as BlueprintGraph;
           if (parsed.version !== 2 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
             throw new Error('blueprint_graph JSON 结构无效（version/nodes/edges 缺失）');
           }
@@ -359,6 +391,12 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           setGraph('nodes', normalizedNodes);
           setGraph('edges', parsed.edges);
           setGraph('version', 2);
+
+          if (migration.migrated) {
+            // 迁移必须可见：提示用户保存，绝不静默改写（C2）。
+            showToast('蓝图结构已升级为 value 引脚拓扑，请点击保存使其生效', 'warning');
+            setDirty(true);
+          }
 
           // If the imported JSON stripped positions (every node at 0,0),
           // auto-layout so the editor opens with a usable view.

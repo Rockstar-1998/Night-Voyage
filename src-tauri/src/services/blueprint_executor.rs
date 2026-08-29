@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
-    CompiledBlock, CompiledSamplingParams, ConstantConfig, FieldDisplayConfig, NodeConfig,
-    SchemaFieldConfig,
+    AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams, FieldDisplayConfig,
+    NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -61,6 +61,18 @@ pub enum BlueprintError {
     UnknownConstantSource(String),
     /// A Branch node is missing a required port (case port or default_port).
     MissingBranchPort(String, String),
+    /// A Branch node lacks the `value` input edge that feeds its match input.
+    MissingValueInput(String),
+    /// The upstream of a `value` edge is not a pure value node (Constant).
+    ValueSourceNotValueNode(String),
+    /// Value evaluation re-entered a port already being resolved (value cycle).
+    ValueCycleDetected(String, String),
+    /// A pure value node (Constant) was reached by the execution flow. The graph
+    /// predates the value-pin dataflow and has not been migrated.
+    ConstantOnExecPath(String),
+    /// `context.protocol` is neither `anthropic` nor `chat_completions`，无法裁定
+    /// 采样参数节点该走哪套协议方言。
+    UnknownSamplingProtocol(String),
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -106,11 +118,124 @@ impl std::fmt::Display for BlueprintError {
             Self::MissingBranchPort(node, port) => {
                 write!(f, "branch node {node} missing required port: {port}")
             }
+            Self::MissingValueInput(node) => {
+                write!(f, "branch node {node} has no `value` input edge")
+            }
+            Self::ValueSourceNotValueNode(node) => {
+                write!(f, "node {node} is not a pure value node; cannot feed a `value` pin")
+            }
+            Self::ValueCycleDetected(node, port) => {
+                write!(f, "value cycle detected at port {port} of node {node}")
+            }
+            Self::ConstantOnExecPath(node) => {
+                write!(
+                    f,
+                    "constant node {node} sits on the execution flow; migrate the graph so the \
+                     constant feeds the branch through the `value` pin"
+                )
+            }
+            Self::UnknownSamplingProtocol(protocol) => {
+                write!(
+                    f,
+                    "unknown sampling protocol: {protocol} (expected `anthropic` or \
+                     `chat_completions`)"
+                )
+            }
+        }
+    }
+}
+
+/// 采样参数的协议方言。由 [`BlueprintExecutionContext::protocol`] 解析。
+///
+/// 用类型而非布尔标志位表达"当前该用哪套采样参数"：未知协议在解析期即报错，
+/// 杜绝"默认当 OpenAI 处理"的静默回退（C2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SamplingDialect {
+    /// OpenAI / chat_completions 协议。
+    OpenAi,
+    /// Anthropic 协议。
+    Anthropic,
+}
+
+impl SamplingDialect {
+    /// 从会话协议字符串解析。未知协议显式报错。
+    pub fn parse(protocol: &str) -> Result<Self, BlueprintError> {
+        match protocol {
+            "chat_completions" => Ok(Self::OpenAi),
+            "anthropic" => Ok(Self::Anthropic),
+            other => Err(BlueprintError::UnknownSamplingProtocol(other.to_string())),
         }
     }
 }
 
 impl std::error::Error for BlueprintError {}
+
+/// 引脚端口名常量（与前端 `getInputPorts` / `getOutputPorts` 契约一致）。
+pub mod port_names {
+    /// exec 输入引脚端口名。
+    pub const EXEC_IN: &str = "in";
+    /// value 输入引脚端口名（Branch 的匹配值入口）。
+    pub const VALUE_IN: &str = "value";
+    /// exec / value 输出引脚端口名。
+    pub const OUT: &str = "out";
+}
+
+/// 蓝图中的值。当前仅会话属性字符串一类。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlueprintValue {
+    /// 会话属性值（`conversation_type` / `memory_mode` / `protocol` 的取值）。
+    Session(String),
+}
+
+impl BlueprintValue {
+    /// 以字符串形式读取值。
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Session(value) => value.as_str(),
+        }
+    }
+}
+
+/// 值求值环境：缓存已求值端口，并用求值栈检测 value 依赖环。
+///
+/// 值沿 value 边以 UE 的 pull-based 方式求值：执行流到达 Branch 时，Branch 沿其
+/// `value` 入边反向求值上游纯值节点，结果写入本环境缓存。同一纯值节点被多个
+/// Branch 引用时只求值一次。
+#[derive(Debug, Default)]
+pub struct ValueEnvironment {
+    resolved: HashMap<(String, String), BlueprintValue>,
+    resolving: HashSet<(String, String)>,
+}
+
+impl ValueEnvironment {
+    /// 读取已缓存的值。
+    pub fn get(&self, node_id: &str, port: &str) -> Option<&BlueprintValue> {
+        self.resolved.get(&(node_id.to_string(), port.to_string()))
+    }
+
+    /// 写入求值结果。
+    pub fn insert(&mut self, node_id: &str, port: &str, value: BlueprintValue) {
+        self.resolved.insert((node_id.to_string(), port.to_string()), value);
+    }
+
+    /// 进入求值栈。端口已在栈中说明 value 依赖成环，显式报错（C2）。
+    pub fn begin_resolve(
+        &mut self,
+        node_id: &str,
+        port: &str,
+    ) -> Result<(), BlueprintError> {
+        let key = (node_id.to_string(), port.to_string());
+        if !self.resolving.insert(key.clone()) {
+            return Err(BlueprintError::ValueCycleDetected(node_id.to_string(), port.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 退出求值栈。
+    pub fn end_resolve(&mut self, node_id: &str, port: &str) {
+        self.resolving.remove(&(node_id.to_string(), port.to_string()));
+    }
+}
 
 /// Execute the blueprint graph and produce compilation data for `compile_prompt`.
 ///
@@ -120,7 +245,20 @@ pub async fn execute_blueprint(
     graph: &BlueprintGraph,
     context: &BlueprintExecutionContext,
 ) -> Result<BlueprintExecutionResult, BlueprintError> {
-    validate_graph(graph)?;
+    // 旧图归一化：真数据流引入后 Constant 成为纯值节点，不再串在执行流上。
+    // 旧图（Constant 串在 exec 链上）改写为「上游 → Branch(in)」+「Constant →
+    // Branch(value)」。归一化在副本上进行，不写回数据库；持久化由前端保存流程
+    // （`normalize_blueprint_graph` 命令 + 用户保存）负责，此处只保证旧图仍能执行。
+    let mut working_graph = graph.clone();
+    let migrated_edges = normalize_legacy_value_edges(&mut working_graph);
+    if migrated_edges > 0 {
+        eprintln!(
+            "[blueprint-executor] normalized {migrated_edges} legacy value edge(s); \
+             save the preset to persist the migration"
+        );
+    }
+
+    validate_graph(&working_graph)?;
 
     let mut result = BlueprintExecutionResult {
         blocks: Vec::new(),
@@ -141,9 +279,10 @@ pub async fn execute_blueprint(
         db_mappings: HashMap::new(),
         context_included_keys: HashMap::new(),
         display_config: HashMap::new(),
+        schema_field_order: Vec::new(),
     };
 
-    let start_id = graph
+    let start_id = working_graph
         .nodes
         .iter()
         .find(|n| matches!(n.config, NodeConfig::Start))
@@ -152,8 +291,17 @@ pub async fn execute_blueprint(
 
     let mut visited: HashSet<String> = HashSet::new();
     let mut path: HashSet<String> = HashSet::new();
+    let mut values = ValueEnvironment::default();
 
-    traverse(graph, &start_id, context, &mut result, &mut visited, &mut path)?;
+    traverse(
+        &working_graph,
+        &start_id,
+        context,
+        &mut result,
+        &mut visited,
+        &mut path,
+        &mut values,
+    )?;
 
     // 强制核心基线：每个蓝图预设都必须包含「内部推理 thinking」与「叙事正文 text」。
     // 否则模型只能把正文塞进某个 string 字段（如 thinking），导致回复无可读正文。
@@ -170,19 +318,15 @@ pub async fn execute_blueprint(
     Ok(result)
 }
 
-/// Schema 字段的语义固定顺序：先推理（thinking）→ 再正文（text）→ 其余字段按字母序。
-/// 这是「核心字段始终排在最前且稳定」的可读契约，避免模型把正文误填进别的字段。
-fn schema_field_priority(name: &str) -> usize {
-    match name {
-        "thinking" => 0,
-        "text" => 1,
-        _ => 2,
-    }
-}
-
-/// 对结构化输出 schema 的 `properties` 与 `required` 重排：
-/// 1. properties：thinking/text 优先，其余按字段名升序（确定性、可复现）。
-/// 2. required：与 properties 重排后的顺序保持一致（strict 模式硬性要求）。
+/// 对结构化输出 schema 的 `properties` 与 `required` 重排。
+///
+/// 排序键为「(order, 遍历插入序)」稳定序：
+/// - `order` 来自 [`SchemaFieldConfig::order`]，作者可在配置面板编辑；
+/// - 遍历插入序来自 `result.schema_field_order` 的记录，保证同 order 的字段
+///   保持蓝图遍历的相对顺序（确定性、可复现）；
+/// - 核心基线字段 thinking(-2) / text(-1) 永远排在作者自定义字段之前。
+///
+/// `required` 与重排后的 `properties` 顺序保持一致（strict 模式硬性要求）。
 fn order_schema_properties(result: &mut BlueprintExecutionResult) {
     let schema = &mut result.structured_output_schema;
     let props = match schema.get_mut("properties").and_then(|v| v.as_object_mut()) {
@@ -190,14 +334,29 @@ fn order_schema_properties(result: &mut BlueprintExecutionResult) {
         None => return,
     };
 
+    // 字段名 → (order, 插入序) 的查找表。缺少记录时回退到 (0, 末位)，
+    // 保证任何字段都不会因记录缺失而丢失。
+    let order_lookup: HashMap<&str, (i32, usize)> = result
+        .schema_field_order
+        .iter()
+        .enumerate()
+        .map(|(idx, (name, order))| (name.as_str(), (*order, idx)))
+        .collect();
+
     let mut ordered: Vec<(String, serde_json::Value)> = props
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     ordered.sort_by(|a, b| {
-        schema_field_priority(&a.0)
-            .cmp(&schema_field_priority(&b.0))
-            .then(a.0.cmp(&b.0))
+        let a_key = order_lookup
+            .get(a.0.as_str())
+            .copied()
+            .unwrap_or((0, usize::MAX));
+        let b_key = order_lookup
+            .get(b.0.as_str())
+            .copied()
+            .unwrap_or((0, usize::MAX));
+        a_key.cmp(&b_key).then(a.0.cmp(&b.0))
     });
 
     let new_props = serde_json::Map::from_iter(ordered.iter().cloned());
@@ -207,10 +366,7 @@ fn order_schema_properties(result: &mut BlueprintExecutionResult) {
     if let Some(req) = schema.get_mut("required").and_then(|v| v.as_array_mut()) {
         let ordered_names: Vec<serde_json::Value> = ordered
             .iter()
-            .filter(|(k, _)| {
-                let exists = req.iter().any(|v| v.as_str() == Some(k.as_str()));
-                exists
-            })
+            .filter(|(k, _)| req.iter().any(|v| v.as_str() == Some(k.as_str())))
             .map(|(k, _)| serde_json::Value::String(k.clone()))
             .collect();
         *req = ordered_names;
@@ -272,6 +428,11 @@ fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult) {
                 },
             );
         }
+
+        // 核心基线字段固定在前：thinking(-2) / text(-1)，保证正文永远在首屏、
+        // 推理永远在折叠区，不被作者自定义 order 推到后面。
+        let baseline_order = if *name == "thinking" { -2 } else { -1 };
+        result.schema_field_order.push(((*name).to_string(), baseline_order));
     }
 
     // 把缺失字段加入 required（独立的可变借用）。
@@ -298,6 +459,7 @@ fn traverse(
     result: &mut BlueprintExecutionResult,
     visited: &mut HashSet<String>,
     path: &mut HashSet<String>,
+    values: &mut ValueEnvironment,
 ) -> Result<(), BlueprintError> {
     // Cycle check first: if the node is on the current DFS path, it's a cycle.
     if path.contains(node_id) {
@@ -320,7 +482,7 @@ fn traverse(
     match &node.config {
         NodeConfig::Start => {
             let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
         }
         NodeConfig::End => {
             // Terminal — nothing to emit.
@@ -334,12 +496,12 @@ fn traverse(
                 is_locked: cfg.is_locked,
             });
             let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
         }
         NodeConfig::SchemaField(cfg) => {
             apply_schema_field(cfg, result)?;
             let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
         }
         NodeConfig::MutexGate(_) => {
             eprintln!(
@@ -357,9 +519,9 @@ fn traverse(
                 .ok_or_else(|| BlueprintError::NoMutexGateSelection(node_id.to_string()))?;
             let port = format!("out_{selected_key}");
             let branch_target = target_of(graph, node_id, &port)?;
-            traverse(graph, &branch_target, context, result, visited, path)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
-            traverse(graph, &merge_node, context, result, visited, path)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::GroupGate(cfg) => {
             // GroupGate 为可选多选（如"可选增强模块"），未配置选择属合法状态：
@@ -381,51 +543,71 @@ fn traverse(
                 if selected_keys.contains(&option.key) {
                     let port = format!("out_{}", option.key);
                     let branch_target = target_of(graph, node_id, &port)?;
-                    traverse(graph, &branch_target, context, result, visited, path)?;
+                    traverse(graph, &branch_target, context, result, visited, path, values)?;
                 }
             }
             let merge_node = find_merge_node(graph, node_id)?;
-            traverse(graph, &merge_node, context, result, visited, path)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::ModeSwitch(_) => {
             let port = format!("out_{}", context.memory_mode);
             let branch_target = target_of(graph, node_id, &port)?;
-            traverse(graph, &branch_target, context, result, visited, path)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
-            traverse(graph, &merge_node, context, result, visited, path)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::RoleSwitch(_) => {
             let port = format!("out_{}", context.conversation_type);
             let branch_target = target_of(graph, node_id, &port)?;
-            traverse(graph, &branch_target, context, result, visited, path)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
-            traverse(graph, &merge_node, context, result, visited, path)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::Constant(_) => {
-            // 常量节点不直接产出值传递——值由下游 BranchNode 通过入边回溯查询。
-            // 直接继续到 out 端口的下游节点（通常是 BranchNode）。
-            let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path)?;
+            // 纯值节点不参与执行流。它的值由下游 Branch 沿 `value` 边拉取求值
+            // （见 `evaluate_port`）。执行流走到 Constant 说明这是未迁移的旧图，
+            // 显式报错而非静默跳过（C2）。
+            return Err(BlueprintError::ConstantOnExecPath(node_id.to_string()));
         }
         NodeConfig::Branch(cfg) => {
-            // 回溯查找上游 ConstantNode，读取 source 配置，从 context 取值
-            let source_value = resolve_constant_source(graph, node_id, context)?;
+            // 沿 `value` 入边拉取上游纯值节点的求值结果（UE pull-based 数据流）
+            let value = read_input_value(graph, node_id, context, values)?;
             // 按顺序匹配 cases，第一个匹配的生效；无匹配走 default_port
             let port = cfg
                 .cases
                 .iter()
-                .find(|c| c.match_value == source_value)
+                .find(|c| c.match_value == value.as_str())
                 .map(|c| c.port.as_str())
                 .unwrap_or(&cfg.default_port);
             let branch_target = target_of(graph, node_id, port)?;
-            traverse(graph, &branch_target, context, result, visited, path)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
-            traverse(graph, &merge_node, context, result, visited, path)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::SamplingParams(cfg) => {
-            merge_sampling_params(cfg, &mut result.sampling_params);
-            let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path)?;
+            // legacy 通用节点：按当前方言应用对该协议有效的字段子集。
+            let dialect = SamplingDialect::parse(&context.protocol)?;
+            merge_legacy_sampling_params(cfg, dialect, &mut result.sampling_params);
+            let next = next_node_id(graph, node_id, port_names::OUT)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::SamplingParamsOpenAi(cfg) => {
+            // 仅 chat_completions 协议出参；Anthropic 会话下该节点被跳过，
+            // 但仍沿 exec 流继续遍历（不截断图，也不静默套用另一套参数）。
+            let dialect = SamplingDialect::parse(&context.protocol)?;
+            if dialect == SamplingDialect::OpenAi {
+                merge_openai_sampling_params(cfg, &mut result.sampling_params);
+            }
+            let next = next_node_id(graph, node_id, port_names::OUT)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::SamplingParamsAnthropic(cfg) => {
+            let dialect = SamplingDialect::parse(&context.protocol)?;
+            if dialect == SamplingDialect::Anthropic {
+                merge_anthropic_sampling_params(cfg, &mut result.sampling_params);
+            }
+            let next = next_node_id(graph, node_id, port_names::OUT)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
         }
     }
 
@@ -521,17 +703,17 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         }
     }
 
-    // 7a. Constant node must have outgoing edge on "out" port
+    // 7a. Constant 是纯值节点，必须有一条 value 出边把值喂给下游 Branch。
     for node in &graph.nodes {
         if matches!(node.config, NodeConfig::Constant(_)) {
             let has_out = graph
                 .edges
                 .iter()
-                .any(|e| e.source == node.id && e.source_port == "out");
+                .any(|e| e.source == node.id && e.source_port == port_names::OUT);
             if !has_out {
                 return Err(BlueprintError::NoOutgoingEdge {
                     node: node.id.clone(),
-                    port: "out".to_string(),
+                    port: port_names::OUT.to_string(),
                 });
             }
         }
@@ -565,10 +747,29 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
                     cfg.default_port.clone(),
                 ));
             }
-            // 检查入边存在（结构校验；上游是否为 Constant 在运行时 resolve_constant_source 再验）
-            let has_incoming = graph.edges.iter().any(|e| e.target == node.id);
-            if !has_incoming {
+            // exec 入边：Branch 必须挂在主流上，否则执行流到不了它。
+            let has_exec_in = graph
+                .edges
+                .iter()
+                .any(|e| e.target == node.id && e.target_port == port_names::EXEC_IN);
+            if !has_exec_in {
                 return Err(BlueprintError::BranchNoIncomingEdge(node.id.clone()));
+            }
+            // value 入边：必须存在，且上游必须是纯值节点（Constant）。
+            let value_edge = graph
+                .edges
+                .iter()
+                .find(|e| e.target == node.id && e.target_port == port_names::VALUE_IN)
+                .ok_or_else(|| BlueprintError::MissingValueInput(node.id.clone()))?;
+            let upstream = graph
+                .nodes
+                .iter()
+                .find(|n| n.id == value_edge.source)
+                .ok_or_else(|| BlueprintError::NodeNotFound(value_edge.source.clone()))?;
+            if !matches!(upstream.config, NodeConfig::Constant(_)) {
+                return Err(BlueprintError::BranchMustFollowConstant(
+                    node.id.clone(),
+                ));
             }
         }
     }
@@ -764,6 +965,13 @@ fn apply_schema_field(
         .display_config
         .insert(cfg.field_name.clone(), cfg.display.clone());
 
+    // 追踪字段顺序：(field_name, order)，按遍历插入序追加。执行器据此把
+    // properties / required 重排为「(order, 遍历序)」稳定序（取代硬编码的
+    // thinking→text→字母序）。
+    result
+        .schema_field_order
+        .push((cfg.field_name.clone(), cfg.order));
+
     Ok(())
 }
 
@@ -785,10 +993,12 @@ fn build_property_schema(
     Ok(property)
 }
 
-/// Merge a SamplingParamsConfig into the compiled sampling params. Only
-/// `Some` fields overwrite; `None` fields leave the existing value intact.
-fn merge_sampling_params(
-    cfg: &crate::models::blueprint::SamplingParamsConfig,
+/// 合并 legacy 通用采样参数：只应用当前方言下有效的字段子集。
+
+/// 合并 OpenAI 版采样参数。只含 OpenAI 兼容路径支持的字段，
+/// 因此 `thinking_*` 不在此出现（OpenAI 路径遇到 thinking 会直接报错）。
+fn merge_openai_sampling_params(
+    cfg: &OpenAiSamplingParamsConfig,
     compiled: &mut CompiledSamplingParams,
 ) {
     if let Some(t) = cfg.temperature {
@@ -800,21 +1010,82 @@ fn merge_sampling_params(
     if let Some(t) = cfg.top_p {
         compiled.top_p = Some(t);
     }
-    if let Some(t) = cfg.frequency_penalty {
-        compiled.frequency_penalty = Some(t);
+    if let Some(v) = cfg.frequency_penalty {
+        compiled.frequency_penalty = Some(v);
     }
-    if let Some(t) = cfg.presence_penalty {
-        compiled.presence_penalty = Some(t);
+    if let Some(v) = cfg.presence_penalty {
+        compiled.presence_penalty = Some(v);
     }
     if let Some(stop) = &cfg.stop {
         compiled.stop = stop.clone();
     }
-    // 思考强度：蓝图节点可覆盖预设/provider override 的 thinking 配置。
+}
+
+/// 合并 Anthropic 版采样参数。只含 Anthropic 支持的字段，
+/// 因此 `frequency_penalty` / `presence_penalty` 不在此出现。
+fn merge_anthropic_sampling_params(
+    cfg: &AnthropicSamplingParamsConfig,
+    compiled: &mut CompiledSamplingParams,
+) {
+    if let Some(t) = cfg.temperature {
+        compiled.temperature = Some(t);
+    }
+    if let Some(t) = cfg.max_tokens {
+        compiled.max_tokens = Some(t);
+    }
+    if let Some(t) = cfg.top_p {
+        compiled.top_p = Some(t);
+    }
+    if let Some(stop) = &cfg.stop {
+        compiled.stop = stop.clone();
+    }
     if let Some(enabled) = cfg.thinking_enabled {
         compiled.thinking_enabled = Some(enabled);
     }
     if let Some(budget) = cfg.thinking_budget_tokens {
         compiled.thinking_budget_tokens = Some(budget);
+    }
+}
+
+/// 合并 legacy 通用采样参数：只应用当前方言下有效的字段子集。
+///
+/// legacy 节点同时携带两套协议的字段，运行时按方言裁剪：
+/// - OpenAI 方言：忽略 `thinking_*`（OpenAI 路径不支持 thinking）
+/// - Anthropic 方言：忽略 `frequency_penalty` / `presence_penalty`（Anthropic 不支持）
+fn merge_legacy_sampling_params(
+    cfg: &SamplingParamsConfig,
+    dialect: SamplingDialect,
+    compiled: &mut CompiledSamplingParams,
+) {
+    if let Some(t) = cfg.temperature {
+        compiled.temperature = Some(t);
+    }
+    if let Some(t) = cfg.max_tokens {
+        compiled.max_tokens = Some(t);
+    }
+    if let Some(t) = cfg.top_p {
+        compiled.top_p = Some(t);
+    }
+    if let Some(stop) = &cfg.stop {
+        compiled.stop = stop.clone();
+    }
+    match dialect {
+        SamplingDialect::OpenAi => {
+            if let Some(v) = cfg.frequency_penalty {
+                compiled.frequency_penalty = Some(v);
+            }
+            if let Some(v) = cfg.presence_penalty {
+                compiled.presence_penalty = Some(v);
+            }
+        }
+        SamplingDialect::Anthropic => {
+            if let Some(enabled) = cfg.thinking_enabled {
+                compiled.thinking_enabled = Some(enabled);
+            }
+            if let Some(budget) = cfg.thinking_budget_tokens {
+                compiled.thinking_budget_tokens = Some(budget);
+            }
+        }
     }
 }
 
@@ -853,41 +1124,50 @@ fn find_end_node_id(graph: &BlueprintGraph) -> Option<String> {
         .map(|n| n.id.clone())
 }
 
-/// 回溯查找 Branch 节点上游的 Constant 节点，读取其 `source` 配置，
-/// 从 `context` 中取对应属性值。
+/// 沿 Branch 的 `value` 入边拉取上游纯值节点的求值结果。
 ///
-/// 设计决策（spec §3.1）：不引入运行时值传递管道。BranchNode 通过入边回溯
-/// 找到上游 ConstantNode，读取其 `source` 配置，直接从 context 取值。
-/// 这样避免修改 `traverse` 的签名（不需要传 `value: Option<String>`）。
-///
-/// 错误处理（C2 零回退）：
-/// - Branch 无入边 → `BranchNoIncomingEdge`
-/// - 上游不是 Constant → `BranchMustFollowConstant`
-/// - `source` 不是合法会话属性键 → `UnknownConstantSource`
-fn resolve_constant_source(
+/// 这是 UE 的 pull-based 数据流：执行流到达 Branch 后，Branch 沿自己的 value
+/// 输入引脚反向求值上游纯值节点（Constant），值因此"沿 value 边向下游传递"。
+/// 求值结果写入 `ValueEnvironment` 缓存，同一纯值节点被多处引用只求值一次。
+fn read_input_value(
     graph: &BlueprintGraph,
     branch_node_id: &str,
     context: &BlueprintExecutionContext,
-) -> Result<String, BlueprintError> {
-    let incoming_edge = graph
+    values: &mut ValueEnvironment,
+) -> Result<BlueprintValue, BlueprintError> {
+    let incoming = graph
         .edges
         .iter()
-        .find(|e| e.target == branch_node_id)
-        .ok_or_else(|| BlueprintError::BranchNoIncomingEdge(branch_node_id.to_string()))?;
+        .find(|e| e.target == branch_node_id && e.target_port == port_names::VALUE_IN)
+        .ok_or_else(|| BlueprintError::MissingValueInput(branch_node_id.to_string()))?;
 
-    let source_node = graph
+    evaluate_port(graph, &incoming.source, &incoming.source_port, context, values)
+}
+
+/// 求值某个节点的输出端口。命中缓存直接返回，否则对纯值节点求值并写回缓存。
+///
+/// 求值栈 `resolving` 保证 value 依赖成环时显式报错，而非无限递归（C2）。
+fn evaluate_port(
+    graph: &BlueprintGraph,
+    node_id: &str,
+    port: &str,
+    context: &BlueprintExecutionContext,
+    values: &mut ValueEnvironment,
+) -> Result<BlueprintValue, BlueprintError> {
+    if let Some(cached) = values.get(node_id, port) {
+        return Ok(cached.clone());
+    }
+
+    let node = graph
         .nodes
         .iter()
-        .find(|n| n.id == incoming_edge.source)
-        .ok_or_else(|| BlueprintError::NodeNotFound(incoming_edge.source.clone()))?;
+        .find(|n| n.id == node_id)
+        .ok_or_else(|| BlueprintError::NodeNotFound(node_id.to_string()))?;
 
-    match &source_node.config {
-        NodeConfig::Constant(ConstantConfig { source, .. }) => match source.as_str() {
-            "conversation_type" => Ok(context.conversation_type.clone()),
-            "memory_mode" => Ok(context.memory_mode.clone()),
-            "protocol" => Ok(context.protocol.clone()),
-            _ => Err(BlueprintError::UnknownConstantSource(source.clone())),
-        },
+    values.begin_resolve(node_id, port)?;
+
+    let computed = match &node.config {
+        NodeConfig::Constant(cfg) => evaluate_session_source(&cfg.source, context),
         NodeConfig::Start
         | NodeConfig::End
         | NodeConfig::Prompt(_)
@@ -897,10 +1177,103 @@ fn resolve_constant_source(
         | NodeConfig::ModeSwitch(_)
         | NodeConfig::RoleSwitch(_)
         | NodeConfig::SamplingParams(_)
-        | NodeConfig::Branch(_) => Err(BlueprintError::BranchMustFollowConstant(
-            branch_node_id.to_string(),
+        | NodeConfig::SamplingParamsOpenAi(_)
+        | NodeConfig::SamplingParamsAnthropic(_)
+        | NodeConfig::Branch(_) => Err(BlueprintError::ValueSourceNotValueNode(
+            node_id.to_string(),
         )),
+    };
+
+    // 无论求值成功与否都退出求值栈，避免污染后续求值。
+    values.end_resolve(node_id, port);
+    let value = computed?;
+    values.insert(node_id, port, value.clone());
+    Ok(value)
+}
+
+/// 从执行上下文读取会话属性，产出值。
+///
+/// `source` 必须是已登记的会话属性键，未知键显式报错（C2）。
+fn evaluate_session_source(
+    source: &str,
+    context: &BlueprintExecutionContext,
+) -> Result<BlueprintValue, BlueprintError> {
+    match source {
+        "conversation_type" => Ok(BlueprintValue::Session(context.conversation_type.clone())),
+        "memory_mode" => Ok(BlueprintValue::Session(context.memory_mode.clone())),
+        "protocol" => Ok(BlueprintValue::Session(context.protocol.clone())),
+        other => Err(BlueprintError::UnknownConstantSource(other.to_string())),
     }
+}
+
+/// 旧图归一化：把「Constant --out--> Branch(in)」的 exec 链改写为
+/// 「上游 --out--> Branch(in)」+「Constant --out--> Branch(value)」。
+///
+/// 真数据流引入后 Constant 成为无 exec 入口的纯值节点，不再串在执行流上，
+/// 旧图必须改写拓扑才能满足新契约。这里在内存副本上改写，返回被修改的边数；
+/// 调用方负责记日志并提示用户保存（C2：绝不静默兜底，迁移必须可见）。
+pub fn normalize_legacy_value_edges(graph: &mut BlueprintGraph) -> usize {
+    // 1. 识别旧式连线：源为 Constant、目标为 Branch、落在 Branch 的 exec 入口。
+    let legacy_links: Vec<(String, String, String)> = graph
+        .edges
+        .iter()
+        .filter(|e| e.target_port == port_names::EXEC_IN)
+        .filter(|e| {
+            let source_is_constant = graph
+                .nodes
+                .iter()
+                .any(|n| n.id == e.source && matches!(n.config, NodeConfig::Constant(_)));
+            let target_is_branch = graph
+                .nodes
+                .iter()
+                .any(|n| n.id == e.target && matches!(n.config, NodeConfig::Branch(_)));
+            source_is_constant && target_is_branch
+        })
+        .map(|e| (e.id.clone(), e.source.clone(), e.target.clone()))
+        .collect();
+
+    if legacy_links.is_empty() {
+        return 0;
+    }
+
+    // 2. 把这些边改写到 Branch 的 value 入口。
+    for (edge_id, _, _) in &legacy_links {
+        if let Some(edge) = graph.edges.iter_mut().find(|e| e.id == *edge_id) {
+            edge.target_port = port_names::VALUE_IN.to_string();
+        }
+    }
+
+    // 3. 把原本连到 Constant 的上游 exec 边重定向到 Branch 的 exec 入口。
+    let mut redirected = 0usize;
+    for (_, constant_id, branch_id) in &legacy_links {
+        let upstream: Vec<(String, String)> = graph
+            .edges
+            .iter()
+            .filter(|e| e.target == *constant_id)
+            .map(|e| (e.source.clone(), e.source_port.clone()))
+            .collect();
+
+        for (source, source_port) in upstream {
+            let already_linked = graph.edges.iter().any(|e| {
+                e.source == source
+                    && e.source_port == source_port
+                    && e.target == *branch_id
+                    && e.target_port == port_names::EXEC_IN
+            });
+            if already_linked {
+                continue;
+            }
+            if let Some(edge) = graph.edges.iter_mut().find(|e| {
+                e.source == source && e.source_port == source_port && e.target == *constant_id
+            }) {
+                edge.target = branch_id.clone();
+                edge.target_port = port_names::EXEC_IN.to_string();
+                redirected += 1;
+            }
+        }
+    }
+
+    legacy_links.len() + redirected
 }
 
 /// Compute the set of all node ids reachable from `start` (including `start`),
@@ -952,7 +1325,7 @@ fn compute_dfs_forward_order(graph: &BlueprintGraph, start: &str) -> Vec<String>
 mod tests {
     use super::*;
     use crate::models::blueprint::{
-        BranchCase, BranchConfig, GateOption, GroupGateConfig, ModeSwitchConfig,
+        BranchCase, BranchConfig, ConstantConfig, GateOption, GroupGateConfig, ModeSwitchConfig,
         MutexGateConfig, Position, PromptConfig, RoleSwitchConfig, SamplingParamsConfig,
         SchemaFieldConfig,
     };
@@ -971,6 +1344,7 @@ mod tests {
             source_port: src_port.to_string(),
             target: tgt.to_string(),
             target_port: tgt_port.to_string(),
+            order: 0,
         }
     }
 
@@ -1019,6 +1393,7 @@ mod tests {
                 display: Default::default(),
                 is_locked: false,
                 lock_reason: None,
+                order: 0,
             }),
             position: pos(0.0, 0.0),
         }
@@ -1044,6 +1419,7 @@ mod tests {
                 display: Default::default(),
                 is_locked: false,
                 lock_reason: None,
+                order: 0,
             }),
             position: pos(0.0, 0.0),
         }
@@ -1190,6 +1566,15 @@ mod tests {
         }
     }
 
+    fn ctx_with_protocol(memory_mode: &str, protocol: &str) -> BlueprintExecutionContext {
+        BlueprintExecutionContext {
+            memory_mode: memory_mode.to_string(),
+            conversation_type: "single".to_string(),
+            gate_selections: HashMap::new(),
+            protocol: protocol.to_string(),
+        }
+    }
+
     fn ctx_with_gates(
         memory_mode: &str,
         gates: &[(&str, &[&str])],
@@ -1310,7 +1695,7 @@ mod tests {
             ],
         );
 
-        let result = execute_blueprint(&g, &ctx("stateless"))
+        let result = execute_blueprint(&g, &ctx_with_protocol("stateless", "anthropic"))
             .await
             .expect("thinking chain must execute");
 
@@ -1324,6 +1709,202 @@ mod tests {
             result.sampling_params.thinking_budget_tokens,
             Some(2048),
             "thinking_budget_tokens must propagate from blueprint node"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sampling_params_openai_only_under_chat_completions() {
+        // OpenAI 版采样参数节点只在 chat_completions 协议下出参；
+        // anthropic 会话下被跳过（不截断图，也不套用 OpenAI 字段）。
+        let g = graph(
+            vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "n_sp".to_string(),
+                    config: NodeConfig::SamplingParamsOpenAi(OpenAiSamplingParamsConfig {
+                        temperature: Some(0.7),
+                        max_tokens: Some(2048),
+                        top_p: Some(0.9),
+                        frequency_penalty: Some(0.1),
+                        presence_penalty: Some(0.2),
+                        stop: Some(vec!["</t>".to_string()]),
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_sp", "in"),
+                edge("e2", "n_sp", "out", "n_end", "in"),
+            ],
+        );
+
+        // chat_completions：应用 OpenAI 字段
+        let r_openai = execute_blueprint(&g, &ctx_with_protocol("stateless", "chat_completions"))
+            .await
+            .expect("openai sampling must execute");
+        assert_eq!(r_openai.sampling_params.temperature, Some(0.7));
+        assert_eq!(r_openai.sampling_params.frequency_penalty, Some(0.1));
+
+        // anthropic：该节点不出参，temperature 保持 None
+        let r_ant = execute_blueprint(&g, &ctx_with_protocol("stateless", "anthropic"))
+            .await
+            .expect("anthropic sampling must skip openai node");
+        assert_eq!(r_ant.sampling_params.temperature, None);
+        assert_eq!(r_ant.sampling_params.frequency_penalty, None);
+    }
+
+    #[tokio::test]
+    async fn test_sampling_params_anthropic_only_under_anthropic() {
+        // Anthropic 版采样参数节点只在 anthropic 协议下出参（含 thinking 配置）。
+        let g = graph(
+            vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "n_sp".to_string(),
+                    config: NodeConfig::SamplingParamsAnthropic(AnthropicSamplingParamsConfig {
+                        temperature: Some(0.6),
+                        max_tokens: Some(8192),
+                        top_p: Some(0.85),
+                        stop: Some(vec!["</t>".to_string()]),
+                        thinking_enabled: Some(true),
+                        thinking_budget_tokens: Some(2048),
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_sp", "in"),
+                edge("e2", "n_sp", "out", "n_end", "in"),
+            ],
+        );
+
+        // anthropic：应用 Anthropic 字段 + thinking
+        let r_ant = execute_blueprint(&g, &ctx_with_protocol("stateless", "anthropic"))
+            .await
+            .expect("anthropic sampling must execute");
+        assert_eq!(r_ant.sampling_params.temperature, Some(0.6));
+        assert_eq!(r_ant.sampling_params.thinking_enabled, Some(true));
+        assert_eq!(r_ant.sampling_params.thinking_budget_tokens, Some(2048));
+
+        // chat_completions：该节点不出参
+        let r_openai = execute_blueprint(&g, &ctx_with_protocol("stateless", "chat_completions"))
+            .await
+            .expect("chat_completions must skip anthropic node");
+        assert_eq!(r_openai.sampling_params.temperature, None);
+        assert_eq!(r_openai.sampling_params.thinking_enabled, None);
+    }
+
+    #[tokio::test]
+    async fn test_sampling_params_unknown_protocol_errors() {
+        // 非 anthropic / chat_completions 的协议必须显式报错，不得静默回退（C2）。
+        let g = graph(
+            vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "n_sp".to_string(),
+                    config: NodeConfig::SamplingParamsOpenAi(OpenAiSamplingParamsConfig {
+                        temperature: Some(0.5),
+                        max_tokens: Some(1024),
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_sp", "in"),
+                edge("e2", "n_sp", "out", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx_with_protocol("stateless", "weird_provider"))
+            .await
+            .expect_err("unknown protocol must error");
+        assert!(format!("{err}").contains("unknown sampling protocol"));
+    }
+
+    #[tokio::test]
+    async fn test_schema_field_order_controllable() {
+        // 作者通过 SchemaFieldConfig.order 控制 properties / required 顺序，
+        // 不再被硬编码的 thinking→text→字母序覆盖。
+        // 遍历序：zeta(默认0) → alpha(order=5) → beta(order=5) → gamma(order=-1)
+        // 排序后：(order,-1)gamma < (order,0)zeta < (order,5)alpha < (order,5)beta
+        // 且 alpha 在 beta 前（同 order 按遍历序）。
+        let schema = |name: &str, order: i32| BlueprintNode {
+            id: format!("n_{name}"),
+            config: NodeConfig::SchemaField(SchemaFieldConfig {
+                field_name: name.to_string(),
+                field_type: "string".to_string(),
+                description: name.to_string(),
+                sub_schema: None,
+                db_mapping: None,
+                required: true,
+                context_included: true,
+                display: Default::default(),
+                is_locked: false,
+                lock_reason: None,
+                order,
+            }),
+            position: pos(0.0, 0.0),
+        };
+        let g = graph(
+            vec![
+                start("n_start"),
+                schema("zeta", 0),
+                schema("alpha", 5),
+                schema("beta", 5),
+                schema("gamma", -1),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_zeta", "in"),
+                edge("e2", "n_zeta", "out", "n_alpha", "in"),
+                edge("e3", "n_alpha", "out", "n_beta", "in"),
+                edge("e4", "n_beta", "out", "n_gamma", "in"),
+                edge("e5", "n_gamma", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect("ordered schema must execute");
+
+        let props = result.structured_output_schema["properties"]
+            .as_object()
+            .expect("properties must be object");
+        let names: Vec<&String> = props.keys().collect();
+        // thinking(-2) / text(-1) 在 gamma(-1 但遍历序更后) 之前？
+        // 注意 baseline thinking/text 的 order 为 -2/-1，gamma 为 -1；
+        // thinking(-2) < gamma(-1) < text(-1, 但遍历序在 gamma 之后) < zeta(0) < alpha(5) < beta(5)
+        assert_eq!(
+            names,
+            vec![
+                "thinking",
+                "gamma",
+                "text",
+                "zeta",
+                "alpha",
+                "beta",
+            ],
+            "schema field order must follow (order, traversal index)"
+        );
+
+        let required = result.structured_output_schema["required"]
+            .as_array()
+            .expect("required must be array");
+        let required_names: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(
+            required_names,
+            vec!["thinking", "gamma", "text", "zeta", "alpha", "beta"],
+            "required must mirror properties order"
         );
     }
 
@@ -1800,34 +2381,96 @@ mod tests {
         assert_eq!(result.blocks[0].identifier, "default_block");
     }
 
-    /// Branch 无入边 → 校验失败。
+    /// Branch 缺少 `value` 入边 → `MissingValueInput`。
+    ///
+    /// 真数据流下 Branch 的匹配值只能来自 value 边；没有 value 边就没有值可匹配，
+    /// 必须显式报错，不允许默认走 `default_port` 静默兜底（C2）。
     #[tokio::test]
-    async fn test_branch_no_incoming_edge_rejected() {
+    async fn test_branch_missing_value_input_rejected() {
         let g = graph(
             vec![
                 start("n_start"),
                 branch(
                     "n_branch",
                     &[("single", "out_single")],
-                    "out_default",
+                    "out_single",
                 ),
                 end("n_end"),
             ],
             vec![
-                edge("e1", "n_start", "out", "n_branch", "in"), // 有入边但来自 Start，不是 Constant
+                edge("e1", "n_start", "out", "n_branch", "in"),
                 edge("e2", "n_branch", "out_single", "n_end", "in"),
-                edge("e3", "n_branch", "out_default", "n_end", "in"),
             ],
         );
 
         let err = execute_blueprint(&g, &ctx("stateless"))
             .await
-            .expect_err("branch with non-constant upstream must error");
+            .expect_err("branch without a value edge must error");
+        match err {
+            BlueprintError::MissingValueInput(id) => {
+                assert_eq!(id, "n_branch");
+            }
+            other => panic!("expected MissingValueInput, got {other:?}"),
+        }
+    }
+
+    /// value 入边的上游不是纯值节点 → `BranchMustFollowConstant`。
+    #[tokio::test]
+    async fn test_branch_value_upstream_not_constant_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                prompt("n_prompt", "p", "system", "content"),
+                branch(
+                    "n_branch",
+                    &[("single", "out_single")],
+                    "out_single",
+                ),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_branch", "in"),
+                edge("e2", "n_prompt", "out", "n_branch", "value"), // 上游是 Prompt，不是 Constant
+                edge("e3", "n_branch", "out_single", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect_err("branch with non-constant value upstream must error");
         match err {
             BlueprintError::BranchMustFollowConstant(id) => {
                 assert_eq!(id, "n_branch");
             }
             other => panic!("expected BranchMustFollowConstant, got {other:?}"),
+        }
+    }
+
+    /// Constant 串在执行流上（且下游不是 Branch，归一化无法识别）→ `ConstantOnExecPath`。
+    #[tokio::test]
+    async fn test_constant_on_exec_path_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                prompt("n_prompt", "p", "system", "content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_prompt", "in"),
+                edge("e3", "n_prompt", "out", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("stateless"))
+            .await
+            .expect_err("constant on the execution flow must error");
+        match err {
+            BlueprintError::ConstantOnExecPath(id) => {
+                assert_eq!(id, "n_const");
+            }
+            other => panic!("expected ConstantOnExecPath, got {other:?}"),
         }
     }
 
@@ -2057,6 +2700,7 @@ mod tests {
     /// 进而选中不同下游节点（此处用 prompt 验证分流正确性，真实场景为不同 sampling_params）。
     #[tokio::test]
     async fn test_constant_branch_protocol() {
+        // 真数据流拓扑：Constant 挂在主流旁，只通过 value 边给 Branch 供值。
         let graph = graph(
             vec![
                 start("n_start"),
@@ -2068,12 +2712,18 @@ mod tests {
                 ),
                 prompt("n_anthropic_p", "anthropic_block", "system", "ANTHROPIC BLOCK"),
                 prompt("n_chat_p", "chat_block", "system", "CHAT BLOCK"),
+                prompt("n_default_p", "default_block", "system", "DEFAULT BLOCK"),
+                end("n_end"),
             ],
             vec![
-                edge("e1", "n_start", "out", "n_const", "in"),
-                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e1", "n_start", "out", "n_branch", "in"),
+                edge("e2", "n_const", "out", "n_branch", "value"),
                 edge("e3", "n_branch", "out_anthropic", "n_anthropic_p", "in"),
                 edge("e4", "n_branch", "out_chat", "n_chat_p", "in"),
+                edge("e5", "n_branch", "out_default", "n_default_p", "in"),
+                edge("e6", "n_anthropic_p", "out", "n_end", "in"),
+                edge("e7", "n_chat_p", "out", "n_end", "in"),
+                edge("e8", "n_default_p", "out", "n_end", "in"),
             ],
         );
 
@@ -2110,5 +2760,81 @@ mod tests {
             "chat_completions branch should produce exactly one block"
         );
         assert_eq!(res_chat.blocks[0].content, "CHAT BLOCK");
+    }
+
+    /// 旧图归一化：Constant 串在 exec 链上的旧拓扑改写为
+    /// 「上游 → Branch(in)」+「Constant → Branch(value)」，改写后仍能正确执行。
+    #[tokio::test]
+    async fn test_legacy_constant_chain_is_normalized() {
+        let mut g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch("n_branch", &[("single", "out_single")], "out_online"),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_online", "online_block", "system", "online content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_const", "in"),
+                edge("e2", "n_const", "out", "n_branch", "in"),
+                edge("e3", "n_branch", "out_single", "n_single", "in"),
+                edge("e4", "n_branch", "out_online", "n_online", "in"),
+                edge("e5", "n_single", "out", "n_end", "in"),
+                edge("e6", "n_online", "out", "n_end", "in"),
+            ],
+        );
+
+        let migrated = normalize_legacy_value_edges(&mut g);
+        assert_eq!(migrated, 2, "one edge retargeted + one upstream redirected");
+        assert!(
+            g.edges.iter().any(|e| {
+                e.source == "n_const" && e.target == "n_branch" && e.target_port == "value"
+            }),
+            "constant must feed the branch through the value pin after migration"
+        );
+        assert!(
+            g.edges.iter().any(|e| {
+                e.source == "n_start" && e.target == "n_branch" && e.target_port == "in"
+            }),
+            "start must feed the branch exec pin after migration"
+        );
+
+        let result = execute_blueprint(&g, &ctx_with_role("stateless", "single"))
+            .await
+            .expect("migrated legacy graph must execute");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].identifier, "single_block");
+    }
+
+    /// 归一化幂等：已迁移的图再次归一化应返回 0，不产生重复边。
+    #[tokio::test]
+    async fn test_normalize_is_idempotent() {
+        let mut g = graph(
+            vec![
+                start("n_start"),
+                constant("n_const", "conversation_type"),
+                branch("n_branch", &[("single", "out_single")], "out_online"),
+                prompt("n_single", "single_block", "system", "single content"),
+                prompt("n_online", "online_block", "system", "online content"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_branch", "in"),
+                edge("e2", "n_const", "out", "n_branch", "value"),
+                edge("e3", "n_branch", "out_single", "n_single", "in"),
+                edge("e4", "n_branch", "out_online", "n_online", "in"),
+                edge("e5", "n_single", "out", "n_end", "in"),
+                edge("e6", "n_online", "out", "n_end", "in"),
+            ],
+        );
+
+        let edge_count_before = g.edges.len();
+        assert_eq!(
+            normalize_legacy_value_edges(&mut g),
+            0,
+            "already-migrated graph must not be rewritten"
+        );
+        assert_eq!(g.edges.len(), edge_count_before, "no duplicate edges");
     }
 }

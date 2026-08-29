@@ -682,6 +682,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_mode".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e2".to_string(),
@@ -689,6 +690,7 @@ mod tests {
                     source_port: "out_legacy".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e3".to_string(),
@@ -696,6 +698,7 @@ mod tests {
                     source_port: "out_mem0".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e4".to_string(),
@@ -703,6 +706,7 @@ mod tests {
                     source_port: "out_stateless".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
             ],
         };
@@ -745,6 +749,7 @@ mod tests {
                         display: Default::default(),
                         is_locked: false,
                         lock_reason: None,
+                        order: 0,
                     }),
                     position: Position { x: 400.0, y: 300.0 },
                 },
@@ -776,6 +781,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_prompt".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e2".to_string(),
@@ -783,6 +789,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_schema".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e3".to_string(),
@@ -790,6 +797,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_sampling".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e4".to_string(),
@@ -797,6 +805,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
             ],
         };
@@ -1060,12 +1069,15 @@ mod tests {
         assert_eq!(result.blocks[0].block_type, "system");
         assert_eq!(result.blocks[0].content, "You are a narrator.");
 
-        // One schema property: world_variables.
+        // Schema 属性：world_variables + 编译器强制注入的 thinking / text 基线字段。
+        // 基线注入是契约（每个蓝图预设都必须有叙事正文），故此处为 3 个而非 1 个。
         let props = result.structured_output_schema["properties"]
             .as_object()
             .expect("properties must be an object");
-        assert_eq!(props.len(), 1, "exactly one property expected");
+        assert_eq!(props.len(), 3, "world_variables + thinking/text baseline expected");
         assert!(props.contains_key("world_variables"));
+        assert!(props.contains_key("thinking"), "thinking baseline must be injected");
+        assert!(props.contains_key("text"), "text baseline must be injected");
 
         // db_mapping recorded.
         assert_eq!(
@@ -1213,6 +1225,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_gate".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e2".to_string(),
@@ -1220,6 +1233,7 @@ mod tests {
                     source_port: "out_opt_a".to_string(),
                     target: "n_pa".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e3".to_string(),
@@ -1227,6 +1241,7 @@ mod tests {
                     source_port: "out_opt_b".to_string(),
                     target: "n_pb".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e4".to_string(),
@@ -1234,6 +1249,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e5".to_string(),
@@ -1241,6 +1257,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
             ],
         };
@@ -1344,6 +1361,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_gate".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e2".to_string(),
@@ -1351,6 +1369,7 @@ mod tests {
                     source_port: "out_a".to_string(),
                     target: "n_pa".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e3".to_string(),
@@ -1358,6 +1377,7 @@ mod tests {
                     source_port: "out_b".to_string(),
                     target: "n_pb".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e4".to_string(),
@@ -1365,6 +1385,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
                 BlueprintEdge {
                     id: "e5".to_string(),
@@ -1372,6 +1393,7 @@ mod tests {
                     source_port: "out".to_string(),
                     target: "n_end".to_string(),
                     target_port: "in".to_string(),
+                    order: 0,
                 },
             ],
         };

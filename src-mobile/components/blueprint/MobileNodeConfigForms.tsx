@@ -27,6 +27,8 @@ import type {
   PromptConfig,
   RoleSwitchConfig,
   SamplingParamsConfig,
+  AnthropicSamplingParamsConfig,
+  OpenAiSamplingParamsConfig,
   SchemaFieldConfig,
   StartConfig,
 } from '../../../src/lib/blueprint/types';
@@ -305,6 +307,19 @@ const SchemaFieldForm: Component<{
           onChange={(v) => props.onChange({ ...props.config, db_mapping: v === '' ? null : v })}
           options={DB_MAPPING_OPTIONS}
         />
+      </div>
+      <div>
+        <FieldLabel label="顺序权重 (order)" hint="数值越小越靠前；缺省 0" />
+        <NumberInput
+          value={props.config.order ?? 0}
+          step="1"
+          placeholder="缺省 0"
+          onInput={(v) => props.onChange({ ...props.config, order: v === null ? 0 : Math.trunc(v) })}
+        />
+        <p class="text-[10px] text-mist-solid/40 mt-1">
+          控制该字段在结构化输出 schema 的 properties / required 中的排列顺序
+          （按 (order, 遍历序) 排序）。核心基线字段 thinking/text 由执行器固定在前。
+        </p>
       </div>
       <div>
         <FieldLabel label="Schema 行为" />
@@ -720,6 +735,169 @@ const SamplingParamsForm: Component<{
   );
 };
 
+/// OpenAI 版采样参数表单：只含 chat_completions 协议支持的字段。
+const OpenAiSamplingParamsForm: Component<{
+  config: OpenAiSamplingParamsConfig;
+  onChange: (c: OpenAiSamplingParamsConfig) => void;
+}> = (props) => {
+  const [stopInput, setStopInput] = createSignal(props.config.stop?.join('\n') ?? '');
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <p class="text-[11px] text-mist-solid/45 leading-5">
+        仅在当前会话协议为 chat_completions 时生效。
+      </p>
+      <div>
+        <FieldLabel label="temperature" />
+        <NumberInput
+          value={props.config.temperature}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, temperature: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="max_tokens" />
+        <NumberInput
+          value={props.config.max_tokens}
+          placeholder="留空表示不设置"
+          step="1"
+          onInput={(v) => props.onChange({ ...props.config, max_tokens: v === null ? null : Math.trunc(v) })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="top_p" />
+        <NumberInput
+          value={props.config.top_p}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, top_p: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="frequency_penalty" />
+        <NumberInput
+          value={props.config.frequency_penalty}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, frequency_penalty: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="presence_penalty" />
+        <NumberInput
+          value={props.config.presence_penalty}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, presence_penalty: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="stop 序列" hint="每行一个" />
+        <TextArea
+          value={stopInput()}
+          placeholder={'每行一个 stop 序列\n如 </thought>'}
+          rows={3}
+          onInput={(v) => {
+            setStopInput(v);
+            const lines = v.split('\n').map((s) => s.trim()).filter((s) => s !== '');
+            props.onChange({ ...props.config, stop: lines.length > 0 ? lines : null });
+          }}
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+/// Anthropic 版采样参数表单：只含 Anthropic 支持的字段（含 thinking 配置）。
+const AnthropicSamplingParamsForm: Component<{
+  config: AnthropicSamplingParamsConfig;
+  onChange: (c: AnthropicSamplingParamsConfig) => void;
+}> = (props) => {
+  const [stopInput, setStopInput] = createSignal(props.config.stop?.join('\n') ?? '');
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <p class="text-[11px] text-mist-solid/45 leading-5">
+        仅在当前会话协议为 anthropic 时生效。
+      </p>
+      <div>
+        <FieldLabel label="temperature" />
+        <NumberInput
+          value={props.config.temperature}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, temperature: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="max_tokens" />
+        <NumberInput
+          value={props.config.max_tokens}
+          placeholder="留空表示不设置"
+          step="1"
+          onInput={(v) => props.onChange({ ...props.config, max_tokens: v === null ? null : Math.trunc(v) })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="top_p" />
+        <NumberInput
+          value={props.config.top_p}
+          placeholder="留空表示不设置"
+          step="0.01"
+          onInput={(v) => props.onChange({ ...props.config, top_p: v })}
+        />
+      </div>
+      <div>
+        <FieldLabel label="stop 序列" hint="每行一个" />
+        <TextArea
+          value={stopInput()}
+          placeholder={'每行一个 stop 序列\n如 </thought>'}
+          rows={3}
+          onInput={(v) => {
+            setStopInput(v);
+            const lines = v.split('\n').map((s) => s.trim()).filter((s) => s !== '');
+            props.onChange({ ...props.config, stop: lines.length > 0 ? lines : null });
+          }}
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.thinking_enabled ?? false}
+          onChange={(v) => props.onChange({ ...props.config, thinking_enabled: v ? true : null })}
+          label="thinking_enabled（开启思考/推理）"
+        />
+      </div>
+      <div>
+        <FieldLabel label="thinking_budget_tokens（思考预算，≥128）" />
+        <NumberInput
+          value={props.config.thinking_budget_tokens}
+          placeholder="留空表示不设置"
+          step="1"
+          onInput={(v) =>
+            props.onChange({
+              ...props.config,
+              thinking_budget_tokens: v === null ? null : Math.max(128, Math.trunc(v)),
+            })
+          }
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
 // ─── 分发器 ───
 //
 // 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
@@ -794,6 +972,18 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
           onChange={(c: SamplingParamsConfig) => props.onConfigChange({ type: 'sampling_params', config: c })}
         />
       </Match>
+      <Match when={props.node.type === 'sampling_params_openai'}>
+        <OpenAiSamplingParamsForm
+          config={props.node.config as OpenAiSamplingParamsConfig}
+          onChange={(c: OpenAiSamplingParamsConfig) => props.onConfigChange({ type: 'sampling_params_openai', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'sampling_params_anthropic'}>
+        <AnthropicSamplingParamsForm
+          config={props.node.config as AnthropicSamplingParamsConfig}
+          onChange={(c: AnthropicSamplingParamsConfig) => props.onConfigChange({ type: 'sampling_params_anthropic', config: c })}
+        />
+      </Match>
     </Switch>
   );
 };
@@ -832,6 +1022,7 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
+          order: 0,
         },
       };
     case 'mutex_gate':
@@ -895,6 +1086,32 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           top_p: null,
           frequency_penalty: null,
           presence_penalty: null,
+          stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_openai':
+      return {
+        type: 'sampling_params_openai',
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
+          frequency_penalty: null,
+          presence_penalty: null,
+          stop: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_anthropic':
+      return {
+        type: 'sampling_params_anthropic',
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
           stop: null,
           thinking_enabled: null,
           thinking_budget_tokens: null,

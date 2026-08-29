@@ -33,7 +33,9 @@
 import {
   Component,
   For,
+  Match,
   Show,
+  Switch,
   createMemo,
   createSignal,
   onCleanup,
@@ -58,6 +60,7 @@ import {
   isNodeLocked,
   HEADER_HEIGHT,
   PORT_RADIUS,
+  PortLayout,
   validateConnection,
   ViewTransform,
 } from './nodeLayout';
@@ -123,6 +126,53 @@ type InteractionState =
 const GRID_SIZE = 40;
 const GRID_EXTENT = 5000;
 const CONNECT_DASH = '6 4';
+
+// ─── Port shape (UE 式：exec 三角形 / value 圆形 / bool 菱形) ───
+
+interface PortShapeProps {
+  port: PortLayout;
+  accent: string;
+  radius: number;
+}
+
+/**
+ * UE 式引脚图形。exec 为右向三角（执行流），value 为圆点（值数据），
+ * bool 为菱形（判定分支出口）。命中判定与 data 属性由外层 `<g>` 承载。
+ */
+const PortShape: Component<PortShapeProps> = (props) => {
+  const cx = () => props.port.x;
+  const cy = () => props.port.y;
+  return (
+    <Switch fallback={null}>
+      <Match when={props.port.kind === 'exec'}>
+        <path
+          d={`M ${cx() - 5},${cy() - 5.5} L ${cx() + 5.5},${cy()} L ${cx() - 5},${cy() + 5.5} Z`}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.2}
+        />
+      </Match>
+      <Match when={props.port.kind === 'value'}>
+        <circle
+          cx={cx()}
+          cy={cy()}
+          r={props.radius}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.5}
+        />
+      </Match>
+      <Match when={props.port.kind === 'bool'}>
+        <path
+          d={`M ${cx()},${cy() - 6} L ${cx() + 6},${cy()} L ${cx()},${cy() + 6} L ${cx() - 6},${cy()} Z`}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.2}
+        />
+      </Match>
+    </Switch>
+  );
+};
 
 // ─── Component ───
 
@@ -245,7 +295,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     svgEl?.releasePointerCapture(it.pointerId);
     if (it.kind === 'connect') {
       const el = document.elementFromPoint(e.clientX, e.clientY);
-      const portEl = el?.closest('[data-port-kind="input"]') as SVGElement | null;
+      const portEl = el?.closest('[data-port-direction="input"]') as SVGElement | null;
       if (portEl) {
         const targetNodeId = portEl.getAttribute('data-node-id');
         const targetPort = portEl.getAttribute('data-port');
@@ -579,38 +629,30 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                 {/* Ports */}
                 <For each={layout.ports}>
                   {(port) => (
-                    <g>
+                    <g
+                      data-node-id={node.id}
+                      data-port={port.port}
+                      data-port-direction={port.direction}
+                      onPointerDown={
+                        port.direction === 'output'
+                          ? (e) => handleOutputPortPointerDown(e, node, port.port)
+                          : undefined
+                      }
+                      style={{ cursor: port.direction === 'output' ? 'crosshair' : 'default' }}
+                    >
                       <Show when={port.label}>
                         <text
-                          x={port.x}
-                          y={port.kind === 'output' ? port.y + 12 : port.y - 6}
+                          x={port.direction === 'input' ? port.x + 10 : port.x - 10}
+                          y={port.y + 3}
                           font-size="9"
                           fill="rgba(255,255,255,0.7)"
-                          text-anchor="middle"
+                          text-anchor={port.direction === 'input' ? 'start' : 'end'}
                           pointer-events="none"
                         >
                           {port.label}
                         </text>
                       </Show>
-                      <circle
-                        cx={port.x}
-                        cy={port.y}
-                        r={PORT_RADIUS}
-                        fill={layout.accentColor}
-                        stroke="white"
-                        stroke-width={1.5}
-                        data-node-id={node.id}
-                        data-port={port.port}
-                        data-port-kind={port.kind}
-                        style={{
-                          cursor: 'crosshair',
-                        }}
-                        onPointerDown={
-                          port.kind === 'output'
-                            ? (e) => handleOutputPortPointerDown(e, node, port.port)
-                            : undefined
-                        }
-                      />
+                      <PortShape port={port} accent={layout.accentColor} radius={PORT_RADIUS} />
                     </g>
                   )}
                 </For>

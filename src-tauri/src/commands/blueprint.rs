@@ -3,7 +3,46 @@ use serde::Serialize;
 use crate::models::blueprint::{BlueprintGraph, GateOption, GroupGateConfig, MutexGateConfig, NodeConfig};
 use crate::repositories::preset_gate_repository::PresetGateRepository;
 use crate::repositories::preset_gate_repository::PresetGateSelection;
+use crate::services::blueprint_executor::normalize_legacy_value_edges;
 use crate::AppState;
+
+/// IPC DTO：归一化后的蓝图图 JSON。
+///
+/// `migrated` 为 true 表示拓扑被改写过（旧图升级为 value 引脚数据流），
+/// 前端应提示用户保存，让迁移真正落库。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedBlueprintGraphDto {
+    pub graph_json: String,
+    pub migrated: bool,
+}
+
+/// 归一化蓝图图 JSON：把旧拓扑（Constant 串在 exec 链上）改写为
+/// 「上游 → Branch(in)」+「Constant → Branch(value)」的 value 引脚数据流拓扑。
+///
+/// 拓扑改写是业务规则，留在后端（C1）；前端只负责渲染与提示保存，不在前端
+/// 复制一套改写逻辑。`migrated = true` 必须可见地告知用户，禁止静默迁移（C2）。
+#[tauri::command]
+pub async fn normalize_blueprint_graph(
+    graph_json: String,
+) -> Result<NormalizedBlueprintGraphDto, String> {
+    let mut graph: BlueprintGraph = serde_json::from_str(&graph_json).map_err(|err| {
+        format!(
+            "blueprint_graph JSON invalid: {}",
+            err.to_string().replace('\\', "/")
+        )
+    })?;
+
+    let migrated = normalize_legacy_value_edges(&mut graph) > 0;
+
+    let normalized = serde_json::to_string(&graph)
+        .map_err(|err| format!("blueprint_graph serialization failed: {err}"))?;
+
+    Ok(NormalizedBlueprintGraphDto {
+        graph_json: normalized,
+        migrated,
+    })
+}
 
 /// IPC 传输用的预设级 Gate 选择 DTO。字段以 camelCase 序列化，供前端直接消费。
 ///
@@ -161,6 +200,8 @@ pub async fn load_blueprint_gates(
             NodeConfig::ModeSwitch(_) => None,
             NodeConfig::RoleSwitch(_) => None,
             NodeConfig::SamplingParams(_) => None,
+            NodeConfig::SamplingParamsOpenAi(_) => None,
+            NodeConfig::SamplingParamsAnthropic(_) => None,
             NodeConfig::Constant(_) => None,
             NodeConfig::Branch(_) => None,
         })

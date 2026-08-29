@@ -18,18 +18,18 @@ import type {
   BlueprintGraph,
   BlueprintNode,
   NodeType,
+  PortDirection,
+  PortKind,
   Position,
 } from '../../../src/lib/blueprint/types';
 
 // ─── 布局常量（图坐标，与缩放无关）───
-// 竖向蓝图：端口在上下边缘（输入顶部、输出底部），连线垂直走向（见 computeNodeLayout）。
+// 横向蓝图：端口在左右边缘（输入左侧、输出右侧），连线水平走向（见 computeNodeLayout）。
 
 export const NODE_WIDTH = 200;
 export const HEADER_HEIGHT = 36;
-/** 竖向布局下，单排端口（顶部/底部）占用的垂直高度。 */
+/** 横向布局下，单个端口占用的垂直高度。 */
 export const PORT_ROW_HEIGHT = 22;
-/** 竖向布局下，单排端口（顶部/底部）内相邻端口水平间距 */
-export const PORT_COL_WIDTH = 28;
 export const PORT_RADIUS = 7;
 export const BEZIER_MIN_SPAN = 80;
 export const MIN_ZOOM = 0.3;
@@ -58,15 +58,35 @@ export interface ConnectingFrom {
 export interface PortDescriptor {
   port: string;
   label: string | null;
+  kind: PortKind;
+  direction: PortDirection;
+  /** 仅 value 引脚携带：当前唯一取值 'string'（会话属性）。 */
+  valueType?: 'string';
 }
 
 export interface PortLayout {
   port: string;
-  kind: 'input' | 'output';
+  kind: PortKind;
+  direction: PortDirection;
   x: number;
   y: number;
   label: string | null;
 }
+
+/**
+ * 引脚是否承载执行流。bool 引脚是判定节点的分支出口，本质是执行流出口，
+ * 因此 `bool 出 → exec 入` 合法；bool 不作为入口存在。
+ */
+export function carriesExecFlow(kind: PortKind, direction: PortDirection): boolean {
+  return kind === 'exec' || (kind === 'bool' && direction === 'output');
+}
+
+/** 引脚种类的行排序权重：exec 排最前，value 次之，bool 最后。 */
+const PORT_KIND_ROW_ORDER: Record<PortKind, number> = {
+  exec: 0,
+  value: 1,
+  bool: 2,
+};
 
 export interface NodeLayout {
   width: number;
@@ -90,6 +110,8 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   mode_switch: '#06b6d4',
   role_switch: '#8b5cf6',
   sampling_params: '#6b7280',
+  sampling_params_openai: '#10a37f',
+  sampling_params_anthropic: '#d97757',
   constant: '#14b8a6',
   branch: '#d946ef',
 };
@@ -97,53 +119,74 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
 export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
   switch (node.type) {
     case 'start':
-      return [{ port: 'out', label: null }];
+      return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
     case 'end':
       return [];
     case 'prompt':
-      return [{ port: 'out', label: null }];
     case 'schema_field':
-      return [{ port: 'out', label: null }];
+    case 'sampling_params':
+    case 'sampling_params_openai':
+    case 'sampling_params_anthropic':
+      return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
+    // 判定节点：每个选项/分支一个 bool 出口
     case 'mutex_gate':
-      return node.config.options.map((opt) => ({
-        port: `out_${opt.key}`,
-        label: opt.label,
-      }));
     case 'group_gate':
       return node.config.options.map((opt) => ({
         port: `out_${opt.key}`,
         label: opt.label,
+        kind: 'bool' as const,
+        direction: 'output' as const,
       }));
     case 'mode_switch':
       return [
-        { port: 'out_legacy', label: 'Legacy' },
-        { port: 'out_mem0', label: 'MEM0' },
-        { port: 'out_stateless', label: 'Stateless' },
+        { port: 'out_legacy', label: 'Legacy', kind: 'bool', direction: 'output' },
+        { port: 'out_mem0', label: 'MEM0', kind: 'bool', direction: 'output' },
+        { port: 'out_stateless', label: 'Stateless', kind: 'bool', direction: 'output' },
       ];
     case 'role_switch':
       return [
-        { port: 'out_single', label: '单人' },
-        { port: 'out_online', label: '多人' },
+        { port: 'out_single', label: '单人', kind: 'bool', direction: 'output' },
+        { port: 'out_online', label: '多人', kind: 'bool', direction: 'output' },
       ];
+    // 纯值节点：只有 value 出口，不参与执行流
     case 'constant':
-      return [{ port: 'out', label: null }];
+      return [
+        { port: 'out', label: null, kind: 'value', direction: 'output', valueType: 'string' as const },
+      ];
     case 'branch':
       return [
         ...node.config.cases.map((c) => ({
           port: c.port,
           label: c.match_value,
+          kind: 'bool' as const,
+          direction: 'output' as const,
         })),
-        { port: node.config.default_port, label: '默认' },
+        {
+          port: node.config.default_port,
+          label: '默认',
+          kind: 'bool' as const,
+          direction: 'output' as const,
+        },
       ];
-    case 'sampling_params':
-      return [{ port: 'out', label: null }];
   }
 }
 
+/**
+ * 节点输入引脚。
+ * - Start 与 Constant 无入口（Constant 是纯值节点）
+ * - Branch 额外需要一条 value 入口（承接 Constant 的值）
+ * - 其余节点均为单一 exec 入口
+ */
 export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
   switch (node.type) {
     case 'start':
+    case 'constant':
       return [];
+    case 'branch':
+      return [
+        { port: 'in', label: null, kind: 'exec', direction: 'input' },
+        { port: 'value', label: null, kind: 'value', direction: 'input', valueType: 'string' },
+      ];
     case 'end':
     case 'prompt':
     case 'schema_field':
@@ -151,10 +194,10 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'group_gate':
     case 'mode_switch':
     case 'role_switch':
-    case 'constant':
-    case 'branch':
     case 'sampling_params':
-      return [{ port: 'in', label: null }];
+    case 'sampling_params_openai':
+    case 'sampling_params_anthropic':
+      return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
 }
 
@@ -165,6 +208,8 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'schema_field':
       return node.config.is_locked;
     case 'sampling_params':
+    case 'sampling_params_openai':
+    case 'sampling_params_anthropic':
       return node.config.is_locked;
     case 'start':
     case 'end':
@@ -202,6 +247,10 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.label || 'Branch';
     case 'sampling_params':
       return 'Sampling Params';
+    case 'sampling_params_openai':
+      return 'Sampling (OpenAI)';
+    case 'sampling_params_anthropic':
+      return 'Sampling (Anthropic)';
   }
 }
 
@@ -226,38 +275,46 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
     case 'end':
     case 'sampling_params':
       return null;
+    case 'sampling_params_openai':
+      return 'chat_completions';
+    case 'sampling_params_anthropic':
+      return 'anthropic';
   }
 }
 
 export function computeNodeLayout(node: BlueprintNode): NodeLayout {
   const inputs = getInputPorts(node);
   const outputs = getOutputPorts(node);
-  // 竖向布局：输入端口排顶部一行，输出端口排底部一行（按端口数水平均分）。
-  const cols = Math.max(inputs.length, outputs.length, 1);
-  const width = Math.max(NODE_WIDTH, cols * PORT_COL_WIDTH);
-  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * 2;
+  // 横向布局：输入端口排左边缘一列，输出端口排右边缘一列（按端口数垂直均分）。
+  const rows = Math.max(inputs.length, outputs.length, 1);
+  const width = NODE_WIDTH;
+  const height = HEADER_HEIGHT + PORT_ROW_HEIGHT * rows;
+
+  // 行号按引脚种类排序：exec 排最前，value 次之，bool 最后。
+  const byRowOrder = (a: PortDescriptor, b: PortDescriptor) =>
+    PORT_KIND_ROW_ORDER[a.kind] - PORT_KIND_ROW_ORDER[b.kind];
 
   const ports: PortLayout[] = [];
-  for (let i = 0; i < inputs.length; i++) {
-    const x = width / 2 + (i - (inputs.length - 1) / 2) * PORT_COL_WIDTH;
+  [...inputs].sort(byRowOrder).forEach((input, i) => {
     ports.push({
-      port: inputs[i].port,
-      kind: 'input' as const,
-      x,
-      y: 0,
-      label: inputs[i].label,
+      port: input.port,
+      kind: input.kind,
+      direction: 'input',
+      x: 0,
+      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      label: input.label,
     });
-  }
-  for (let i = 0; i < outputs.length; i++) {
-    const x = width / 2 + (i - (outputs.length - 1) / 2) * PORT_COL_WIDTH;
+  });
+  [...outputs].sort(byRowOrder).forEach((output, i) => {
     ports.push({
-      port: outputs[i].port,
-      kind: 'output' as const,
-      x,
-      y: height,
-      label: outputs[i].label,
+      port: output.port,
+      kind: output.kind,
+      direction: 'output',
+      x: width,
+      y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
+      label: output.label,
     });
-  }
+  });
 
   return {
     width,
@@ -288,10 +345,10 @@ export function getPortPosition(
 // ─── 贝塞尔路径 ───
 
 export function bezierPath(from: Position, to: Position): string {
-  const dy = Math.max(Math.abs(to.y - from.y), BEZIER_MIN_SPAN) / 2;
-  const c1y = from.y + dy;
-  const c2y = to.y - dy;
-  return `M ${from.x},${from.y} C ${from.x},${c1y} ${to.x},${c2y} ${to.x},${to.y}`;
+  const dx = Math.max(Math.abs(to.x - from.x), BEZIER_MIN_SPAN) / 2;
+  const c1x = from.x + dx;
+  const c2x = to.x - dx;
+  return `M ${from.x},${from.y} C ${c1x},${from.y} ${c2x},${to.y} ${to.x},${to.y}`;
 }
 
 // ─── 执行顺序（纯渲染用的拓扑排序）───
@@ -411,6 +468,8 @@ export function wouldCreateCycle(
 export type ConnectionRejectReason =
   | 'self_loop'
   | 'wrong_direction'
+  | 'kind_mismatch'
+  | 'value_type_mismatch'
   | 'cycle'
   | 'duplicate';
 
@@ -426,16 +485,27 @@ export function validateConnection(
   targetNode: BlueprintNode,
   targetPort: string,
 ): ConnectionValidationResult {
-  const sourceOutputs = getOutputPorts(sourceNode).map((p) => p.port);
-  const targetInputs = getInputPorts(targetNode).map((p) => p.port);
-  if (!sourceOutputs.includes(sourcePort)) {
+  const sourcePortDesc = getOutputPorts(sourceNode).find((p) => p.port === sourcePort);
+  const targetPortDesc = getInputPorts(targetNode).find((p) => p.port === targetPort);
+  // 方向校验：起点必须是 output 引脚，终点必须是 input 引脚。
+  if (!sourcePortDesc) {
     return { ok: false, reason: 'wrong_direction' };
   }
-  if (!targetInputs.includes(targetPort)) {
+  if (!targetPortDesc) {
     return { ok: false, reason: 'wrong_direction' };
   }
   if (sourceNode.id === targetNode.id) {
     return { ok: false, reason: 'self_loop' };
+  }
+  // 种类校验：执行流引脚（exec / bool 出口）与值引脚不能互连。
+  const sourceIsExecFlow = carriesExecFlow(sourcePortDesc.kind, sourcePortDesc.direction);
+  const targetIsExecFlow = carriesExecFlow(targetPortDesc.kind, targetPortDesc.direction);
+  if (sourceIsExecFlow !== targetIsExecFlow) {
+    return { ok: false, reason: 'kind_mismatch' };
+  }
+  // 值引脚还要校验数据类型一致。
+  if (!sourceIsExecFlow && sourcePortDesc.valueType !== targetPortDesc.valueType) {
+    return { ok: false, reason: 'value_type_mismatch' };
   }
   const dup = graph.edges.some(
     (e) =>
@@ -456,6 +526,8 @@ export function validateConnection(
 export const CONNECTION_REJECT_MESSAGES: Record<ConnectionRejectReason, string> = {
   self_loop: '禁止自连：起点和终点不能是同一节点',
   wrong_direction: '方向错误：连线必须从 output 端口指向 input 端口',
+  kind_mismatch: '引脚种类不匹配：执行流引脚与值引脚不能互连',
+  value_type_mismatch: '值类型不匹配：当前仅支持 string 值引脚互连',
   cycle: '禁止环路：该连线会形成环',
   duplicate: '连线已存在：相同起终点的连线已经画过',
 };
@@ -488,18 +560,18 @@ export function isEdgeLocked(
 // ─── Auto layout ───
 
 /**
- * 拓扑分层自动布局：将节点按 BFS 深度分层，每列纵向排列。
+ * 拓扑分层自动布局：将节点按 BFS 深度分层，每层横向排列。
  * 与 PC 端 nodeLayout.ts 同名函数行为对齐（C5 独立实现）。
  */
 export function autoLayout(
   nodes: ReadonlyArray<BlueprintNode>,
   edges: ReadonlyArray<BlueprintEdge>,
 ): Map<string, Position> {
-  // 竖向蓝图：拓扑深度对应 Y 轴（自上而下），同层节点横向铺开。
-  const LAYER_HEIGHT = 200;
-  const COL_SPACING = 240;
-  const LAYER_VPAD = 20;
-  const COL_VPAD = 20;
+  // 横向蓝图：拓扑深度对应 X 轴（自左向右），同层节点纵向铺开。
+  const LAYER_WIDTH = 240;
+  const ROW_SPACING = 200;
+  const LAYER_HPAD = 20;
+  const ROW_VPAD = 20;
 
   const inDegree = new Map<string, number>();
   const outEdges = new Map<string, string[]>();
@@ -555,8 +627,8 @@ export function autoLayout(
   for (const [layer, ids] of byLayer) {
     ids.forEach((id, i) => {
       positions.set(id, {
-        x: Math.round(COL_VPAD + i * (COL_SPACING + LAYER_VPAD)),
-        y: Math.round(LAYER_VPAD + layer * LAYER_HEIGHT),
+        x: Math.round(LAYER_HPAD + layer * LAYER_WIDTH),
+        y: Math.round(ROW_VPAD + i * ROW_SPACING),
       });
     });
   }
@@ -629,6 +701,7 @@ export function createNode(
           display: { default_expanded: true, hide_label: false },
           is_locked: false,
           lock_reason: null,
+          order: 0,
         },
       };
     case 'mutex_gate':
@@ -703,6 +776,36 @@ export function createNode(
           top_p: null,
           frequency_penalty: null,
           presence_penalty: null,
+          stop: null,
+          thinking_enabled: null,
+          thinking_budget_tokens: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_openai':
+      return {
+        id: genNodeId('sampling_oai'),
+        type: 'sampling_params_openai',
+        position,
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
+          frequency_penalty: null,
+          presence_penalty: null,
+          stop: null,
+          is_locked: false,
+        },
+      };
+    case 'sampling_params_anthropic':
+      return {
+        id: genNodeId('sampling_ant'),
+        type: 'sampling_params_anthropic',
+        position,
+        config: {
+          temperature: null,
+          max_tokens: null,
+          top_p: null,
           stop: null,
           thinking_enabled: null,
           thinking_budget_tokens: null,

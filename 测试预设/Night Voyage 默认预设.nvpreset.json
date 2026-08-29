@@ -939,7 +939,7 @@
           "id": "e_2",
           "source": "n_core",
           "source_port": "out",
-          "target": "n_const",
+          "target": "n_branch",
           "target_port": "in"
         },
         {
@@ -947,7 +947,7 @@
           "source": "n_const",
           "source_port": "out",
           "target": "n_branch",
-          "target_port": "in"
+          "target_port": "value"
         },
         {
           "id": "e_4",
@@ -1290,7 +1290,8 @@
           "source": "n_mod_group",
           "source_port": "out_parallel",
           "target": "n_mod_parallel",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 0
         },
         {
           "id": "e_53",
@@ -1303,6 +1304,7 @@
           "id": "e_54",
           "source": "n_mod_group",
           "source_port": "out_anti_spoil",
+          "order": 1,
           "target": "n_mod_anti_spoil",
           "target_port": "in"
         },
@@ -1317,6 +1319,7 @@
           "id": "e_56",
           "source": "n_mod_group",
           "source_port": "out_status_bar",
+          "order": 2,
           "target": "n_schema_status",
           "target_port": "in"
         },
@@ -1331,6 +1334,7 @@
           "id": "e_58",
           "source": "n_mod_group",
           "source_port": "out_todo_list",
+          "order": 3,
           "target": "n_schema_todo",
           "target_port": "in"
         },
@@ -1345,6 +1349,7 @@
           "id": "e_60",
           "source": "n_mod_group",
           "source_port": "out_options",
+          "order": 4,
           "target": "n_mod_actions",
           "target_port": "in"
         },
@@ -1366,6 +1371,7 @@
           "id": "e_63",
           "source": "n_mod_group",
           "source_port": "out_monologue",
+          "order": 5,
           "target": "n_mod_inner_mono",
           "target_port": "in"
         },
@@ -1387,6 +1393,7 @@
           "id": "e_66",
           "source": "n_mode",
           "source_port": "out_stateless",
+          "order": 0,
           "target": "n_mem_stateless",
           "target_port": "in"
         },
@@ -1394,6 +1401,7 @@
           "id": "e_67",
           "source": "n_mode",
           "source_port": "out_legacy",
+          "order": 1,
           "target": "n_mem_legacy",
           "target_port": "in"
         },
@@ -1401,6 +1409,7 @@
           "id": "e_68",
           "source": "n_mode",
           "source_port": "out_mem0",
+          "order": 2,
           "target": "n_mem_mem0",
           "target_port": "in"
         },
@@ -1430,42 +1439,48 @@
           "source": "n_mem_stateless",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 0
         },
         {
           "id": "e_73",
           "source": "n_mem_mem0",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 1
         },
         {
           "id": "e_74",
           "source": "n_legacy_group",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 2
         },
         {
           "id": "e_75",
           "source": "n_schema_world_vars",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 3
         },
         {
           "id": "e_76",
           "source": "n_schema_summary",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 4
         },
         {
           "id": "e_77",
           "source": "n_rules",
           "source_port": "out",
           "target": "n_thinking_schema",
-          "target_port": "in"
+          "target_port": "in",
+          "order": 5
         },
         {
           "id": "e_78",

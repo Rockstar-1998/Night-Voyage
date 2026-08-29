@@ -137,6 +137,25 @@ export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConf
         />
       </div>
 
+      <div class="space-y-1">
+        <label class={LABEL_CLASS}>order（字段顺序权重）</label>
+        <input
+          type="number"
+          step="1"
+          value={props.config.order ?? 0}
+          disabled={props.isLocked}
+          onInput={(e) =>
+            update({ order: e.currentTarget.valueAsNumber || 0 })
+          }
+          class={INPUT_CLASS}
+          placeholder="数值越小越靠前；缺省 0"
+        />
+        <p class="text-[10px] text-mist-solid/35 mt-1">
+          控制该字段在结构化输出 schema 的 properties / required 中的排列顺序
+          （按 (order, 遍历序) 排序）。核心基线字段 thinking/text 由执行器固定在前。
+        </p>
+      </div>
+
       <div class="space-y-1 pt-2 border-t border-white/10">
         <label class={LABEL_CLASS}>schema 行为</label>
         <div class="space-y-1.5">

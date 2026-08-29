@@ -69,3 +69,24 @@ export async function loadBlueprintGates(
     presetId,
   });
 }
+
+/** 归一化结果：改写后的图 JSON，以及是否发生了拓扑迁移。 */
+export interface NormalizedBlueprintGraph {
+  graphJson: string;
+  migrated: boolean;
+}
+
+/**
+ * 归一化蓝图图 JSON：把旧拓扑（Constant 串在 exec 链上）改写为
+ * 「上游 → Branch(in)」+「Constant → Branch(value)」的 value 引脚数据流拓扑。
+ *
+ * 改写规则由后端裁定（C1 前端只渲染）。`migrated` 为 true 时前端必须可见地
+ * 提示用户保存，禁止静默迁移（C2）。
+ */
+export async function normalizeBlueprintGraph(
+  graphJson: string,
+): Promise<NormalizedBlueprintGraph> {
+  return invokeCommand<NormalizedBlueprintGraph>('normalize_blueprint_graph', {
+    graphJson,
+  });
+}

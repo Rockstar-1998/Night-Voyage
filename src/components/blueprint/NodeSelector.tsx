@@ -40,7 +40,9 @@ const NODE_LABELS: Record<NodeType, string> = {
   group_gate: 'Group Gate（普通多选）',
   mode_switch: 'Mode Switch（三模式分支）',
   role_switch: 'Role Switch（已废弃，建议用常量+分支替代）',
-  sampling_params: 'Sampling Params（采样参数）',
+  sampling_params: 'Sampling Params（legacy，已不可新建）',
+  sampling_params_openai: 'Sampling Params（OpenAI 版）',
+  sampling_params_anthropic: 'Sampling Params（Anthropic 版）',
   constant: 'Constant（常量，读取会话属性）',
   branch: 'Branch（分支，按值走出口）',
 };
@@ -54,15 +56,17 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   group_gate: '普通选项组，运行时多选分支',
   mode_switch: '按会话记忆模式三分支（legacy/mem0/stateless）',
   role_switch: '已废弃：被常量+分支替代，旧图仍可执行',
-  sampling_params: '采样参数（temperature/max_tokens 等）',
+  sampling_params: 'legacy 通用采样参数，旧图仍可加载执行，但不再允许新建',
+  sampling_params_openai: 'OpenAI / chat_completions 专用：temperature / top_p / frequency_penalty / presence_penalty / stop',
+  sampling_params_anthropic: 'Anthropic 专用：temperature / top_p / stop / thinking_enabled / thinking_budget_tokens',
   constant: '读取会话属性（如 conversation_type / memory_mode / protocol）输出值',
   branch: '接收上游常量值，按 cases 匹配走对应出口',
 };
 
-/// 选择器中展示的节点类型列表：移除 role_switch（已废弃），
-/// 旧图中的 RoleSwitch 节点仍可加载和执行，但不允许新建。
+/// 选择器中展示的节点类型列表：移除已废弃的 role_switch 与 legacy
+/// sampling_params。旧图中的这些节点仍可加载和执行，但不允许新建。
 const SELECTABLE_NODE_TYPES: NodeType[] = NODE_TYPES.filter(
-  (t) => t !== 'role_switch',
+  (t) => t !== 'role_switch' && t !== 'sampling_params',
 );
 
 export const NodeSelector: Component<NodeSelectorProps> = (props) => {

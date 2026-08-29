@@ -39,7 +39,9 @@ import type {
   GroupGateConfig,
   ModeSwitchConfig,
   MutexGateConfig,
+  AnthropicSamplingParamsConfig,
   NodeConfig,
+  OpenAiSamplingParamsConfig,
   PromptConfig,
   RoleSwitchConfig,
   SamplingParamsConfig,
@@ -60,6 +62,8 @@ import { RoleSwitchNode } from './nodes/RoleSwitchNode';
 import { ConstantNode } from './nodes/ConstantNode';
 import { BranchNode } from './nodes/BranchNode';
 import { SamplingParamsNode } from './nodes/SamplingParamsNode';
+import { SamplingParamsOpenAiNode } from './nodes/SamplingParamsOpenAiNode';
+import { SamplingParamsAnthropicNode } from './nodes/SamplingParamsAnthropicNode';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -90,7 +94,9 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   role_switch: 'Role Switch',
   constant: 'Constant',
   branch: 'Branch',
-  sampling_params: 'Sampling Params',
+  sampling_params: 'Sampling Params（legacy）',
+  sampling_params_openai: 'Sampling Params (OpenAI)',
+  sampling_params_anthropic: 'Sampling Params (Anthropic)',
 };
 
 // ─── Component ───
@@ -160,6 +166,22 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onUpdate(nodeId, {
       type: 'sampling_params',
       config: { ...(props.node!.config as SamplingParamsConfig), ...updates },
+    });
+  const updateSamplingParamsOpenAi = (
+    nodeId: string,
+    updates: Partial<OpenAiSamplingParamsConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'sampling_params_openai',
+      config: { ...(props.node!.config as OpenAiSamplingParamsConfig), ...updates },
+    });
+  const updateSamplingParamsAnthropic = (
+    nodeId: string,
+    updates: Partial<AnthropicSamplingParamsConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'sampling_params_anthropic',
+      config: { ...(props.node!.config as AnthropicSamplingParamsConfig), ...updates },
     });
 
   return (
@@ -280,6 +302,20 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as SamplingParamsConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateSamplingParams(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'sampling_params_openai'}>
+                  <SamplingParamsOpenAiNode
+                    config={node().config as OpenAiSamplingParamsConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateSamplingParamsOpenAi(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'sampling_params_anthropic'}>
+                  <SamplingParamsAnthropicNode
+                    config={node().config as AnthropicSamplingParamsConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateSamplingParamsAnthropic(node().id, updates)}
                   />
                 </Match>
               </Switch>

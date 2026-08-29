@@ -134,7 +134,9 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
       case 'role_switch': return 'RoleSwitch（已废弃）';
       case 'constant': return 'Constant（常量）';
       case 'branch': return 'Branch（分支）';
-      case 'sampling_params': return 'SamplingParams（采样参数）';
+      case 'sampling_params': return 'SamplingParams（legacy 采样参数）';
+      case 'sampling_params_openai': return 'SamplingParams（OpenAI 版）';
+      case 'sampling_params_anthropic': return 'SamplingParams（Anthropic 版）';
     }
   };
 

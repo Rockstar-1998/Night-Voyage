@@ -18,11 +18,16 @@ pub enum NodeType {
     GroupGate,
     ModeSwitch,
     RoleSwitch,
+    /// 采样参数节点（legacy，通用协议）。保留以兼容旧图，不允许新建。
     SamplingParams,
     /// 常量节点：运行时读取会话属性，输出值供下游 BranchNode 回溯查询。
     Constant,
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch,
+    /// OpenAI / chat_completions 协议专用采样参数节点。
+    SamplingParamsOpenAi,
+    /// Anthropic 协议专用采样参数节点。
+    SamplingParamsAnthropic,
 }
 
 /// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
@@ -42,11 +47,16 @@ pub enum NodeConfig {
     GroupGate(GroupGateConfig),
     ModeSwitch(ModeSwitchConfig),
     RoleSwitch(RoleSwitchConfig),
+    /// 采样参数节点（legacy，通用协议）。保留以兼容旧图，不允许新建。
     SamplingParams(SamplingParamsConfig),
     /// 常量节点：运行时读取会话属性，输出值供下游 BranchNode 回溯查询。
     Constant(ConstantConfig),
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch(BranchConfig),
+    /// OpenAI / chat_completions 协议专用采样参数。
+    SamplingParamsOpenAi(OpenAiSamplingParamsConfig),
+    /// Anthropic 协议专用采样参数。
+    SamplingParamsAnthropic(AnthropicSamplingParamsConfig),
 }
 
 impl NodeConfig {
@@ -64,9 +74,11 @@ impl NodeConfig {
             Self::SamplingParams(_) => NodeType::SamplingParams,
             Self::Constant(_) => NodeType::Constant,
             Self::Branch(_) => NodeType::Branch,
-        }
-    }
-}
+            Self::SamplingParamsOpenAi(_) => NodeType::SamplingParamsOpenAi,
+            Self::SamplingParamsAnthropic(_) => NodeType::SamplingParamsAnthropic,
+            }
+            }
+            }
 
 /// 蓝图节点画布坐标。仅编辑器使用，执行器忽略。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -213,6 +225,11 @@ pub struct SchemaFieldConfig {
     pub display: FieldDisplayConfig,
     pub is_locked: bool,
     pub lock_reason: Option<String>,
+    /// 字段在结构化输出 schema 中的顺序权重。作者可在配置面板编辑以控制
+    /// `properties` / `required` 的排列顺序。排序按 `(order, 遍历插入序)` 稳定排序；
+    /// 缺省（旧图）视为 0。核心基线字段 thinking/text 由执行器注入负 order 以固定在前。
+    #[serde(default)]
+    pub order: i32,
 }
 
 /// 字段在前端消息列表的展示偏好，对应旧版 `structured_output_display` 的单字段条目。
@@ -335,6 +352,39 @@ pub struct SamplingParamsConfig {
     pub is_locked: bool,
 }
 
+/// OpenAI / chat_completions 协议专用采样参数节点配置。
+///
+/// 只暴露 OpenAI 兼容路径支持的字段。`frequency_penalty` /
+/// `presence_penalty` 仅 OpenAI 支持（Anthropic 侧
+/// `supports_frequency_penalty` / `supports_presence_penalty` 均为 false），
+/// 故不出现在 Anthropic 版配置里。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenAiSamplingParamsConfig {
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i64>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub stop: Option<Vec<String>>,
+    pub is_locked: bool,
+}
+
+/// Anthropic 协议专用采样参数节点配置。
+///
+/// 只暴露 Anthropic 支持的字段。`thinking_enabled` /
+/// `thinking_budget_tokens` 仅 Anthropic 支持（OpenAI 兼容路径遇到
+/// `thinking.enabled` 会直接报错），故不出现在 OpenAI 版配置里。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnthropicSamplingParamsConfig {
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i64>,
+    pub top_p: Option<f64>,
+    pub stop: Option<Vec<String>>,
+    pub thinking_enabled: Option<bool>,
+    pub thinking_budget_tokens: Option<i64>,
+    pub is_locked: bool,
+}
+
 /// Gate 运行时选中状态。
 ///
 /// MutexGate：`keys` 长度为 0 或 1；GroupGate：任意长度。
@@ -400,6 +450,11 @@ pub struct BlueprintExecutionResult {
     pub context_included_keys: HashMap<String, bool>,
     #[serde(default)]
     pub display_config: HashMap<String, FieldDisplayConfig>,
+    /// 字段顺序追踪：记录每个 schema 字段的 `(field_name, order)` 与遍历插入序。
+    /// 执行器据此把 `properties` / `required` 重排为「(order, 遍历序)」稳定序。
+    /// 仅内部使用，不进入对外序列化合约。
+    #[serde(skip)]
+    pub schema_field_order: Vec<(String, i32)>,
 }
 
 #[cfg(test)]

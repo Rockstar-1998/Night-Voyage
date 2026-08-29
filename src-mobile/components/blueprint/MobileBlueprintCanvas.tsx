@@ -32,7 +32,9 @@
 import {
   Component,
   For,
+  Match,
   Show,
+  Switch,
   createMemo,
   createSignal,
   onCleanup,
@@ -61,10 +63,58 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   PORT_RADIUS,
+  PortLayout,
   validateConnection,
   ViewTransform,
 } from './mobileNodeLayout';
 import { showToast } from '../Toast';
+
+// ─── 引脚图形（UE 式：exec 三角 / value 圆 / bool 菱形）───
+
+interface PortShapeProps {
+  port: PortLayout;
+  accent: string;
+  radius: number;
+}
+
+/**
+ * UE 式引脚图形。命中判定与 data 属性由外层 `<g>` 承载，本组件只画形状。
+ * 与 PC 端 `BlueprintCanvas` 的 PortShape 独立实现（C5）。
+ */
+const PortShape: Component<PortShapeProps> = (props) => {
+  const cx = () => props.port.x;
+  const cy = () => props.port.y;
+  return (
+    <Switch fallback={null}>
+      <Match when={props.port.kind === 'exec'}>
+        <path
+          d={`M ${cx() - 5},${cy() - 5.5} L ${cx() + 5.5},${cy()} L ${cx() - 5},${cy() + 5.5} Z`}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.2}
+        />
+      </Match>
+      <Match when={props.port.kind === 'value'}>
+        <circle
+          cx={cx()}
+          cy={cy()}
+          r={props.radius}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.5}
+        />
+      </Match>
+      <Match when={props.port.kind === 'bool'}>
+        <path
+          d={`M ${cx()},${cy() - 6} L ${cx() + 6},${cy()} L ${cx()},${cy() + 6} L ${cx() - 6},${cy()} Z`}
+          fill={props.accent}
+          stroke="white"
+          stroke-width={1.2}
+        />
+      </Match>
+    </Switch>
+  );
+};
 
 // ─── Props ───
 
@@ -619,7 +669,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
     from: ConnectingFrom,
   ) => {
     const el = document.elementFromPoint(clientX, clientY);
-    const portEl = el?.closest('[data-port-kind="input"]') as SVGElement | null;
+    const portEl = el?.closest('[data-port-direction="input"]') as SVGElement | null;
     if (!portEl) return;
     const targetNodeId = portEl.getAttribute('data-node-id');
     const targetPort = portEl.getAttribute('data-port');
@@ -925,14 +975,23 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
                 {/* 端口 */}
                 <For each={layout.ports}>
                   {(port) => (
-                    <g>
+                    <g
+                      data-node-id={node.id}
+                      data-port={port.port}
+                      data-port-direction={port.direction}
+                      onPointerDown={
+                        port.direction === 'output'
+                          ? (e) => handleOutputPortPointerDown(e, node, port.port)
+                          : undefined
+                      }
+                    >
                       <Show when={port.label}>
                         <text
-                          x={port.x}
-                          y={port.kind === 'output' ? port.y + 12 : port.y - 6}
+                          x={port.direction === 'input' ? port.x + 10 : port.x - 10}
+                          y={port.y + 3}
                           font-size="9"
                           fill="rgba(255,255,255,0.7)"
-                          text-anchor="middle"
+                          text-anchor={port.direction === 'input' ? 'start' : 'end'}
                           pointer-events="none"
                         >
                           {port.label}
@@ -944,23 +1003,11 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
                         cy={port.y}
                         r={14}
                         fill="transparent"
-                        data-node-id={node.id}
-                        data-port={port.port}
-                        data-port-kind={port.kind}
-                        onPointerDown={
-                          port.kind === 'output'
-                            ? (e) => handleOutputPortPointerDown(e, node, port.port)
-                            : undefined
-                        }
                       />
-                      <circle
-                        cx={port.x}
-                        cy={port.y}
-                        r={PORT_RADIUS}
-                        fill={layout.accentColor}
-                        stroke="white"
-                        stroke-width={1.5}
-                        pointer-events="none"
+                      <PortShape
+                        port={port}
+                        accent={layout.accentColor}
+                        radius={PORT_RADIUS}
                       />
                     </g>
                   )}
