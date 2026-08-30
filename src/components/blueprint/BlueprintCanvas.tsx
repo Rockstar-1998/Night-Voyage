@@ -319,7 +319,8 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     e.preventDefault();
     closeContextMenu();
-    cancelCommentEditing();
+    // 点击画布任意空白处 = 提交注释编辑（Esc 才取消）
+    commitCommentEditing();
     if (e.button === 0) {
       props.onNodeSelect(null);
       props.onEdgeSelect(null);
@@ -359,7 +360,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     e.stopPropagation();
     e.preventDefault();
     closeContextMenu();
-    cancelCommentEditing();
+    commitCommentEditing();
 
     // Ctrl+click toggles membership (UE-style multi-select); no drag.
     if (e.ctrlKey || e.metaKey) {
@@ -402,6 +403,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     e.stopPropagation();
     e.preventDefault();
     closeContextMenu();
+    commitCommentEditing();
     // is_locked only restricts content editing, not topology (connections).
     // Locked nodes can still be connection sources/targets.
     const pos = screenToGraph(e.clientX, e.clientY);
@@ -597,6 +599,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     e.stopPropagation();
     e.preventDefault();
     closeContextMenu();
+    commitCommentEditing();
     // Click selects the edge; Delete key removes it (see BlueprintEditor
     // keydown handler). Direct click-delete was removed to support selection.
     props.onNodeSelect(null);
@@ -634,6 +637,15 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     setEditingCommentId(null);
   };
 
+  /**
+   * 双击检测必须自己做：pointerdown 里对 svg 根 setPointerCapture 后，
+   * 浏览器派生的 click/dblclick 会重定向到 svg 根而到不了注释框 <g>，
+   * onDblClick 永远不会触发。两次按下同框、400ms 内、位移 <6px 判为双击。
+   */
+  let lastCommentPress: { id: string; time: number; x: number; y: number } | null = null;
+  const COMMENT_DBLCLICK_MS = 400;
+  const COMMENT_DBLCLICK_PX = 6;
+
   const handleCommentPointerDown = (e: PointerEvent, comment: BlueprintComment) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -645,6 +657,25 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
     props.onNodeSelect(null);
     props.onEdgeSelect(null);
     props.onCommentSelect(comment.id);
+
+    const now = performance.now();
+    const last = lastCommentPress;
+    lastCommentPress = { id: comment.id, time: now, x: e.clientX, y: e.clientY };
+    if (
+      last &&
+      last.id === comment.id &&
+      now - last.time < COMMENT_DBLCLICK_MS &&
+      Math.hypot(e.clientX - last.x, e.clientY - last.y) < COMMENT_DBLCLICK_PX
+    ) {
+      lastCommentPress = null;
+      // 已在编辑同一框时不重置输入中的文字
+      if (editingCommentId() !== comment.id) {
+        setEditingText(comment.text);
+        setEditingCommentId(comment.id);
+      }
+      return;
+    }
+
     const start = screenToGraph(e.clientX, e.clientY);
     setInteraction({
       kind: 'comment-drag',
@@ -675,13 +706,6 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
       startHeight: comment.height,
     });
     svgEl?.setPointerCapture(e.pointerId);
-  };
-
-  const handleCommentDoubleClick = (e: MouseEvent, comment: BlueprintComment) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setEditingText(comment.text);
-    setEditingCommentId(comment.id);
   };
 
   // ─── Eye toggle ───
@@ -769,8 +793,8 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
               const selected = props.selectedCommentId === comment.id;
               return (
                 <g
+                  transform={`translate(${comment.position.x}, ${comment.position.y})`}
                   onPointerDown={(e) => handleCommentPointerDown(e, comment)}
-                  onDblClick={(e) => handleCommentDoubleClick(e, comment)}
                   style={{ cursor: 'move' }}
                 >
                   <rect

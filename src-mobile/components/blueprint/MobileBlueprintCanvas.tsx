@@ -1053,6 +1053,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
             const selected = props.selectedCommentId === comment.id;
             return (
               <g
+                transform={`translate(${comment.position.x}, ${comment.position.y})`}
                 onPointerDown={(e) => handleCommentPointerDown(e, comment)}
                 style={{ cursor: 'move' }}
               >
