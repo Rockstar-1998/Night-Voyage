@@ -18,8 +18,11 @@
  * - idle：无指针
  * - pending_node：指针落在节点上，等待长按判定或位移判定
  * - pending_port：指针落在 output 端口上，等待长按判定
+ * - pending_comment：指针落在注释框上，等待长按判定或位移判定
  * - pan：单指平移
  * - node_drag：长按触发后的节点拖拽
+ * - comment_drag：长按触发后的注释框拖拽（携带框内节点，UE 式）
+ * - box_select：框选模式下背景单指拖动批量框选节点
  * - connect：长按端口触发后的连线绘制
  * - pinch：双指捏合
  *
@@ -41,9 +44,11 @@ import {
   onMount,
 } from 'solid-js';
 import type {
+  BlueprintComment,
   BlueprintEdge,
   BlueprintGraph,
   BlueprintNode,
+  NodePositionPatch,
   Position,
 } from '../../../src/lib/blueprint/types';
 import {
@@ -121,9 +126,20 @@ const PortShape: Component<PortShapeProps> = (props) => {
 export interface MobileBlueprintCanvasProps {
   graph: BlueprintGraph;
   viewTransform: ViewTransform;
-  selectedNodeId: string | null;
+  /** 全部选中节点集合（框选模式 / 批量操作用）。 */
+  selectedNodeIds: Set<string>;
+  /** 当前选中注释框（null 表示无）。 */
+  selectedCommentId: string | null;
+  /** 框选模式：背景单指拖动从平移切换为框选。 */
+  boxSelectMode: boolean;
   onNodeSelect: (nodeId: string | null) => void;
+  onCommentSelect: (commentId: string | null) => void;
+  /** 框选结束：用框内节点整体替换选中集合。 */
+  onNodesBoxSelected: (nodeIds: string[]) => void;
   onNodeMove: (nodeId: string, position: Position) => void;
+  /** 批量位置补丁（注释框拖动携带框内节点时使用）。 */
+  onNodesMoveBatch: (moves: NodePositionPatch[]) => void;
+  onCommentMove: (commentId: string, position: Position) => void;
   onEdgeCreate: (
     source: string,
     sourcePort: string,
@@ -158,6 +174,14 @@ type InteractionState =
       timer: number;
     }
   | {
+      kind: 'pending_comment';
+      pointerId: number;
+      commentId: string;
+      startClientX: number;
+      startClientY: number;
+      timer: number;
+    }
+  | {
       kind: 'pan';
       pointerId: number;
       startClientX: number;
@@ -173,6 +197,23 @@ type InteractionState =
       startClientY: number;
       startNodeX: number;
       startNodeY: number;
+    }
+  | {
+      kind: 'comment_drag';
+      pointerId: number;
+      commentId: string;
+      startGraphX: number;
+      startGraphY: number;
+      startCommentX: number;
+      startCommentY: number;
+      /** 拖动开始时完全位于框内的节点，随框一起移动（UE 式）。 */
+      nodeEntries: Array<{ nodeId: string; startNodeX: number; startNodeY: number }>;
+    }
+  | {
+      kind: 'box_select';
+      pointerId: number;
+      startGraphX: number;
+      startGraphY: number;
     }
   | {
       kind: 'connect';
@@ -199,6 +240,11 @@ type InteractionState =
 const GRID_SIZE = 40;
 const GRID_EXTENT = 5000;
 const CONNECT_DASH = '6 4';
+/** 注释框常量（与 PC 端视觉一致；C5 要求双端各自实现，故此处独立声明）。 */
+const COMMENT_HEADER_HEIGHT = 26;
+const COMMENT_STROKE = 'rgba(94, 186, 125, 0.65)';
+const COMMENT_FILL = 'rgba(94, 186, 125, 0.10)';
+const COMMENT_HEADER_FILL = 'rgba(94, 186, 125, 0.22)';
 
 // ─── Component ───
 
@@ -208,6 +254,10 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
   const [connectCursorPos, setConnectCursorPos] = createSignal<Position | null>(null);
   /** 当前是否处于连线模式（用于 UI 提示） */
   const [isConnecting, setIsConnecting] = createSignal(false);
+  /** 框选拖动中的实时矩形（图坐标）。 */
+  const [marquee, setMarquee] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null);
+  /** 框选拖动中实时命中的节点 ID（预览高亮）。 */
+  const [marqueeNodeIds, setMarqueeNodeIds] = createSignal<Set<string>>(new Set());
 
   const view = () => props.viewTransform;
 
@@ -235,6 +285,8 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
       window.clearTimeout(state.timer);
     } else if (state.kind === 'pending_port') {
       window.clearTimeout(state.timer);
+    } else if (state.kind === 'pending_comment') {
+      window.clearTimeout(state.timer);
     }
   };
 
@@ -249,25 +301,37 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
     e.preventDefault();
     // 取消任何 pending 长按
     const prev = interaction();
-    if (prev.kind === 'pending_node' || prev.kind === 'pending_port') {
+    if (prev.kind === 'pending_node' || prev.kind === 'pending_port' || prev.kind === 'pending_comment') {
       clearPendingTimers(prev);
     }
 
-    // 若已有一指在捏合，第二指由全局 pointerdown 处理
-    if (prev.kind === 'pan' || prev.kind === 'node_drag' || prev.kind === 'connect') {
-      // 第一指仍在交互中，忽略背景的第二个 pointerdown（让全局处理器接管捏合）
+    // 若已有一指在交互，第二指由全局 pointerdown 处理（捏合）
+    if (prev.kind === 'pan' || prev.kind === 'node_drag' || prev.kind === 'connect'
+        || prev.kind === 'comment_drag' || prev.kind === 'box_select') {
       return;
     }
 
-    props.onNodeSelect(null);
-    setInteraction({
-      kind: 'pan',
-      pointerId: e.pointerId,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startOffsetX: view().offsetX,
-      startOffsetY: view().offsetY,
-    });
+    if (props.boxSelectMode) {
+      // 框选模式：背景拖动 = 框选（结束后整体替换选中集合）
+      const start = screenToGraph(e.clientX, e.clientY);
+      setInteraction({
+        kind: 'box_select',
+        pointerId: e.pointerId,
+        startGraphX: start.x,
+        startGraphY: start.y,
+      });
+    } else {
+      props.onNodeSelect(null);
+      props.onCommentSelect(null);
+      setInteraction({
+        kind: 'pan',
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startOffsetX: view().offsetX,
+        startOffsetY: view().offsetY,
+      });
+    }
     try {
       svgEl?.setPointerCapture(e.pointerId);
     } catch {
@@ -382,6 +446,69 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
     }
   };
 
+  // ─── 注释框：点按选中，长按拖动（携带框内节点，UE 式）───
+
+  /** 返回完全位于注释框内的节点（拖动时随框移动）。 */
+  const nodesContainedIn = (comment: BlueprintComment) =>
+    props.graph.nodes
+      .filter((n) => {
+        const l = computeNodeLayout(n);
+        return (
+          n.position.x >= comment.position.x &&
+          n.position.y >= comment.position.y &&
+          n.position.x + l.width <= comment.position.x + comment.width &&
+          n.position.y + l.height <= comment.position.y + comment.height
+        );
+      })
+      .map((n) => ({ nodeId: n.id, startNodeX: n.position.x, startNodeY: n.position.y }));
+
+  const handleCommentPointerDown = (e: PointerEvent, comment: BlueprintComment) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    const prev = interaction();
+    if (prev.kind === 'pending_node' || prev.kind === 'pending_port' || prev.kind === 'pending_comment') {
+      clearPendingTimers(prev);
+    }
+    if (prev.kind === 'pan' || prev.kind === 'node_drag' || prev.kind === 'connect'
+        || prev.kind === 'comment_drag' || prev.kind === 'box_select') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const cur = interaction();
+      if (cur.kind === 'pending_comment' && cur.pointerId === e.pointerId) {
+        const start = screenToGraph(e.clientX, e.clientY);
+        setInteraction({
+          kind: 'comment_drag',
+          pointerId: e.pointerId,
+          commentId: comment.id,
+          startGraphX: start.x,
+          startGraphY: start.y,
+          startCommentX: comment.position.x,
+          startCommentY: comment.position.y,
+          nodeEntries: nodesContainedIn(comment),
+        });
+        if (navigator.vibrate) navigator.vibrate(15);
+      }
+    }, LONG_PRESS_MS);
+
+    setInteraction({
+      kind: 'pending_comment',
+      pointerId: e.pointerId,
+      commentId: comment.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      timer,
+    });
+    try {
+      svgEl?.setPointerCapture(e.pointerId);
+    } catch {
+      // 忽略多点触控捕获异常
+    }
+  };
+
   // ─── 指针移动（统一）───
 
   const handlePointerMove = (e: PointerEvent) => {
@@ -416,6 +543,48 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
     if (it.kind === 'connect') {
       if (e.pointerId !== it.pointerId) return;
       setConnectCursorPos(screenToGraph(e.clientX, e.clientY));
+      return;
+    }
+
+    if (it.kind === 'box_select') {
+      if (e.pointerId !== it.pointerId) return;
+      const current = screenToGraph(e.clientX, e.clientY);
+      const x = Math.min(it.startGraphX, current.x);
+      const y = Math.min(it.startGraphY, current.y);
+      const width = Math.abs(current.x - it.startGraphX);
+      const height = Math.abs(current.y - it.startGraphY);
+      setMarquee({ x, y, width, height });
+      setMarqueeNodeIds(
+        new Set(
+          props.graph.nodes
+            .filter((n) => {
+              const l = computeNodeLayout(n);
+              return (
+                n.position.x < x + width && n.position.x + l.width > x &&
+                n.position.y < y + height && n.position.y + l.height > y
+              );
+            })
+            .map((n) => n.id),
+        ),
+      );
+      return;
+    }
+
+    if (it.kind === 'comment_drag') {
+      if (e.pointerId !== it.pointerId) return;
+      const current = screenToGraph(e.clientX, e.clientY);
+      const dx = current.x - it.startGraphX;
+      const dy = current.y - it.startGraphY;
+      props.onCommentMove(it.commentId, {
+        x: it.startCommentX + dx,
+        y: it.startCommentY + dy,
+      });
+      props.onNodesMoveBatch(
+        it.nodeEntries.map((entry) => ({
+          id: entry.nodeId,
+          position: { x: entry.startNodeX + dx, y: entry.startNodeY + dy },
+        })),
+      );
       return;
     }
 
@@ -461,6 +630,24 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
       }
       return;
     }
+
+    if (it.kind === 'pending_comment' && e.pointerId === it.pointerId) {
+      const dx = e.clientX - it.startClientX;
+      const dy = e.clientY - it.startClientY;
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_TOLERANCE) {
+        window.clearTimeout(it.timer);
+
+        setInteraction({
+          kind: 'pan',
+          pointerId: it.pointerId,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startOffsetX: view().offsetX,
+          startOffsetY: view().offsetY,
+        });
+      }
+      return;
+    }
   };
 
   // ─── 指针抬起（统一）───
@@ -487,6 +674,44 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
 
       // 长按未触发即松手：选中端口所属节点
       props.onNodeSelect(it.from.nodeId);
+      setInteraction({ kind: 'idle' });
+      try {
+        svgEl?.releasePointerCapture(e.pointerId);
+      } catch {
+        // 忽略
+      }
+      return;
+    }
+
+    if (it.kind === 'pending_comment' && it.pointerId === e.pointerId) {
+      window.clearTimeout(it.timer);
+
+      // 长按未触发即松手：视为点击 → 选中注释框
+      props.onCommentSelect(it.commentId);
+      setInteraction({ kind: 'idle' });
+      try {
+        svgEl?.releasePointerCapture(e.pointerId);
+      } catch {
+        // 忽略
+      }
+      return;
+    }
+
+    if (it.kind === 'box_select' && it.pointerId === e.pointerId) {
+      // 框选结束：用框内命中的节点替换选中集合（空集 = 清除选择）
+      props.onNodesBoxSelected([...marqueeNodeIds()]);
+      setMarquee(null);
+      setMarqueeNodeIds(new Set<string>());
+      setInteraction({ kind: 'idle' });
+      try {
+        svgEl?.releasePointerCapture(e.pointerId);
+      } catch {
+        // 忽略
+      }
+      return;
+    }
+
+    if (it.kind === 'comment_drag' && it.pointerId === e.pointerId) {
       setInteraction({ kind: 'idle' });
       try {
         svgEl?.releasePointerCapture(e.pointerId);
@@ -553,13 +778,15 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
 
   const handlePointerCancel = (e: PointerEvent) => {
     const it = interaction();
-    if (it.kind === 'pending_node' || it.kind === 'pending_port') {
+    if (it.kind === 'pending_node' || it.kind === 'pending_port' || it.kind === 'pending_comment') {
       clearPendingTimers(it);
 
     }
     setInteraction({ kind: 'idle' });
     setConnectCursorPos(null);
     setIsConnecting(false);
+    setMarquee(null);
+    setMarqueeNodeIds(new Set<string>());
     try {
       svgEl?.releasePointerCapture(e.pointerId);
     } catch {
@@ -575,11 +802,11 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
     if (it.kind === 'idle' || it.kind === 'pinch') return;
 
     // pending 状态下第二指出现：取消长按等待，进入捏合
-    if (it.kind === 'pending_node' || it.kind === 'pending_port') {
+    if (it.kind === 'pending_node' || it.kind === 'pending_port' || it.kind === 'pending_comment') {
       clearPendingTimers(it);
     }
 
-    const firstPointerId = it.kind === 'pan' || it.kind === 'node_drag' || it.kind === 'connect' || it.kind === 'pending_node' || it.kind === 'pending_port'
+    const firstPointerId = it.kind === 'pan' || it.kind === 'node_drag' || it.kind === 'connect' || it.kind === 'comment_drag' || it.kind === 'box_select' || it.kind === 'pending_node' || it.kind === 'pending_port' || it.kind === 'pending_comment'
       ? it.pointerId
       : null;
     if (firstPointerId === null || firstPointerId === e.pointerId) return;
@@ -820,6 +1047,43 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
           pointer-events="none"
         />
 
+        {/* UE 式注释框（在连线与节点下层） */}
+        <For each={props.graph.comments ?? []}>
+          {(comment) => {
+            const selected = props.selectedCommentId === comment.id;
+            return (
+              <g
+                onPointerDown={(e) => handleCommentPointerDown(e, comment)}
+                style={{ cursor: 'move' }}
+              >
+                <rect
+                  width={comment.width}
+                  height={comment.height}
+                  rx={6}
+                  fill={COMMENT_FILL}
+                  stroke={selected ? '#60a5fa' : COMMENT_STROKE}
+                  stroke-width={selected ? 2 : 1.2}
+                />
+                <path
+                  d={`M 0,6 Q 0,0 6,0 H ${comment.width - 6} Q ${comment.width},0 ${comment.width},6 V ${COMMENT_HEADER_HEIGHT} H 0 Z`}
+                  fill={COMMENT_HEADER_FILL}
+                  pointer-events="none"
+                />
+                <text
+                  x={10}
+                  y={COMMENT_HEADER_HEIGHT / 2 + 4}
+                  font-size="12"
+                  font-weight="600"
+                  fill="rgba(220, 245, 228, 0.9)"
+                  pointer-events="none"
+                >
+                  {comment.text}
+                </text>
+              </g>
+            );
+          }}
+        </For>
+
         {/* 连线（在节点下方）*/}
         <For each={props.graph.edges}>
           {(edge) => (
@@ -861,7 +1125,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
         <For each={visibleNodes()}>
           {(node) => {
             const layout = computeNodeLayout(node);
-            const isSelected = props.selectedNodeId === node.id;
+            const isSelected = props.selectedNodeIds.has(node.id) || marqueeNodeIds().has(node.id);
             return (
               <g
                 transform={`translate(${node.position.x}, ${node.position.y})`}
@@ -1016,6 +1280,23 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
             );
           }}
         </For>
+
+        {/* 框选矩形（图坐标，位于节点上方） */}
+        <Show when={marquee()}>
+          {(rect) => (
+            <rect
+              x={rect().x}
+              y={rect().y}
+              width={rect().width}
+              height={rect().height}
+              fill="rgba(58,109,140,0.15)"
+              stroke="#60a5fa"
+              stroke-width={1}
+              stroke-dasharray="5 3"
+              pointer-events="none"
+            />
+          )}
+        </Show>
 
         {/* 连线模式下的临时线 */}
         <Show when={interaction()?.kind === 'connect' && connectCursorPos()}>

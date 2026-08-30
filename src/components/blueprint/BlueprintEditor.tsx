@@ -37,10 +37,12 @@ import { createStore } from 'solid-js/store';
 import { ArrowLeft, Eye, LayoutGrid, Save } from '../../lib/icons';
 import {
   NODE_TYPES,
+  type BlueprintComment,
   type BlueprintEdge,
   type BlueprintGraph,
   type BlueprintNode,
   type NodeConfig,
+  type NodePositionPatch,
   type NodeType,
   type Position,
 } from '../../lib/blueprint/types';
@@ -56,7 +58,7 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import { NodeSelector } from './NodeSelector';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
-import { autoLayout, type ViewTransform } from './nodeLayout';
+import { autoLayout, isNodeLocked, type ViewTransform } from './nodeLayout';
 
 // ─── Props ───
 
@@ -205,11 +207,21 @@ function generateEdgeId(): string {
   return `e_${++edgeCounter}_${Date.now().toString(36).slice(-4)}`;
 }
 
+let commentCounter = 0;
+function generateCommentId(): string {
+  return `c_${++commentCounter}_${Date.now().toString(36).slice(-4)}`;
+}
+
+/** Comment box default geometry (graph units), kept in sync with the canvas. */
+const COMMENT_DEFAULT_WIDTH = 360;
+const COMMENT_DEFAULT_HEIGHT = 240;
+
 // ─── Empty graph ───
 
 function createEmptyGraph(): BlueprintGraph {
   return {
     version: 2,
+    comments: [],
     nodes: [
       {
         id: 'n_start',
@@ -294,7 +306,14 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
     }
     return node;
   });
-  return JSON.stringify({ version: 2, nodes, edges: graph.edges });
+  // comments 属编辑器标注元数据：随图落库，Rust 侧 `#[serde(default)]` 保留，
+  // 执行器忽略。空列表也显式输出，保持序列化确定性。
+  return JSON.stringify({
+    version: 2,
+    nodes,
+    edges: graph.edges,
+    comments: graph.comments ?? [],
+  });
 }
 
 /// Ensure Start/End nodes have an in-memory `config: {}` placeholder after
@@ -318,8 +337,12 @@ function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
 
 export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [graph, setGraph] = createStore<BlueprintGraph>(createEmptyGraph());
+  // 主选中节点：仅在恰好选中 1 个节点时非空，驱动配置面板。
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
+  // 框选 / Ctrl+点选产生的多选集合（含主选中节点）。
+  const [selectedNodeIds, setSelectedNodeIds] = createSignal<Set<string>>(new Set());
   const [selectedEdgeId, setSelectedEdgeId] = createSignal<string | null>(null);
+  const [selectedCommentId, setSelectedCommentId] = createSignal<string | null>(null);
   const [hiddenNodeIds, setHiddenNodeIds] = createSignal<Set<string>>(new Set());
   const [viewTransform, setViewTransform] = createStore<ViewTransform>({
     offsetX: 80,
@@ -334,20 +357,80 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
   let canvasContainerEl: HTMLDivElement | undefined;
 
-  // Delete key: delete the selected edge (if any). Node deletion is handled
-  // in NodeConfigPanel's delete button (is_locked aware).
+  // ─── Selection helpers ───
+
+  /** Single-select a node (replaces the multi-selection). */
+  const handleNodeSelect = (nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+    setSelectedNodeIds(nodeId ? new Set<string>([nodeId]) : new Set<string>());
+    setSelectedEdgeId(null);
+    setSelectedCommentId(null);
+  };
+
+  /** Ctrl+click toggle of a node's membership in the multi-selection. */
+  const handleNodeToggleSelect = (nodeId: string) => {
+    setSelectedEdgeId(null);
+    setSelectedCommentId(null);
+    const next = new Set(selectedNodeIds());
+    if (next.has(nodeId)) next.delete(nodeId);
+    else next.add(nodeId);
+    setSelectedNodeIds(next);
+    setSelectedNodeId(next.size === 1 ? [...next][0] : null);
+  };
+
+  /** Marquee finalize: replace the selection with the boxed nodes. */
+  const handleNodesBoxSelected = (nodeIds: string[]) => {
+    setSelectedEdgeId(null);
+    setSelectedCommentId(null);
+    setSelectedNodeIds(new Set(nodeIds));
+    setSelectedNodeId(nodeIds.length === 1 ? nodeIds[0] : null);
+  };
+
+  const handleEdgeSelect = (edgeId: string | null) => {
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set<string>());
+    setSelectedCommentId(null);
+    setSelectedEdgeId(edgeId);
+  };
+
+  const handleCommentSelect = (commentId: string | null) => {
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set<string>());
+    setSelectedEdgeId(null);
+    setSelectedCommentId(commentId);
+  };
+
+  // ─── Keyboard: Delete removes selection, X breaks all pins ───
+
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-    const edgeId = selectedEdgeId();
-    if (!edgeId) return;
-    // Avoid hijacking Delete when the user is typing in an input/textarea.
+    // Avoid hijacking keys when the user is typing in an input/textarea.
     const target = e.target as HTMLElement;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
       return;
     }
-    e.preventDefault();
-    handleEdgeDelete(edgeId);
-    setSelectedEdgeId(null);
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const nodeIds = [...selectedNodeIds()];
+      const commentId = selectedCommentId();
+      const edgeId = selectedEdgeId();
+      if (nodeIds.length === 0 && !commentId && !edgeId) return;
+      e.preventDefault();
+      if (nodeIds.length > 0) {
+        handleDeleteNodes(nodeIds);
+      } else if (commentId) {
+        handleDeleteComment(commentId);
+      } else if (edgeId) {
+        handleEdgeDelete(edgeId);
+        setSelectedEdgeId(null);
+      }
+      return;
+    }
+    // X：断开所有选中节点的全部连线（断开所有引脚）。
+    if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const nodeIds = [...selectedNodeIds()];
+      if (nodeIds.length === 0) return;
+      e.preventDefault();
+      handleDisconnectNodes(nodeIds);
+    }
   };
 
   onMount(() => {
@@ -390,6 +473,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           const normalizedNodes = normalizeLoadedNodes(parsed.nodes);
           setGraph('nodes', normalizedNodes);
           setGraph('edges', parsed.edges);
+          setGraph('comments', parsed.comments ?? []);
           setGraph('version', 2);
 
           if (migration.migrated) {
@@ -425,6 +509,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         const empty = createEmptyGraph();
         setGraph('nodes', empty.nodes);
         setGraph('edges', empty.edges);
+        setGraph('comments', empty.comments ?? []);
         setGraph('version', 2);
         setDirty(false);
       }
@@ -451,28 +536,66 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
   // ─── Node CRUD ───
 
-  const handleAddNode = (type: NodeType, _sentinel: Position) => {
-    const center = computeViewCenterGraph();
+  const addNodeAt = (type: NodeType, position: Position) => {
     const node: BlueprintNode = {
       id: generateNodeId(type),
-      position: { x: Math.round(center.x), y: Math.round(center.y) },
+      position: { x: Math.round(position.x), y: Math.round(position.y) },
       ...defaultConfigForType(type),
     } as BlueprintNode;
     setGraph('nodes', (prev) => [...prev, node]);
-    setSelectedNodeId(node.id);
+    handleNodeSelect(node.id);
     setDirty(true);
   };
 
-  const handleDeleteNode = (nodeId: string) => {
-    setGraph('nodes', (prev) => prev.filter((n) => n.id !== nodeId));
-    setGraph('edges', (prev) => prev.filter((e) => e.source !== nodeId && e.target !== nodeId));
-    if (selectedNodeId() === nodeId) setSelectedNodeId(null);
+  /** Toolbar / NodeSelector creation: place at the current view center. */
+  const handleAddNode = (type: NodeType, _sentinel: Position) => {
+    addNodeAt(type, computeViewCenterGraph());
+  };
+
+  /** Context-menu creation: place at the right-clicked graph position. */
+  const handleCreateNodeAt = (type: NodeType, position: Position) => {
+    addNodeAt(type, position);
+  };
+
+  /**
+   * Batch node deletion. Locked nodes are skipped with a visible toast
+   * (locked nodes cannot be deleted per spec — zero-fallback visibility).
+   */
+  const handleDeleteNodes = (nodeIds: string[]) => {
+    const idSet = new Set(nodeIds);
+    const lockedIds = graph.nodes
+      .filter((n) => idSet.has(n.id) && isNodeLocked(n))
+      .map((n) => n.id);
+    const deletable = nodeIds.filter((id) => !lockedIds.includes(id));
+    if (deletable.length === 0) {
+      showToast('选中节点均已锁定，不可删除', 'warning');
+      return;
+    }
+    if (lockedIds.length > 0) {
+      showToast(`${lockedIds.length} 个锁定节点未删除（锁定节点不可删除）`, 'warning');
+    }
+    const deleteSet = new Set(deletable);
+    setGraph('nodes', (prev) => prev.filter((n) => !deleteSet.has(n.id)));
+    setGraph('edges', (prev) =>
+      prev.filter((e) => !deleteSet.has(e.source) && !deleteSet.has(e.target)),
+    );
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      deleteSet.forEach((id) => next.delete(id));
+      return next;
+    });
+    setSelectedNodeId((prev) => (prev && deleteSet.has(prev) ? null : prev));
     setHiddenNodeIds((prev) => {
       const next = new Set(prev);
-      next.delete(nodeId);
+      deleteSet.forEach((id) => next.delete(id));
       return next;
     });
     setDirty(true);
+  };
+
+  /** Single-node delete (NodeConfigPanel button) reuses the batch path. */
+  const handleDeleteNode = (nodeId: string) => {
+    handleDeleteNodes([nodeId]);
   };
 
   const handleUpdateNode = (nodeId: string, updates: Partial<NodeConfig>) => {
@@ -485,10 +608,73 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setDirty(true);
   };
 
-  const handleNodeMove = (nodeId: string, position: Position) => {
-    setGraph('nodes', (prev) => prev.map((n) =>
-      n.id === nodeId ? { ...n, position } : n
+  /** Batch node position patches in one store update (C3: single patch). */
+  const handleNodesMoveBatch = (moves: NodePositionPatch[]) => {
+    if (moves.length === 0) return;
+    const byId = new Map(moves.map((m) => [m.id, m.position]));
+    setGraph('nodes', (prev) => prev.map((n) => {
+      const pos = byId.get(n.id);
+      return pos ? { ...n, position: pos } : n;
+    }));
+    setDirty(true);
+  };
+
+  /** Disconnect every edge touching any of the selected nodes. */
+  const handleDisconnectNodes = (nodeIds: string[]) => {
+    const idSet = new Set(nodeIds);
+    const removed = graph.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target));
+    if (removed.length === 0) {
+      showToast('选中节点没有连线可断开', 'info');
+      return;
+    }
+    setGraph('edges', (prev) =>
+      prev.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+    );
+    setDirty(true);
+    showToast(`已断开 ${removed.length} 条连线`, 'success');
+  };
+
+  // ─── Comment box CRUD ───
+
+  const patchComment = (commentId: string, patch: Partial<BlueprintComment>) => {
+    setGraph('comments', (prev) => (prev ?? []).map((c) =>
+      c.id === commentId ? { ...c, ...patch } : c,
     ));
+    setDirty(true);
+  };
+
+  /** UE-style comment box created at the right-clicked position. */
+  const handleAddCommentAt = (position: Position) => {
+    const comment: BlueprintComment = {
+      id: generateCommentId(),
+      text: '注释',
+      position: { x: Math.round(position.x), y: Math.round(position.y) },
+      width: COMMENT_DEFAULT_WIDTH,
+      height: COMMENT_DEFAULT_HEIGHT,
+    };
+    setGraph('comments', (prev) => [...(prev ?? []), comment]);
+    handleCommentSelect(comment.id);
+    setDirty(true);
+  };
+
+  const handleCommentMove = (commentId: string, position: Position) => {
+    patchComment(commentId, { position });
+  };
+
+  const handleCommentResize = (commentId: string, width: number, height: number) => {
+    patchComment(commentId, {
+      width: Math.round(width),
+      height: Math.round(height),
+    });
+  };
+
+  const handleUpdateCommentText = (commentId: string, text: string) => {
+    patchComment(commentId, { text });
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    setGraph('comments', (prev) => (prev ?? []).filter((c) => c.id !== commentId));
+    if (selectedCommentId() === commentId) setSelectedCommentId(null);
     setDirty(true);
   };
 
@@ -681,26 +867,68 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           <BlueprintCanvas
             graph={graph}
             viewTransform={viewTransform}
-            selectedNodeId={selectedNodeId()}
+            selectedNodeIds={selectedNodeIds()}
             selectedEdgeId={selectedEdgeId()}
+            selectedCommentId={selectedCommentId()}
             hiddenNodeIds={hiddenNodeIds()}
-            onNodeSelect={setSelectedNodeId}
-            onEdgeSelect={setSelectedEdgeId}
-            onNodeMove={handleNodeMove}
+            onNodeSelect={handleNodeSelect}
+            onNodeToggleSelect={handleNodeToggleSelect}
+            onNodesBoxSelected={handleNodesBoxSelected}
+            onEdgeSelect={handleEdgeSelect}
+            onCommentSelect={handleCommentSelect}
+            onNodesMoveBatch={handleNodesMoveBatch}
             onEdgeCreate={handleEdgeCreate}
             onEdgeDelete={handleEdgeDelete}
             onGraphPan={handleGraphPan}
             onGraphZoom={handleGraphZoom}
             onToggleNodeHidden={handleToggleNodeHidden}
+            onCreateNodeAt={handleCreateNodeAt}
+            onAddCommentAt={handleAddCommentAt}
+            onCommentMove={handleCommentMove}
+            onCommentResize={handleCommentResize}
+            onUpdateCommentText={handleUpdateCommentText}
           />
+
+          {/* Shortcut legend (render-only) */}
+          <div class="absolute bottom-2 left-3 z-10 pointer-events-none text-[10px] text-mist-solid/35 flex gap-3 flex-wrap">
+            <span>左键拖动空白 = 框选</span>
+            <span>右键空白 = 创建节点/注释</span>
+            <span>右键拖动 = 平移</span>
+            <span>Ctrl+点击 = 加选</span>
+            <span>DEL = 删除选中</span>
+            <span>X = 断开连线</span>
+            <span>双击注释 = 编辑文字</span>
+          </div>
         </div>
 
-        <div class="w-[360px] flex-shrink-0 h-full">
-          <NodeConfigPanel
-            node={selectedNode()}
-            onUpdate={handleUpdateNode}
-            onDelete={handleDeleteNode}
-          />
+        <div class="w-[360px] flex-shrink-0 h-full min-h-0">
+          <Show
+            when={selectedNode() && selectedNodeIds().size === 1}
+            fallback={
+              <Show when={selectedNodeIds().size > 1}>
+                <div class="h-full flex flex-col items-center justify-center gap-3 px-6 text-center border-l border-white/5">
+                  <div class="text-sm font-bold text-mist-solid/70">
+                    已选中 {selectedNodeIds().size} 个节点
+                  </div>
+                  <div class="text-xs text-mist-solid/40 leading-6">
+                    拖动任一选中节点可整体移动
+                    <br />
+                    按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">DEL</kbd> 删除全部
+                    <br />
+                    按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">X</kbd> 断开全部连线
+                    <br />
+                    点击单个节点可编辑其配置
+                  </div>
+                </div>
+              </Show>
+            }
+          >
+            <NodeConfigPanel
+              node={selectedNode()}
+              onUpdate={handleUpdateNode}
+              onDelete={handleDeleteNode}
+            />
+          </Show>
         </div>
       </div>
     </div>

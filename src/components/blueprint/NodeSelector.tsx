@@ -31,7 +31,7 @@ export interface NodeSelectorProps {
 
 // ─── Node type → display label ───
 
-const NODE_LABELS: Record<NodeType, string> = {
+export const NODE_LABELS: Record<NodeType, string> = {
   start: 'Start（起点）',
   end: 'End（终点）',
   prompt: 'Prompt（提示词片段）',
@@ -65,7 +65,8 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
 
 /// 选择器中展示的节点类型列表：移除已废弃的 role_switch 与 legacy
 /// sampling_params。旧图中的这些节点仍可加载和执行，但不允许新建。
-const SELECTABLE_NODE_TYPES: NodeType[] = NODE_TYPES.filter(
+/// 导出给画布右键上下文菜单复用（同一份可新建列表）。
+export const SELECTABLE_NODE_TYPES: NodeType[] = NODE_TYPES.filter(
   (t) => t !== 'role_switch' && t !== 'sampling_params',
 );
 

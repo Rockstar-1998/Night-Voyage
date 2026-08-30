@@ -656,6 +656,7 @@ mod tests {
     fn minimal_graph_json() -> String {
         let graph = BlueprintGraph {
             version: 2,
+            comments: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -718,6 +719,7 @@ mod tests {
     fn full_graph_json() -> String {
         let graph = BlueprintGraph {
             version: 2,
+            comments: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -1171,6 +1173,7 @@ mod tests {
     fn mutex_gate_graph_json() -> String {
         let g = BlueprintGraph {
             version: 2,
+            comments: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -1307,6 +1310,7 @@ mod tests {
     fn group_gate_graph_json() -> String {
         let g = BlueprintGraph {
             version: 2,
+            comments: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),

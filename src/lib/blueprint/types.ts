@@ -38,6 +38,12 @@ export interface Position {
   y: number;
 }
 
+/** 单节点位置补丁：批量移动（框选拖动 / 注释框携带节点）时使用。 */
+export interface NodePositionPatch {
+  id: string;
+  position: Position;
+}
+
 /**
  * 引脚种类（UE 式分类）。
  * - `exec`：执行流引脚，驱动节点执行顺序
@@ -218,10 +224,28 @@ export type BlueprintNode = NodeConfig & {
   position: Position;
 };
 
+/**
+ * UE 式注释框。编辑器专用的画布标注元数据，图执行器忽略。
+ * 旧版蓝图 JSON 缺失 `comments` 时视为空列表（与 Rust `#[serde(default)]` 一致）。
+ */
+export interface BlueprintComment {
+  id: string;
+  /** 注释标题文本（UE 式显示在框顶部彩条上）。 */
+  text: string;
+  /** 框左上角（图坐标）。 */
+  position: Position;
+  /** 框宽（图坐标单位）。 */
+  width: number;
+  /** 框高（图坐标单位）。 */
+  height: number;
+}
+
 export interface BlueprintGraph {
   version: 2;
   nodes: BlueprintNode[];
   edges: BlueprintEdge[];
+  /** UE 式注释框列表。可缺省（旧图兼容），加载后统一归一化为数组。 */
+  comments?: BlueprintComment[];
 }
 
 // ─── Runtime IPC types (camelCase — matches Rust serde camelCase over IPC) ───

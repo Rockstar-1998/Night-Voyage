@@ -1543,6 +1543,7 @@ mod tests {
     fn graph(nodes: Vec<BlueprintNode>, edges: Vec<BlueprintEdge>) -> BlueprintGraph {
         BlueprintGraph {
             version: 2,
+            comments: Vec::new(),
             nodes,
             edges,
         }

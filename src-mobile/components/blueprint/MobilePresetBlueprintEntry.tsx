@@ -77,6 +77,7 @@ function normalizeLoadedNodes(nodes: BlueprintNode[]): BlueprintNode[] {
 /// 序列化 BlueprintGraph 为后端持久化的 JSON 字符串。
 /// Rust serde `#[serde(tag = "type", content = "config")]` 序列化 unit
 /// 变体（Start/End）时不带 `config` 字段，故此处需剥离占位 `config: {}`。
+/// `comments`（UE 式注释框）随图落库，Rust 侧 `#[serde(default)]` 保留往返。
 function serializeBlueprintGraph(graph: BlueprintGraph): string {
   const nodes = graph.nodes.map((node) => {
     if (node.type === 'start' || node.type === 'end') {
@@ -84,7 +85,12 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
     }
     return node;
   });
-  return JSON.stringify({ version: 2, nodes, edges: graph.edges });
+  return JSON.stringify({
+    version: 2,
+    nodes,
+    edges: graph.edges,
+    comments: graph.comments ?? [],
+  });
 }
 
 /// 从后端 blueprint_graph JSON 字符串解析为 BlueprintGraph。
@@ -118,6 +124,7 @@ async function parseGraph(json: string): Promise<{ graph: BlueprintGraph; migrat
       version: 2,
       nodes: nodesWithPositions,
       edges: parsed.edges,
+      comments: parsed.comments ?? [],
     },
     migrated: migration.migrated,
   };

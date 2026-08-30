@@ -153,15 +153,41 @@ impl<'de> Deserialize<'de> for BlueprintEdge {
     }
 }
 
+/// UE 式注释框。仅编辑器使用的画布标注元数据，图执行器忽略。
+///
+/// 随 `blueprint_graph` JSON 一起落库；`normalize_blueprint_graph` 的
+/// Rust 结构体往返必须保留该字段，否则编辑器加载一次即静默丢失注释（C2）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlueprintComment {
+    pub id: String,
+    /// 注释标题文本（UE 式显示在框顶部彩条上）。
+    pub text: String,
+    /// 框左上角（图坐标）。旧 JSON 缺失时按原点处理。
+    #[serde(default)]
+    pub position: Position,
+    /// 框宽（图坐标单位）。旧 JSON 缺失时按 0 处理。
+    #[serde(default)]
+    pub width: f64,
+    /// 框高（图坐标单位）。旧 JSON 缺失时按 0 处理。
+    #[serde(default)]
+    pub height: f64,
+}
+
 /// 完整蓝图图，包含版本号、节点列表与连线列表。
 ///
 /// 反序列化时强制校验 `version == 2`（v2 运行时执行架构），缺失或非 2 均报错。
+///
+/// `comments` 为 UE 式注释框列表，编辑器专用元数据（执行器忽略）。带
+/// `#[serde(default)]`：旧版蓝图 JSON 缺失该字段时反序列化为空列表；
+/// 序列化时空列表不输出，保持旧预设的 JSON 字节面不变。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlueprintGraph {
     #[serde(deserialize_with = "deserialize_blueprint_version")]
     pub version: i32,
     pub nodes: Vec<BlueprintNode>,
     pub edges: Vec<BlueprintEdge>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<BlueprintComment>,
 }
 
 /// 蓝图版本号反序列化校验：仅接受 v2 运行时执行架构。

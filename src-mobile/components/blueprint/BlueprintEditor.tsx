@@ -26,16 +26,19 @@ import {
   createSignal,
 } from 'solid-js';
 import type {
+  BlueprintComment,
   BlueprintEdge,
   BlueprintGraph,
   BlueprintNode,
   NodeConfig,
+  NodePositionPatch,
   NodeType,
   Position,
 } from '../../../src/lib/blueprint/types';
 import {
   clampZoom,
   createNode,
+  isNodeLocked,
   NODE_WIDTH,
   ViewTransform,
   autoLayout,
@@ -79,6 +82,11 @@ const ADDABLE_NODE_TYPES: Array<{ type: NodeType; label: string; desc: string }>
 export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [graph, setGraph] = createSignal<BlueprintGraph>(props.initialGraph);
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
+  // 框选 / 批量操作的多选集合（含单选场景）。
+  const [selectedNodeIds, setSelectedNodeIds] = createSignal<Set<string>>(new Set());
+  const [selectedCommentId, setSelectedCommentId] = createSignal<string | null>(null);
+  // 框选模式：背景单指拖动从平移切换为框选。
+  const [boxSelectMode, setBoxSelectMode] = createSignal(false);
   const [draftConfig, setDraftConfig] = createSignal<NodeConfig | null>(null);
   const [viewTransform, setViewTransform] = createSignal<ViewTransform>({
     offsetX: 40,
@@ -105,16 +113,41 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   // ─── 选中节点时初始化草稿 ───
 
   const handleNodeSelect = (nodeId: string | null) => {
+    setSelectedCommentId(null);
     if (nodeId === null) {
       setSelectedNodeId(null);
+      setSelectedNodeIds(new Set<string>());
       setDraftConfig(null);
       return;
     }
     const node = graph().nodes.find((n) => n.id === nodeId);
     if (!node) return;
     setSelectedNodeId(nodeId);
+    setSelectedNodeIds(new Set([nodeId]));
     // 深拷贝 config 作为草稿
     setDraftConfig({ type: node.type, config: structuredClone(node.config) } as NodeConfig);
+  };
+
+  // ─── 注释框选中 ───
+
+  const handleCommentSelect = (commentId: string | null) => {
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set<string>());
+    setDraftConfig(null);
+    setSelectedCommentId(commentId);
+  };
+
+  // ─── 框选结束：整体替换多选集合 ───
+
+  const handleNodesBoxSelected = (nodeIds: string[]) => {
+    setSelectedCommentId(null);
+    setSelectedNodeIds(new Set(nodeIds));
+    if (nodeIds.length === 1) {
+      handleNodeSelect(nodeIds[0]);
+    } else {
+      setSelectedNodeId(null);
+      setDraftConfig(null);
+    }
   };
 
   // ─── 配置变更（更新草稿，不碰 graph）───
@@ -142,8 +175,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   // ─── 取消（丢弃草稿）───
 
   const handleCancelNode = (_nodeId: string) => {
-    setDraftConfig(null);
-    setSelectedNodeId(null);
+    handleNodeSelect(null);
   };
 
   // ─── 删除节点 ───
@@ -155,9 +187,129 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       edges: g.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
     }));
     setSelectedNodeId(null);
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      next.delete(nodeId);
+      return next;
+    });
     setDraftConfig(null);
     setIsDirty(true);
     showToast('节点已删除', 'info', 2000);
+  };
+
+  // ─── 批量删除（框选结果；跳过锁定 / Start / End，与抽屉删除规则一致）───
+
+  const handleDeleteSelectedNodes = () => {
+    const ids = [...selectedNodeIds()];
+    if (ids.length === 0) return;
+    const byId = new Map(graph().nodes.map((n) => [n.id, n]));
+    const blocked = ids.filter((id) => {
+      const n = byId.get(id);
+      return !n || isNodeLocked(n) || n.type === 'start' || n.type === 'end';
+    });
+    const deletable = ids.filter((id) => !blocked.includes(id));
+    if (deletable.length === 0) {
+      showToast('选中节点均不可删除（锁定 / Start / End）', 'warning');
+      return;
+    }
+    if (blocked.length > 0) {
+      showToast(`${blocked.length} 个节点未删除（锁定 / Start / End 不可删除）`, 'warning');
+    }
+    const deleteSet = new Set(deletable);
+    setGraph((g) => ({
+      ...g,
+      nodes: g.nodes.filter((n) => !deleteSet.has(n.id)),
+      edges: g.edges.filter((e) => !deleteSet.has(e.source) && !deleteSet.has(e.target)),
+    }));
+    setSelectedNodeIds(new Set<string>());
+    setSelectedNodeId(null);
+    setDraftConfig(null);
+    setIsDirty(true);
+    showToast(`已删除 ${deletable.length} 个节点`, 'info', 2000);
+  };
+
+  // ─── 批量断开连线（断开所有选中节点的全部引脚连线）───
+
+  const handleDisconnectSelectedNodes = () => {
+    const ids = [...selectedNodeIds()];
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    const removed = graph().edges.filter(
+      (e) => idSet.has(e.source) || idSet.has(e.target),
+    ).length;
+    if (removed === 0) {
+      showToast('选中节点没有连线可断开', 'info', 2000);
+      return;
+    }
+    setGraph((g) => ({
+      ...g,
+      edges: g.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+    }));
+    setIsDirty(true);
+    showToast(`已断开 ${removed} 条连线`, 'success', 2000);
+  };
+
+  // ─── 批量移动（注释框拖动携带框内节点）───
+
+  const handleNodesMoveBatch = (moves: NodePositionPatch[]) => {
+    if (moves.length === 0) return;
+    const byId = new Map(moves.map((m) => [m.id, m.position]));
+    setGraph((g) => ({
+      ...g,
+      nodes: g.nodes.map((n) => {
+        const pos = byId.get(n.id);
+        return pos ? { ...n, position: pos } : n;
+      }),
+    }));
+    setIsDirty(true);
+  };
+
+  // ─── 注释框 CRUD ───
+
+  const patchComment = (commentId: string, patch: Partial<BlueprintComment>) => {
+    setGraph((g) => ({
+      ...g,
+      comments: (g.comments ?? []).map((c) =>
+        c.id === commentId ? { ...c, ...patch } : c,
+      ),
+    }));
+    setIsDirty(true);
+  };
+
+  const handleAddComment = () => {
+    const rect = svgContainerRef?.getBoundingClientRect();
+    const v = viewTransform();
+    const centerGraphX = rect ? (rect.width / 2 - v.offsetX) / v.zoom : 200;
+    const centerGraphY = rect ? (rect.height / 2 - v.offsetY) / v.zoom : 300;
+    const comment: BlueprintComment = {
+      id: `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      text: '注释',
+      position: { x: Math.round(centerGraphX - 180), y: Math.round(centerGraphY - 120) },
+      width: 360,
+      height: 240,
+    };
+    setGraph((g) => ({ ...g, comments: [...(g.comments ?? []), comment] }));
+    handleCommentSelect(comment.id);
+    setIsDirty(true);
+    showToast('已添加注释框', 'success', 1500);
+  };
+
+  const handleCommentMove = (commentId: string, position: Position) => {
+    patchComment(commentId, { position });
+  };
+
+  const handleCommentTextChange = (commentId: string, text: string) => {
+    patchComment(commentId, { text });
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    setGraph((g) => ({
+      ...g,
+      comments: (g.comments ?? []).filter((c) => c.id !== commentId),
+    }));
+    setSelectedCommentId(null);
+    setIsDirty(true);
+    showToast('注释框已删除', 'info', 2000);
   };
 
   // ─── 节点移动 ───
@@ -301,8 +453,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     setGraph((g) => ({ ...g, nodes: [...g.nodes, node] }));
     setIsDirty(true);
     setIsAddSheetOpen(false);
-    setSelectedNodeId(node.id);
-    setDraftConfig({ type: node.type, config: structuredClone(node.config) } as NodeConfig);
+    handleNodeSelect(node.id);
     showToast(`已添加 ${type} 节点`, 'success', 1500);
   };
 
@@ -354,6 +505,14 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const nodeCount = createMemo(() => graph().nodes.length);
   const edgeCount = createMemo(() => graph().edges.length);
 
+  // ─── 当前选中注释框 ───
+
+  const selectedComment = createMemo<BlueprintComment | null>(() => {
+    const id = selectedCommentId();
+    if (!id) return null;
+    return graph().comments?.find((c) => c.id === id) ?? null;
+  });
+
   // ─── 渲染 ───
 
   return (
@@ -373,6 +532,27 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             {nodeCount()} 节点 · {edgeCount()} 连线{isDirty() ? ' · 未保存' : ''}
           </span>
         </div>
+        <button
+          onClick={() => {
+            setBoxSelectMode((v) => !v);
+            handleNodesBoxSelected([]);
+          }}
+          class={`shrink-0 px-2 py-1.5 rounded-lg border text-[12px] font-bold active:scale-95 transition-transform ${
+            boxSelectMode()
+              ? 'bg-accent/25 border-accent/50 text-accent'
+              : 'bg-white/5 border-white/10 text-mist-solid/70'
+          }`}
+          aria-label="框选模式"
+        >
+          框选
+        </button>
+        <button
+          onClick={handleAddComment}
+          class="shrink-0 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-mist-solid/70 text-[12px] font-bold active:scale-95 transition-transform"
+          aria-label="添加注释框"
+        >
+          注释
+        </button>
         <button
           onClick={handleAutoLayout}
           class="shrink-0 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-mist-solid/70 text-[12px] font-bold active:scale-95 transition-transform"
@@ -402,14 +582,79 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         <MobileBlueprintCanvas
           graph={graph()}
           viewTransform={viewTransform()}
-          selectedNodeId={selectedNodeId()}
+          selectedNodeIds={selectedNodeIds()}
+          selectedCommentId={selectedCommentId()}
+          boxSelectMode={boxSelectMode()}
           onNodeSelect={handleNodeSelect}
+          onCommentSelect={handleCommentSelect}
+          onNodesBoxSelected={handleNodesBoxSelected}
           onNodeMove={handleNodeMove}
+          onNodesMoveBatch={handleNodesMoveBatch}
+          onCommentMove={handleCommentMove}
           onEdgeCreate={handleEdgeCreate}
           onEdgeDelete={handleEdgeDelete}
           onGraphPan={handleGraphPan}
           onGraphZoom={handleGraphZoom}
         />
+
+        {/* 框选模式提示 */}
+        <Show when={boxSelectMode()}>
+          <div class="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded-full bg-accent/15 border border-accent/30 text-accent text-[11px] font-bold backdrop-blur-md pointer-events-none">
+            框选模式：拖动空白框选节点，再点一次退出
+          </div>
+        </Show>
+
+        {/* 批量操作栏（框选 / 多选结果） */}
+        <Show when={selectedNodeIds().size > 0}>
+          <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-2 rounded-2xl bg-xuanqing/95 border border-white/10 backdrop-blur-md shadow-xl">
+            <span class="text-[12px] font-bold text-white px-1">已选 {selectedNodeIds().size}</span>
+            <button
+              onClick={handleDisconnectSelectedNodes}
+              class="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-mist-solid text-[12px] font-bold active:scale-95 transition-transform"
+            >
+              断开连线
+            </button>
+            <button
+              onClick={handleDeleteSelectedNodes}
+              class="px-2.5 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-300 text-[12px] font-bold active:scale-95 transition-transform"
+            >
+              删除
+            </button>
+            <button
+              onClick={() => handleNodesBoxSelected([])}
+              class="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-mist-solid/60 text-[12px] font-bold active:scale-95 transition-transform"
+            >
+              清除
+            </button>
+          </div>
+        </Show>
+
+        {/* 注释框编辑栏（选中注释框时显示） */}
+        <Show when={selectedComment()}>
+          {(comment) => (
+            <div class="absolute bottom-20 left-3 right-3 z-20 flex items-center gap-2 px-3 py-2 rounded-2xl bg-xuanqing/95 border border-white/10 backdrop-blur-md shadow-xl">
+              <input
+                type="text"
+                value={comment().text}
+                onInput={(e) => handleCommentTextChange(comment().id, e.currentTarget.value)}
+                class="flex-1 min-w-0 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[13px] text-white outline-none focus:border-accent/50"
+                placeholder="注释文字"
+              />
+              <button
+                onClick={() => handleDeleteComment(comment().id)}
+                class="shrink-0 px-2.5 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-red-300 text-[12px] font-bold active:scale-95 transition-transform"
+              >
+                删除
+              </button>
+              <button
+                onClick={() => handleCommentSelect(null)}
+                class="shrink-0 px-2.5 py-2 rounded-lg bg-accent/15 border border-accent/30 text-accent text-[12px] font-bold active:scale-95 transition-transform"
+              >
+                完成
+              </button>
+            </div>
+          )}
+        </Show>
 
         {/* 浮动缩放控件（右下角） */}
         <div class="absolute bottom-4 right-3 flex flex-col gap-1.5 z-10">
