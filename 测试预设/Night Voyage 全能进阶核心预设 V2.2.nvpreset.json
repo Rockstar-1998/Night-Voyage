@@ -68,6 +68,18 @@
           "position": { "x": 480, "y": 20 }
         },
         {
+          "id": "n_channel_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "思考通道",
+            "options": [
+              { "key": "native", "label": "原生思维链", "description": "模型自主思考（推理模型），thinking仅写一行结论" },
+              { "key": "schema", "label": "指令思维链", "description": "按工位步骤思考（通用回退）" }
+            ]
+          },
+          "position": { "x": 610, "y": 20 }
+        },
+        {
           "id": "n_multi",
           "type": "prompt",
           "config": {
@@ -97,7 +109,8 @@
               "每轮输出正文前，先在 thinking 字段完成思考。思考按系统提示中各工位指令的优先级顺序执行（清点 → 读取状态 → 推演反应 → 自检），按序落笔、不得跳步或合并。",
               "思考是写作的依据，不是正文草稿：只做分析与推演，禁止写出正文成段文字；思考内容不得重复进入正文。",
               "所有工位完成后，以「反应清单」收束——按受影响强度从高到低排列的镜头序列，每条注明依据（性格、状态档位、待办、玩家输入），交由正文执行。",
-              "视角让渡的预演：推演时留意是否存在值得让渡镜头的非焦点角色（在场配角、满足出场条件的世界书角色），若存在，将候选人与让渡时机（节拍间隙）标注在反应清单对应位置，供正文执行；不标注则正文不得临时起意切镜。"
+              "视角让渡的预演：推演时留意是否存在值得让渡镜头的非焦点角色（在场配角、满足出场条件的世界书角色），若存在，将候选人与让渡时机（节拍间隙）标注在反应清单对应位置，供正文执行；不标注则正文不得临时起意切镜。",
+              "反思循环：全部工位完成后，对思考做整体审阅——①遗漏检查：是否漏掉在场角色、输入要点、开启的工位；②逻辑一致性：每条反应的依据是否成立、状态档位是否越界、与上轮落点是否衔接；③敷衍自检：有无跳步、一句话带过。发现任何问题，回到对应工位修改后再收束；修改完成前不得输出正文。"
             ],
             "priority": 92,
             "is_locked": false,
@@ -632,6 +645,7 @@
               "1. 完整性：在场角色是否都已在反应清单中；开启的工位是否都已执行。",
               "2. 越权检查：反应清单中有无替玩家新增的言行；有无依赖角色无从得知的信息。",
               "3. 一致性：反应强度是否越过状态档位；数值预判是否与本轮输入对应。",
+              "4. 整体审阅（勤反思）：复查思考全流程——有无遗漏工位、跳过步骤、敷衍结论、与输入的矛盾。发现问题回到对应步骤修改，重新收束；问题未解决前禁止输出正文（宁可多轮修正，不可带着缺陷上交）。",
               "任一查出问题：修正后再收束，禁止带着已知问题进入正文。"
             ],
             "priority": 62,
@@ -639,6 +653,39 @@
             "lock_reason": null
           },
           "position": { "x": 4440, "y": 20 }
+        },
+        {
+          "id": "n_native_total",
+          "type": "prompt",
+          "config": {
+            "identifier": "native_total",
+            "block_type": "system",
+            "content": [
+              "【原生思维链 · 模式总纲】",
+              "思考由模型在原生思考通道中自主完成，不按工位步骤书写思考过程。",
+              "thinking 字段：仅写一行核心判断结论——本轮关键决策要点与反应清单摘要；思考全过程不写入该字段。",
+              "正文：完全按正文各工位指令执行（视角/文风/镜头/让渡/字数/边界/合规），工位间冲突取更靠后的指令为准。",
+              "反思：若正文落笔时发现思考结论不足以支撑当前段落，先回到思考修正结论，再继续正文；禁止带着已知问题输出。"
+            ],
+            "priority": 90,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": { "x": 6200, "y": -220 }
+        },
+        {
+          "id": "n_sampler_native",
+          "type": "sampling_params_anthropic",
+          "config": {
+            "temperature": null,
+            "max_tokens": null,
+            "top_p": null,
+            "stop": null,
+            "thinking_enabled": true,
+            "thinking_budget_tokens": 8192,
+            "is_locked": false
+          },
+          "position": { "x": 6440, "y": -220 }
         },
         {
           "id": "n_mode_switch",
@@ -1279,7 +1326,7 @@
           "config": {
             "field_name": "thinking",
             "field_type": "string",
-            "description": "内部分析与动机推理链（不对外展示给玩家）。按思维链总纲执行：清点→读取状态→推演反应（产出按受影响强度排序的反应清单，每条注明依据）→输出前自检。只做分析推演，不写正文成稿；每步2-3句控制篇幅，多角色场景按深度档指令把握详略。视角让渡开启时，在反应清单对应位置标注让渡候选人与时机。",
+            "description": "思考记录（对内不展示）。指令思维链模式（思考通道=指令）：按思维链总纲执行清点→读取状态→推演反应（产出按受影响强度排序的反应清单，每条注明依据）→输出前自检，含反思循环；每步2-3句，多角色场景按深度档指令把握详略；视角让渡开启时标注候选人与时机。原生思维链模式（思考通道=原生）：仅写一行核心判断结论——关键决策要点与反应清单摘要，思考全过程不写入。只做分析与推演，不写正文成稿。",
             "sub_schema": null,
             "db_mapping": null,
             "required": true,
@@ -1336,8 +1383,12 @@
         { "id": "e_2", "source": "n_core", "source_port": "out", "target": "n_branch", "target_port": "in", "order": 0 },
         { "id": "e_3", "source": "n_const", "source_port": "out", "target": "n_branch", "target_port": "value", "order": 0 },
         { "id": "e_4", "source": "n_branch", "source_port": "out_online", "target": "n_multi", "target_port": "in", "order": 0 },
-        { "id": "e_5", "source": "n_branch", "source_port": "out_single", "target": "n_cot_head", "target_port": "in", "order": 0 },
-        { "id": "e_6", "source": "n_multi", "source_port": "out", "target": "n_cot_head", "target_port": "in", "order": 0 },
+        { "id": "e_5", "source": "n_branch", "source_port": "out_single", "target": "n_channel_gate", "target_port": "in", "order": 0 },
+        { "id": "e_6", "source": "n_multi", "source_port": "out", "target": "n_channel_gate", "target_port": "in", "order": 0 },
+        { "id": "e_6a", "source": "n_channel_gate", "source_port": "out_schema", "target": "n_cot_head", "target_port": "in", "order": 0 },
+        { "id": "e_6b", "source": "n_channel_gate", "source_port": "out_native", "target": "n_native_total", "target_port": "in", "order": 0 },
+        { "id": "e_6c", "source": "n_native_total", "source_port": "out", "target": "n_sampler_native", "target_port": "in", "order": 0 },
+        { "id": "e_6d", "source": "n_sampler_native", "source_port": "out", "target": "n_mode_switch", "target_port": "in", "order": 0 },
         { "id": "e_7", "source": "n_cot_head", "source_port": "out", "target": "n_census_gate", "target_port": "in", "order": 0 },
         { "id": "e_8", "source": "n_census_gate", "source_port": "out_lite", "target": "n_census_lite", "target_port": "in", "order": 0 },
         { "id": "e_9", "source": "n_census_gate", "source_port": "out_standard", "target": "n_census_standard", "target_port": "in", "order": 0 },
@@ -1354,15 +1405,9 @@
         { "id": "e_21", "source": "n_driver_gate", "source_port": "out_user", "target": "n_driver_user", "target_port": "in", "order": 0 },
         { "id": "e_22", "source": "n_driver_gate", "source_port": "out_npc", "target": "n_driver_npc", "target_port": "in", "order": 0 },
         { "id": "e_23", "source": "n_driver_gate", "source_port": "out_balanced", "target": "n_driver_balanced", "target_port": "in", "order": 0 },
-        { "id": "e_24", "source": "n_driver_user", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_25", "source": "n_driver_npc", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_26", "source": "n_driver_balanced", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_27", "source": "n_status_gate", "source_port": "out_status_bar", "target": "n_status_read", "target_port": "in", "order": 0 },
-        { "id": "e_28", "source": "n_status_gate", "source_port": "out_todo_list", "target": "n_todo_read", "target_port": "in", "order": 0 },
-        { "id": "e_29", "source": "n_status_read", "source_port": "out", "target": "n_schema_status", "target_port": "in", "order": 0 },
-        { "id": "e_30", "source": "n_todo_read", "source_port": "out", "target": "n_schema_todo", "target_port": "in", "order": 0 },
-        { "id": "e_31", "source": "n_schema_status", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
-        { "id": "e_32", "source": "n_schema_todo", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
+        { "id": "e_24", "source": "n_driver_user", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
+        { "id": "e_25", "source": "n_driver_npc", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
+        { "id": "e_26", "source": "n_driver_balanced", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
         { "id": "e_34", "source": "n_infer_gate", "source_port": "out_quick", "target": "n_infer_quick", "target_port": "in", "order": 0 },
         { "id": "e_35", "source": "n_infer_gate", "source_port": "out_standard", "target": "n_infer_standard", "target_port": "in", "order": 0 },
         { "id": "e_36", "source": "n_infer_gate", "source_port": "out_deep", "target": "n_infer_deep", "target_port": "in", "order": 0 },
@@ -1385,12 +1430,18 @@
         { "id": "e_53", "source": "n_res_high", "source_port": "out", "target": "n_cot_check", "target_port": "in", "order": 0 },
         { "id": "e_54", "source": "n_cot_check", "source_port": "out", "target": "n_mode_switch", "target_port": "in", "order": 0 },
         { "id": "e_55", "source": "n_mode_switch", "source_port": "out_legacy", "target": "n_legacy_group", "target_port": "in", "order": 0 },
-        { "id": "e_56", "source": "n_mode_switch", "source_port": "out_mem0", "target": "n_persp_gate", "target_port": "in", "order": 0 },
-        { "id": "e_57", "source": "n_mode_switch", "source_port": "out_stateless", "target": "n_persp_gate", "target_port": "in", "order": 0 },
+        { "id": "e_56", "source": "n_mode_switch", "source_port": "out_mem0", "target": "n_status_gate", "target_port": "in", "order": 0 },
+        { "id": "e_57", "source": "n_mode_switch", "source_port": "out_stateless", "target": "n_status_gate", "target_port": "in", "order": 0 },
         { "id": "e_58", "source": "n_legacy_group", "source_port": "out_world_var", "target": "n_schema_world_vars", "target_port": "in", "order": 0 },
         { "id": "e_59", "source": "n_legacy_group", "source_port": "out_summary", "target": "n_schema_summary", "target_port": "in", "order": 0 },
-        { "id": "e_60", "source": "n_schema_world_vars", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
-        { "id": "e_61", "source": "n_schema_summary", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
+        { "id": "e_60", "source": "n_schema_world_vars", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
+        { "id": "e_61", "source": "n_schema_summary", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
+        { "id": "e_61a", "source": "n_status_gate", "source_port": "out_status_bar", "target": "n_status_read", "target_port": "in", "order": 0 },
+        { "id": "e_61b", "source": "n_status_gate", "source_port": "out_todo_list", "target": "n_todo_read", "target_port": "in", "order": 0 },
+        { "id": "e_61c", "source": "n_status_read", "source_port": "out", "target": "n_schema_status", "target_port": "in", "order": 0 },
+        { "id": "e_61d", "source": "n_todo_read", "source_port": "out", "target": "n_schema_todo", "target_port": "in", "order": 0 },
+        { "id": "e_61e", "source": "n_schema_status", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
+        { "id": "e_61f", "source": "n_schema_todo", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
         { "id": "e_63", "source": "n_persp_gate", "source_port": "out_first", "target": "n_persp_first", "target_port": "in", "order": 0 },
         { "id": "e_64", "source": "n_persp_gate", "source_port": "out_third_close", "target": "n_persp_third", "target_port": "in", "order": 0 },
         { "id": "e_65", "source": "n_persp_gate", "source_port": "out_third_god", "target": "n_persp_god", "target_port": "in", "order": 0 },
