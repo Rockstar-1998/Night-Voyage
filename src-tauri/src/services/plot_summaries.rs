@@ -405,10 +405,20 @@ async fn run_plot_summary_processing_task(
                 }
             };
 
+        let blueprint_instruction = load_blueprint_plot_summary_instruction(db, conversation_id)
+            .await
+            .unwrap_or(None);
+
         let log_dir = app.path().app_data_dir().ok();
 
         let summary_text =
-            match request_ai_plot_summary(&provider, &generation_context, conversation_id, log_dir.as_deref()).await {
+            match request_ai_plot_summary(
+                &provider,
+                &generation_context,
+                conversation_id,
+                blueprint_instruction.as_deref(),
+                log_dir.as_deref(),
+            ).await {
                 Ok(summary_text) => summary_text,
                 Err(error) => {
                     finalize_plot_summary_failed(db, summary_id, &error).await?;
@@ -761,10 +771,86 @@ async fn load_plot_summary_generation_context(
     })
 }
 
+async fn load_blueprint_plot_summary_instruction(
+    db: &SqlitePool,
+    conversation_id: i64,
+) -> Result<Option<String>, String> {
+    let preset_id: Option<i64> = sqlx::query_scalar(
+        "SELECT preset_id FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten();
+
+    let Some(preset_id) = preset_id else {
+        return Ok(None);
+    };
+
+    let blueprint_graph_str: Option<String> = sqlx::query_scalar(
+        "SELECT blueprint_graph FROM presets WHERE id = ? LIMIT 1",
+    )
+    .bind(preset_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?
+    .flatten();
+
+    let Some(raw_graph) = blueprint_graph_str else {
+        return Ok(None);
+    };
+
+    let graph: serde_json::Value = match serde_json::from_str(&raw_graph) {
+        Ok(g) => g,
+        Err(_) => return Ok(None),
+    };
+
+    if let Some(nodes) = graph.get("nodes").and_then(|n| n.as_array()) {
+        // 1. 优先查找绑定了 plot_summary 的 SchemaField 节点描述
+        for node in nodes {
+            let node_type = node.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+            let config = node.get("config").unwrap_or(node);
+            if node_type == "schema_field" {
+                let db_mapping = config.get("db_mapping").and_then(|m| m.as_str());
+                let field_name = config.get("field_name").and_then(|f| f.as_str());
+                if db_mapping == Some("plot_summary") || field_name == Some("plot_summary") {
+                    if let Some(desc) = config.get("description").and_then(|d| d.as_str()) {
+                        let trimmed = desc.trim();
+                        if !trimmed.is_empty() {
+                            return Ok(Some(trimmed.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        // 2. 查找 Prompt 节点中类型或标识为 plot_summary 的内容
+        for node in nodes {
+            let node_type = node.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+            let config = node.get("config").unwrap_or(node);
+            if node_type == "prompt" {
+                let block_type = config.get("block_type").and_then(|b| b.as_str());
+                let identifier = config.get("identifier").and_then(|i| i.as_str());
+                if block_type == Some("plot_summary") || identifier == Some("plot_summary") {
+                    if let Some(content) = config.get("content").and_then(|c| c.as_str()) {
+                        let trimmed = content.trim();
+                        if !trimmed.is_empty() {
+                            return Ok(Some(trimmed.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 async fn request_ai_plot_summary(
     provider: &ApiProvider,
     context: &PlotSummaryGenerationContext,
     conversation_id: i64,
+    blueprint_instruction: Option<&str>,
     log_dir: Option<&std::path::Path>,
 ) -> Result<String, String> {
     if provider.provider_kind != "openai_compatible" {
@@ -774,7 +860,7 @@ async fn request_ai_plot_summary(
         ));
     }
 
-    let messages = build_plot_summary_messages(context);
+    let messages = build_plot_summary_messages(context, blueprint_instruction);
     let request_messages = messages
         .into_iter()
         .map(|(role, content)| json!({ "role": role, "content": content }))
@@ -845,7 +931,10 @@ async fn request_ai_plot_summary(
     Ok(normalized)
 }
 
-fn build_plot_summary_messages(context: &PlotSummaryGenerationContext) -> Vec<(String, String)> {
+fn build_plot_summary_messages(
+    context: &PlotSummaryGenerationContext,
+    blueprint_instruction: Option<&str>,
+) -> Vec<(String, String)> {
     let round_sections = context
         .rounds
         .iter()
@@ -858,6 +947,17 @@ fn build_plot_summary_messages(context: &PlotSummaryGenerationContext) -> Vec<(S
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    let instruction = match blueprint_instruction {
+        Some(inst) if !inst.trim().is_empty() => {
+            format!("总结要求与字段规范（来自蓝图预设定义）：\n{}", inst.trim())
+        }
+        _ => {
+            "第一行写这一窗口内最重要的剧情推进。\n\
+             后续可按“键：值”继续写重要事件、场景、角色状态、关系变化。\n\
+             变量直接写进文本本体，例如“事件：已调查”“角色状态：警惕”。".to_string()
+        }
+    };
+
     vec![
         (
             "system".to_string(),
@@ -866,11 +966,10 @@ fn build_plot_summary_messages(context: &PlotSummaryGenerationContext) -> Vec<(S
                  你只总结当前提供的 {} 轮对话窗口，不要总结窗口外内容。\n\
                  输出必须是可直接注入 Prompt Compiler 第 5 层的条目式纯文本。\n\
                  不要输出 JSON，不要输出代码块，不要解释过程。\n\
-                 第一行写这一窗口内最重要的剧情推进。\n\
-                 后续可按“键：值”继续写委托、场景、人物状态、关系变化、重要事实。\n\
-                 变量直接写进文本本体，例如“委托：已接受”“角色状态：警惕”。\n\
+                 {}\n\
                  不要编造输入中不存在的事实。",
-                context.batch.covered_round_count
+                context.batch.covered_round_count,
+                instruction
             ),
         ),
         (

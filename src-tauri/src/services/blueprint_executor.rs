@@ -303,11 +303,6 @@ pub async fn execute_blueprint(
         &mut values,
     )?;
 
-    // 强制核心基线：每个蓝图预设都必须包含「叙事正文 text」（若缺失则注入）。
-    // 对于内部推理 thinking：仅当蓝图完全未定义 thinking 节点且未启用原生思维链时作为旧版兜底注入。
-    // 绝不覆盖或跨分支强行注入蓝图作者未激活的 thinking 字段。
-    inject_core_schema_baseline(&mut result, &working_graph);
-
     // 按语义固定顺序重排 schema 字段（properties + required 同步）。
     // 理由：serde_json 的 Map 保留首次插入顺序，而插入顺序由 DFS 遍历（端口/order）
     // 决定，导致核心字段（text 由基线追加在末尾）位置不可控。本地模型对字段顺序敏感，
@@ -373,102 +368,7 @@ fn order_schema_properties(result: &mut BlueprintExecutionResult) {
     }
 }
 
-/// 注入结构化输出的核心基线字段，保证每个蓝图预设都有叙事正文（body）。
-///
-/// 基线字段以「组合」方式叠加：仅当蓝图未显式定义该字段时才插入。这避免了让每个
-/// 蓝图作者手动记得加 `text` 的脆弱约定，契合 AGENTS.md「组合优于继承」——公共基线
-/// 通过编译器注入，而非要求每个节点重复声明。
-fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult, graph: &BlueprintGraph) {
-    // 检查蓝图整张图是否显式包含了 thinking 节点。
-    // 如果蓝图作者已经放置了 field_name 为 "thinking" 的 SchemaField 节点（例如在特定 Gate 分支下），
-    // 则说明思维链字段的启闭完全由图分支调度，绝不跨分支强行兜底。
-    let graph_has_thinking_node = graph.nodes.iter().any(|node| {
-        if let NodeConfig::SchemaField(cfg) = &node.config {
-            cfg.field_name == "thinking"
-        } else {
-            false
-        }
-    });
 
-    // 检查是否启用了原生思维链通道。
-    let native_thinking_enabled = result.sampling_params.thinking_enabled == Some(true);
-
-    // 先不可变读，确定缺失的核心字段；避免与后续可变借用冲突。
-    let missing: Vec<&str> = {
-        let props = result
-            .structured_output_schema
-            .get("properties")
-            .and_then(|v| v.as_object());
-        let mut miss = Vec::new();
-
-        // 仅当图完全未定义 thinking 节点，且未启用原生思维链时，才为旧版极简蓝图保底注入 thinking。
-        if !native_thinking_enabled && !graph_has_thinking_node {
-            if props.and_then(|p| p.get("thinking")).is_none() {
-                miss.push("thinking");
-            }
-        }
-
-        let has_body_field = result.display_config.values().any(|cfg| cfg.body);
-        if !has_body_field && props.and_then(|p| p.get("text")).is_none() {
-            miss.push("text");
-        }
-        miss
-    };
-    if missing.is_empty() {
-        return;
-    }
-
-    // 注入属性与 display_config（可变写）。
-    for name in &missing {
-        let desc = if *name == "thinking" {
-            "模型的内部推理过程（角色动机、策略分析），不对外展示给玩家"
-        } else {
-            "对外展示的叙事正文：角色的行为、对话与环境描写，是回复的主体内容"
-        };
-        if let Some(props) = result
-            .structured_output_schema
-            .get_mut("properties")
-            .and_then(|v| v.as_object_mut())
-        {
-            props.insert(
-                (*name).to_string(),
-                serde_json::json!({
-                    "type": "string",
-                    "description": desc,
-                }),
-            );
-        }
-        // text 标记为消息主体，渲染时与 thinking 折叠区在视觉上明确区分。
-        if *name == "text" {
-            result.display_config.insert(
-                (*name).to_string(),
-                FieldDisplayConfig {
-                    default_expanded: true,
-                    hide_label: true,
-                    body: true,
-                },
-            );
-        }
-
-        // 核心基线字段固定在前：thinking(-2) / text(-1)，保证正文永远在首屏、
-        // 推理永远在折叠区，不被作者自定义 order 推到后面。
-        let baseline_order = if *name == "thinking" { -2 } else { -1 };
-        result.schema_field_order.push(((*name).to_string(), baseline_order));
-    }
-
-    // 把缺失字段加入 required（独立的可变借用）。
-    if let Some(req) = result
-        .structured_output_schema
-        .get_mut("required")
-        .and_then(|v| v.as_array_mut())
-    {
-        for name in &missing {
-            if !req.iter().any(|v| v.as_str() == Some(*name)) {
-                req.push(serde_json::Value::String((*name).to_string()));
-            }
-        }
-    }
-}
 
 /// Recursive DFS traversal. `path` tracks the current DFS stack (for cycle
 /// detection); `visited` tracks all nodes already executed (for merge-point
@@ -1649,27 +1549,23 @@ mod tests {
         assert_eq!(result.blocks[0].block_type, "system");
         assert_eq!(result.blocks[0].content, "You are a narrator.");
 
-        // 核心基线（thinking + text）由编译器强制注入，叠加蓝图显式字段。
+        // 蓝图显式字段只有 world_variables，编译器不再越权注入 thinking / text
         let props = result.structured_output_schema["properties"]
             .as_object()
             .expect("properties must be an object");
+        assert_eq!(props.len(), 1, "only explicit fields present");
         assert!(props.contains_key("world_variables"), "explicit field present");
-        assert!(props.contains_key("thinking"), "core thinking baseline injected");
-        assert!(props.contains_key("text"), "core text (body) baseline injected");
         assert_eq!(props["world_variables"]["type"], "object");
         assert_eq!(props["world_variables"]["description"], "world state");
 
-        // required array contains the explicit field plus injected core fields
+        // required array contains the explicit field
         let required = result.structured_output_schema["required"]
             .as_array()
             .expect("required must be an array");
+        assert_eq!(required.len(), 1);
         assert!(
             required.iter().any(|v| v == "world_variables"),
             "world_variables must be in required"
-        );
-        assert!(
-            required.iter().any(|v| v == "text"),
-            "core text baseline must be in required"
         );
 
         // db_mapping recorded
@@ -1903,15 +1799,12 @@ mod tests {
             .as_object()
             .expect("properties must be object");
         let names: Vec<&String> = props.keys().collect();
-        // thinking(-2) / text(-1) 在 gamma(-1 但遍历序更后) 之前？
-        // 注意 baseline thinking/text 的 order 为 -2/-1，gamma 为 -1；
-        // thinking(-2) < gamma(-1) < text(-1, 但遍历序在 gamma 之后) < zeta(0) < alpha(5) < beta(5)
+        // 蓝图作者完全控制字段顺序与内容，不再强制前置注入 thinking/text。
+        // gamma(-1) < zeta(0) < alpha(5) < beta(5)
         assert_eq!(
             names,
             vec![
-                "thinking",
                 "gamma",
-                "text",
                 "zeta",
                 "alpha",
                 "beta",
@@ -1925,7 +1818,7 @@ mod tests {
         let required_names: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(
             required_names,
-            vec!["thinking", "gamma", "text", "zeta", "alpha", "beta"],
+            vec!["gamma", "zeta", "alpha", "beta"],
             "required must mirror properties order"
         );
     }
@@ -2901,7 +2794,11 @@ mod tests {
             !props.contains_key("thinking"),
             "thinking schema must NOT be injected when native thinking is enabled"
         );
-        assert!(props.contains_key("text"), "text baseline must still be injected");
+        assert!(
+            !props.contains_key("text"),
+            "text schema must NOT be injected when not in blueprint"
+        );
+        assert!(props.is_empty(), "pure prompt graph has empty schema properties");
     }
 
     /// 蓝图在未激活分支下存在 thinking 节点时，绝不跨分支强行注入 thinking。
@@ -2943,6 +2840,10 @@ mod tests {
             !props.contains_key("thinking"),
             "thinking schema must NOT be injected when thinking node is on unselected branch"
         );
-        assert!(props.contains_key("text"), "text baseline must still be injected");
+        assert!(
+            !props.contains_key("text"),
+            "text schema must NOT be injected when not in blueprint"
+        );
+        assert!(props.is_empty());
     }
 }

@@ -578,16 +578,6 @@ pub async fn compile_prompt(
     })?;
 
     let mut system_blocks = preset_compiler_data.blocks;
-    if context.conversation_type == "online" {
-        system_blocks.push(build_block(
-            PromptBlockKind::MultiplayerProtocol,
-            PromptRole::System,
-            Some("多人对话协议".to_string()),
-            "[多人对话协议]\n当前对话为多人房间模式。每轮输入中「玩家名: 内容」格式的每一行代表一位独立真实玩家的发言。\n不同行对应不同玩家，绝非同一人的角色扮演。请分别理解每位玩家的意图，并在回复中自然回应各自的行动。\n当某行显示\"（本轮放弃发言）\"时，表示该玩家本轮选择不行动。".to_string(),
-            PromptBlockSource::Compiler,
-            true,
-        ));
-    }
     let mut latest_world_variable_text = None;
     let memory_mode = load_memory_mode(db, input.conversation_id).await;
     let mem0_active = memory_mode == MEMORY_MODE_MEM0;
@@ -647,14 +637,6 @@ pub async fn compile_prompt(
         .await
         .map_err(|err| err.to_string().replace('\\', "/"))?;
 
-    // 1. blocks: 蓝图产出的 CompiledBlock 转换为 PromptBlock，替换
-    //    preset_prompt_blocks 表加载的旧 blocks（已在 system_blocks 中）。
-    //    仅替换来源于 preset 的 PresetRule blocks——保留 online 模式注入的
-    //    MultiplayerProtocol（蓝图不控制多人协议，见 spec 能力边界）。
-    let multiplayer_block_index = system_blocks
-        .iter()
-        .position(|b| b.kind == PromptBlockKind::MultiplayerProtocol);
-    let multiplayer_block = multiplayer_block_index.map(|idx| system_blocks.remove(idx));
     let blueprint_blocks: Vec<PromptBlock> = blueprint_result
         .blocks
         .iter()
@@ -670,22 +652,45 @@ pub async fn compile_prompt(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.replace('\\', "/"))?;
-    let blueprint_has_multiplayer_rules = blueprint_result.blocks.iter().any(|b| {
-        b.identifier == "multiplayer_rules"
-            || b.content.contains("多人联机")
-            || b.content.contains("多人房间")
-            || b.content.contains("多人对话")
-            || b.content.contains("本轮放弃发言")
+
+    let custom_wv_prefix = graph.nodes.iter().find_map(|node| {
+        if let crate::models::blueprint::NodeConfig::Prompt(cfg) = &node.config {
+            if cfg.block_type == "world_variable" || cfg.identifier == "world_variable" {
+                let content = cfg.content.trim();
+                if !content.is_empty() {
+                    let formatted = if content.ends_with('\n') {
+                        content.to_string()
+                    } else {
+                        format!("{content}\n")
+                    };
+                    return Some(formatted);
+                }
+            }
+        }
+        None
+    });
+
+    let custom_retrieved_prefix = graph.nodes.iter().find_map(|node| {
+        if let crate::models::blueprint::NodeConfig::Prompt(cfg) = &node.config {
+            if cfg.block_type == "retrieved_detail" || cfg.identifier == "retrieved_detail" {
+                let content = cfg.content.trim();
+                if !content.is_empty() {
+                    let formatted = if content.ends_with('\n') {
+                        content.to_string()
+                    } else {
+                        format!("{content}\n")
+                    };
+                    return Some(formatted);
+                }
+            }
+        }
+        None
     });
 
     system_blocks = blueprint_blocks;
-    // 仅当蓝图自身未显式定义多人协议规则时，才注入系统级保底协议；
-    // 若蓝图已显式定义（如 V2.2 的【多人联机 · 逐人落笔纪律】），则完全由蓝图接管，严禁硬编码重复注入。
-    if let Some(block) = multiplayer_block {
-        if !blueprint_has_multiplayer_rules {
-            system_blocks.push(block);
-        }
-    }
+    // 蓝图中的 world_variable / retrieved_detail Prompt 节点作为其权威前缀与格式定义，
+    // 实际内容由数据加载层动态查询数据库/向量库后注入，此处剔除未填充真实数据的占位节点。
+    system_blocks.retain(|b| b.kind != PromptBlockKind::WorldVariable && b.kind != PromptBlockKind::RetrievedDetail);
 
     // 2. structured_output_schema: 蓝图产出的 JSON Value 序列化为字符串
     //    塞入 CompiledSamplingParams.structured_output_schema
@@ -803,6 +808,7 @@ pub async fn compile_prompt(
                 input.conversation_id,
                 input.target_round_id,
                 context.preset_id,
+                custom_wv_prefix.as_deref(),
                 &mut debug,
             )
             .await?
@@ -946,6 +952,7 @@ pub async fn compile_prompt(
         character_data.as_ref().map(|c| c.name.as_str()),
         mem0_active,
         input.budget.max_retrieved_detail_tokens,
+        custom_retrieved_prefix.as_deref(),
         &mut debug,
         input.log_dir.as_deref(),
     )
@@ -2450,12 +2457,12 @@ fn filter_structured_content(
     content.to_string()
 }
 
-/// Authority prefix marking retrieved memories as historical, non-authoritative
-/// context so the model defers to recent dialogue on conflict.
-const RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str =
+/// Default authority prefix marking retrieved memories as historical, non-authoritative
+/// context so the model defers to recent dialogue on conflict when not customized in blueprint.
+pub const DEFAULT_RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str =
     "[历史记忆 - 非当前状态，如与最近对话矛盾以最近对话为准]\n";
 
-const WORLD_VARIABLE_AUTHORITY_PREFIX: &str =
+pub const DEFAULT_WORLD_VARIABLE_AUTHORITY_PREFIX: &str =
     "[世界变量 - 当前权威状态，由系统维护]\n";
 
 /// Load the latest world variable snapshot from `message_rounds.world_variables`.
@@ -2468,6 +2475,7 @@ async fn load_world_variable_block(
     conversation_id: i64,
     target_round_id: Option<i64>,
     preset_id: Option<i64>,
+    custom_prefix: Option<&str>,
     debug: &mut PromptCompileDebugReport,
 ) -> Result<Option<PromptBlock>, String> {
     // 1. Check preset gate
@@ -2526,7 +2534,8 @@ async fn load_world_variable_block(
         "world_variable:{conversation_id}:{round_index}:{round_id}"
     ));
 
-    let content = format!("{WORLD_VARIABLE_AUTHORITY_PREFIX}{world_variables}");
+    let prefix = custom_prefix.unwrap_or(DEFAULT_WORLD_VARIABLE_AUTHORITY_PREFIX);
+    let content = format!("{prefix}{world_variables}");
 
     Ok(Some(build_block(
         PromptBlockKind::WorldVariable,
@@ -2555,6 +2564,7 @@ async fn load_retrieved_detail_blocks(
     character_name: Option<&str>,
     mem0_active: bool,
     max_tokens: Option<usize>,
+    custom_prefix: Option<&str>,
     debug: &mut PromptCompileDebugReport,
     log_dir: Option<&std::path::Path>,
 ) -> Result<Vec<PromptBlock>, String> {
@@ -2654,8 +2664,9 @@ async fn load_retrieved_detail_blocks(
 
     let mut blocks = Vec::with_capacity(records.len());
     let mut used_tokens = 0usize;
+    let prefix = custom_prefix.unwrap_or(DEFAULT_RETRIEVED_DETAIL_AUTHORITY_PREFIX);
     for record in records {
-        let content = format!("{RETRIEVED_DETAIL_AUTHORITY_PREFIX}{}", record.memory);
+        let content = format!("{prefix}{}", record.memory);
         let cost = estimate_token_cost(&content);
         if let Some(budget) = max_tokens {
             if used_tokens.saturating_add(cost) > budget {

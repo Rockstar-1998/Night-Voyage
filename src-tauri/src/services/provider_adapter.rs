@@ -315,19 +315,16 @@ fn merge_system_blocks(blocks: &[crate::services::prompt_compiler::PromptBlock])
 /// 构造 structured_json 模式下的 JSON 输出指令，追加到 system 末尾。
 /// 从 JSON Schema 提取顶层字段名/类型/必填标记/描述，生成可读的字段清单，并要求：
 /// 1) 仅输出一个符合给定 Schema 的 JSON 对象，无额外散文/Markdown；
-/// 2) 指示模型将叙事正文写入对应定义的主体字段（如 `text` 或 `narrative`）。
+/// 2) 指示模型将内容严格按 Schema 字段输出。
 fn build_structured_json_directive(schema_json: &str) -> String {
     let mut fields: Vec<String> = Vec::new();
     let mut has_text_field = false;
-    let mut has_narrative_field = false;
 
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(schema_json) {
         if let Some(props) = value.get("properties").and_then(|p| p.as_object()) {
             for (name, meta) in props {
                 if name == "text" {
                     has_text_field = true;
-                } else if name == "narrative" {
-                    has_narrative_field = true;
                 }
                 let desc = meta
                     .get("description")
@@ -356,8 +353,6 @@ fn build_structured_json_directive(schema_json: &str) -> String {
 
     let content_target_hint = if has_text_field {
         "叙事正文写入 `text` 字段。"
-    } else if has_narrative_field {
-        "叙事正文写入 `narrative` 字段。"
     } else {
         "所有内容均严格写入对应定义的 Schema 字段。"
     };

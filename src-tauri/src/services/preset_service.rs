@@ -1071,15 +1071,12 @@ mod tests {
         assert_eq!(result.blocks[0].block_type, "system");
         assert_eq!(result.blocks[0].content, "You are a narrator.");
 
-        // Schema 属性：world_variables + 编译器强制注入的 thinking / text 基线字段。
-        // 基线注入是契约（每个蓝图预设都必须有叙事正文），故此处为 3 个而非 1 个。
+        // Schema 属性：仅包含蓝图显式声明的 world_variables，编译器不再越权注入 thinking / text 基线字段。
         let props = result.structured_output_schema["properties"]
             .as_object()
             .expect("properties must be an object");
-        assert_eq!(props.len(), 3, "world_variables + thinking/text baseline expected");
+        assert_eq!(props.len(), 1, "only explicit world_variables expected");
         assert!(props.contains_key("world_variables"));
-        assert!(props.contains_key("thinking"), "thinking baseline must be injected");
-        assert!(props.contains_key("text"), "text baseline must be injected");
 
         // db_mapping recorded.
         assert_eq!(
