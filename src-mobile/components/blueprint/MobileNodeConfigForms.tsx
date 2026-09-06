@@ -841,12 +841,30 @@ const AnthropicSamplingParamsForm: Component<{
         />
       </div>
       <div>
-        <FieldLabel label="max_tokens" />
+        <FieldLabel
+          label={
+            props.config.thinking_enabled
+              ? 'max_tokens（需 > 思考预算）'
+              : 'max_tokens'
+          }
+        />
         <NumberInput
           value={props.config.max_tokens}
-          placeholder="留空表示不设置"
+          placeholder={
+            props.config.thinking_enabled
+              ? '留空自动保底 (> 预算)'
+              : '留空表示不设置'
+          }
           step="1"
-          onInput={(v) => props.onChange({ ...props.config, max_tokens: v === null ? null : Math.trunc(v) })}
+          onInput={(v) => {
+            const minAllowed = props.config.thinking_enabled
+              ? Math.max(1025, (props.config.thinking_budget_tokens ?? 1024) + 1)
+              : 1;
+            props.onChange({
+              ...props.config,
+              max_tokens: v === null ? null : Math.max(minAllowed, Math.trunc(v)),
+            });
+          }}
         />
       </div>
       <div>
@@ -882,7 +900,7 @@ const AnthropicSamplingParamsForm: Component<{
         <FieldLabel label="thinking_budget_tokens（思考预算，≥1024）" />
         <NumberInput
           value={props.config.thinking_budget_tokens}
-          placeholder="留空表示不设置"
+          placeholder="留空沿用 max_tokens 预算"
           step="1"
           onInput={(v) =>
             props.onChange({

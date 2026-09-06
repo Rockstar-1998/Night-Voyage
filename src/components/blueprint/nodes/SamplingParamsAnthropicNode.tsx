@@ -73,19 +73,24 @@ export const SamplingParamsAnthropicNode: Component<
       </div>
 
       <div class="space-y-1">
-        <label class={LABEL_CLASS}>max_tokens（正整数）</label>
+        <label class={LABEL_CLASS}>
+          max_tokens（{props.config.thinking_enabled ? '正整数，需 > 思考预算' : '正整数'}）
+        </label>
         <input
           type="number"
           step="1"
-          min="1"
+          min={props.config.thinking_enabled ? Math.max(1025, (props.config.thinking_budget_tokens ?? 1024) + 1) : 1}
           value={props.config.max_tokens ?? ''}
           disabled={props.isLocked}
           onChange={(e) => {
             const n = parseNum(e.currentTarget.value);
-            update({ max_tokens: n === null ? null : Math.max(1, Math.trunc(n)) });
+            const minAllowed = props.config.thinking_enabled
+              ? Math.max(1025, (props.config.thinking_budget_tokens ?? 1024) + 1)
+              : 1;
+            update({ max_tokens: n === null ? null : Math.max(minAllowed, Math.trunc(n)) });
           }}
           class={INPUT_CLASS}
-          placeholder="留空 = 不覆盖"
+          placeholder="留空 = 不覆盖（开启思考时自动保底）"
         />
       </div>
 
@@ -131,7 +136,7 @@ export const SamplingParamsAnthropicNode: Component<
             });
           }}
           class={INPUT_CLASS}
-          placeholder="留空 = 不覆盖（沿用默认预算）"
+          placeholder="留空 = 沿用 max_tokens 预算"
         />
       </div>
 

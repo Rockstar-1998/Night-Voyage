@@ -269,9 +269,9 @@ fn resolve_thinking_config(
     match thinking_enabled {
         Some(true) => {
             let budget = thinking_budget_tokens
-                .or_else(|| max_output_tokens.map(|t| t.clamp(1024, 4096)))
+                .or(max_output_tokens)
                 .unwrap_or(1024)
-                .clamp(1024, 128000);
+                .max(1024);
             Some(LlmThinkingConfig {
                 enabled: true,
                 budget_tokens: Some(budget),
@@ -283,9 +283,10 @@ fn resolve_thinking_config(
             if normalized_model.is_empty() || !normalized_model.contains("thinking") {
                 return None;
             }
+            let budget = max_output_tokens.unwrap_or(1024).max(1024);
             Some(LlmThinkingConfig {
                 enabled: true,
-                budget_tokens: Some(max_output_tokens.unwrap_or(1024).clamp(1024, 4096)),
+                budget_tokens: Some(budget),
             })
         }
     }
