@@ -294,6 +294,10 @@ struct PromptTemplateRenderContext {
     character: Option<PromptTemplateCharacterContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     player_character: Option<PromptTemplateCharacterContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    char: Option<PromptTemplateCharacterContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<PromptTemplateCharacterContext>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1354,24 +1358,7 @@ fn build_runtime_template_render_context(
     character_data: Option<&CharacterCompileData>,
     player_character_data: Option<&CharacterCompileData>,
 ) -> PromptTemplateRenderContext {
-    PromptTemplateRenderContext {
-        conversation: PromptTemplateConversationContext {
-            id: input.conversation_id,
-            host_character_id: context.host_character_id,
-            world_book_id: context.world_book_id,
-            preset_id: context.preset_id,
-            target_round_id: input.target_round_id,
-        },
-        provider: PromptTemplateProviderContext {
-            kind: input.provider_kind.clone(),
-            model_name: input.model_name.clone(),
-        },
-        current_user: PromptTemplateCurrentUserContext {
-            role: current_user_block.role.as_str().to_string(),
-            content: current_user_block.content.clone(),
-            message_id: source_message_id(&current_user_block.source),
-        },
-        character: character_data.map(|character_data| PromptTemplateCharacterContext {
+        let char_ctx = character_data.map(|character_data| PromptTemplateCharacterContext {
             id: character_data.character_id,
             name: character_data.name.clone(),
             description: character_data.description.clone(),
@@ -1385,8 +1372,8 @@ fn build_runtime_template_render_context(
                     content: section.content.clone(),
                 })
                 .collect(),
-        }),
-        player_character: player_character_data.map(|pd| PromptTemplateCharacterContext {
+        });
+        let player_ctx = player_character_data.map(|pd| PromptTemplateCharacterContext {
             id: pd.character_id,
             name: pd.name.clone(),
             description: pd.description.clone(),
@@ -1396,8 +1383,30 @@ fn build_runtime_template_render_context(
                 title: section.title.clone(),
                 content: section.content.clone(),
             }).collect(),
-        }),
-    }
+        });
+
+        PromptTemplateRenderContext {
+            conversation: PromptTemplateConversationContext {
+                id: input.conversation_id,
+                host_character_id: context.host_character_id,
+                world_book_id: context.world_book_id,
+                preset_id: context.preset_id,
+                target_round_id: input.target_round_id,
+            },
+            provider: PromptTemplateProviderContext {
+                kind: input.provider_kind.clone(),
+                model_name: input.model_name.clone(),
+            },
+            current_user: PromptTemplateCurrentUserContext {
+                role: current_user_block.role.as_str().to_string(),
+                content: current_user_block.content.clone(),
+                message_id: source_message_id(&current_user_block.source),
+            },
+            character: char_ctx.clone(),
+            player_character: player_ctx.clone(),
+            char: char_ctx,
+            user: player_ctx,
+        }
 }
 
 async fn load_conversation_compile_context(
@@ -1767,9 +1776,10 @@ fn parse_preset_block_directive(
 }
 
 fn validate_prompt_template_syntax(template_source: &str, descriptor: &str) -> Result<(), String> {
+    let normalized = normalize_st_placeholder_macros(template_source);
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
-    env.template_from_str(template_source)
+    env.template_from_str(&normalized)
         .map_err(|err| format!("{descriptor} template syntax error: {err}"))?;
     Ok(())
 }
@@ -1779,10 +1789,69 @@ fn render_prompt_template(
     render_context: &PromptTemplateRenderContext,
     descriptor: &str,
 ) -> Result<String, String> {
+    let normalized = normalize_st_placeholder_macros(template_source);
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
-    env.render_str(template_source, render_context)
+    env.render_str(&normalized, render_context)
         .map_err(|err| format!("{descriptor} template render failed: {err}"))
+}
+
+/// Normalize SillyTavern dialect placeholder macros into minijinja expressions.
+pub fn normalize_st_placeholder_macros(raw: &str) -> String {
+    if !raw.contains('<') && !raw.contains('{') {
+        return raw.to_string();
+    }
+    let user_re = match Regex::new(r"(?i)\{\{\s*(?:user|user_name|player|player_name|player_character)\s*\}\}|<(?:user|player)>") {
+        Ok(re) => re,
+        Err(_) => return raw.to_string(),
+    };
+    let char_re = match Regex::new(r"(?i)\{\{\s*(?:char|char_name|character|character_name)\s*\}\}|<(?:char|character)>") {
+        Ok(re) => re,
+        Err(_) => return raw.to_string(),
+    };
+
+    let step1 = user_re.replace_all(raw, "{{ player_character.name }}");
+    let step2 = char_re.replace_all(&step1, "{{ character.name }}");
+    step2.into_owned()
+}
+
+/// Render opening message template using character and player_character contexts.
+pub fn render_opening_template(
+    raw_text: &str,
+    character_name: &str,
+    character_desc: &str,
+    player_name: &str,
+    player_desc: &str,
+) -> Result<String, String> {
+    let normalized = normalize_st_placeholder_macros(raw_text);
+    if !normalized.contains("{{") {
+        return Ok(normalized);
+    }
+
+    let mut env = Environment::new();
+    env.set_undefined_behavior(UndefinedBehavior::Strict);
+
+    let ctx = minijinja::context! {
+        character => minijinja::context! {
+            name => character_name,
+            description => character_desc,
+        },
+        player_character => minijinja::context! {
+            name => player_name,
+            description => player_desc,
+        },
+        char => minijinja::context! {
+            name => character_name,
+            description => character_desc,
+        },
+        user => minijinja::context! {
+            name => player_name,
+            description => player_desc,
+        },
+    };
+
+    env.render_str(&normalized, ctx)
+        .map_err(|err| format!("opening message template render failed: {err}"))
 }
 
 fn parse_output_validator_config(
@@ -2947,10 +3016,10 @@ fn source_message_id(source: &PromptBlockSource) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_character_system_message, render_prompt_template, CharacterBaseSectionCompileData,
-        CharacterCompileData, PromptTemplateCharacterContext, PromptTemplateConversationContext,
-        PromptTemplateCurrentUserContext, PromptTemplateProviderContext,
-        PromptTemplateRenderContext,
+        build_character_system_message, render_opening_template, render_prompt_template,
+        CharacterBaseSectionCompileData, CharacterCompileData, PromptTemplateCharacterContext,
+        PromptTemplateConversationContext, PromptTemplateCurrentUserContext,
+        PromptTemplateProviderContext, PromptTemplateRenderContext,
     };
 
     #[test]
@@ -3000,6 +3069,20 @@ mod tests {
 
     /// 构造一个含 character + player_character 的渲染上下文，供模板单测复用。
     fn sample_render_context() -> PromptTemplateRenderContext {
+        let char_ctx = Some(PromptTemplateCharacterContext {
+            id: 7,
+            name: "Aria".to_string(),
+            description: "A wandering bard.".to_string(),
+            tags: vec!["bard".to_string()],
+            base_sections: vec![],
+        });
+        let player_ctx = Some(PromptTemplateCharacterContext {
+            id: 9,
+            name: "Ren".to_string(),
+            description: "A quiet traveler.".to_string(),
+            tags: vec!["traveler".to_string()],
+            base_sections: vec![],
+        });
         PromptTemplateRenderContext {
             conversation: PromptTemplateConversationContext {
                 id: 100,
@@ -3017,20 +3100,10 @@ mod tests {
                 content: "hello".to_string(),
                 message_id: 0,
             },
-            character: Some(PromptTemplateCharacterContext {
-                id: 7,
-                name: "Aria".to_string(),
-                description: "A wandering bard.".to_string(),
-                tags: vec!["bard".to_string()],
-                base_sections: vec![],
-            }),
-            player_character: Some(PromptTemplateCharacterContext {
-                id: 9,
-                name: "Ren".to_string(),
-                description: "A quiet traveler.".to_string(),
-                tags: vec!["traveler".to_string()],
-                base_sections: vec![],
-            }),
+            character: char_ctx.clone(),
+            player_character: player_ctx.clone(),
+            char: char_ctx,
+            user: player_ctx,
         }
     }
 
@@ -3093,4 +3166,21 @@ mod tests {
             "error must carry render-failed marker: {msg}"
         );
     }
+
+    #[test]
+    fn render_opening_template_resolves_all_placeholders() {
+        let text = "你好，{{ player_character.name }}！我是{{ character.name }}。<user>，很高兴见到你，{{user}}。我是<char>。";
+        let out = render_opening_template(
+            text,
+            "爱丽丝",
+            "一位法师",
+            "林风",
+            "一位旅行者",
+        ).expect("rendering should succeed");
+        assert_eq!(
+            out,
+            "你好，林风！我是爱丽丝。林风，很高兴见到你，林风。我是爱丽丝。"
+        );
+    }
 }
+

@@ -1,4 +1,4 @@
-import { Component, For, Show, Switch, Match, createMemo, createSignal } from 'solid-js';
+import { Component, For, Index, Show, Switch, Match, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
 import { Download, Pencil, Plus, Save, Search, Trash2, Upload, User, Users, X } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
@@ -508,16 +508,16 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                   fallback={<div class="text-xs text-mist-solid/35 border-l-2 border-dashed border-white/20 pl-4 py-2 mb-4">暂无结构化基础层段落，当前会仅显示兼容描述回退文本。</div>}
                 >
                   <div class="space-y-3">
-                    <For each={formData().baseSections}>
+                    <Index each={formData().baseSections}>
                       {(section, idx) => (
                         <div class="border-l-2 border-white/10 pl-4 py-2 space-y-4 mb-6">
                           <div class="flex items-center justify-between gap-3">
                             <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_120px] gap-3 flex-1">
                               <Select
-  value={section.sectionKey}
+  value={section().sectionKey}
   onChange={(val) => {
     const next = [...formData().baseSections];
-    next[idx()] = { ...next[idx()], sectionKey: val as CharacterBaseSectionKey };
+    next[idx] = { ...next[idx], sectionKey: val as CharacterBaseSectionKey };
     setFormData({ ...formData(), baseSections: next });
   }}
   options={[
@@ -526,10 +526,10 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
 />
                               <input
                                 type="number"
-                                value={section.sortOrder}
+                                value={section().sortOrder}
                                 onInput={(e) => {
                                   const next = [...formData().baseSections];
-                                  next[idx()] = { ...next[idx()], sortOrder: e.currentTarget.value };
+                                  next[idx] = { ...next[idx], sortOrder: e.currentTarget.value };
                                   setFormData({ ...formData(), baseSections: next });
                                 }}
                                 placeholder="排序"
@@ -538,7 +538,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                             </div>
                             <IconButton
                               onClick={() => {
-                                const next = formData().baseSections.filter((_, index) => index !== idx());
+                                const next = formData().baseSections.filter((_, index) => index !== idx);
                                 setFormData({ ...formData(), baseSections: next });
                               }}
                               label="删除基础层段落"
@@ -550,20 +550,20 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                           </div>
                           <input
                             type="text"
-                            value={section.title}
+                            value={section().title}
                             onInput={(e) => {
                               const next = [...formData().baseSections];
-                              next[idx()] = { ...next[idx()], title: e.currentTarget.value };
+                              next[idx] = { ...next[idx], title: e.currentTarget.value };
                               setFormData({ ...formData(), baseSections: next });
                             }}
                             placeholder="段落标题（可选）"
                             class="w-full bg-transparent border-b border-white/20 rounded-none py-2 px-1 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid"
                           />
                           <textarea
-                            value={section.content}
+                            value={section().content}
                             onInput={(e) => {
                               const next = [...formData().baseSections];
-                              next[idx()] = { ...next[idx()], content: e.currentTarget.value };
+                              next[idx] = { ...next[idx], content: e.currentTarget.value };
                               setFormData({ ...formData(), baseSections: next });
                             }}
                             placeholder="输入该基础层段落正文，例如身份底座、人格底座、背景事实或长期规则。"
@@ -571,7 +571,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                           />
                         </div>
                       )}
-                    </For>
+                    </Index>
                   </div>
                 </Show>
               </div>
@@ -589,18 +589,18 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                     </IconButton>
                   </div>
                   <div class="space-y-3">
-                    <For each={formData().firstMessages}>
+                    <Index each={formData().firstMessages}>
                       {(msg, idx) => {
                         let ta: HTMLTextAreaElement | undefined;
                         return (
                           <div class="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2">
                               <span class="text-[10px] font-medium uppercase tracking-widest text-mist-solid/35">
-                                开局 #{idx() + 1}
+                                开局 #{idx + 1}
                               </span>
                               <IconButton
                                 onClick={() => {
-                                  const next = formData().firstMessages.filter((_, index) => index !== idx());
+                                  const next = formData().firstMessages.filter((_, index) => index !== idx);
                                   setFormData({ ...formData(), firstMessages: next });
                                 }}
                                 label="删除首条消息"
@@ -614,9 +614,9 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                               tokens={PLACEHOLDER_TOKENS}
                               onInsert={(template) =>
                                 ta &&
-                                insertAtCursor(ta, template, msg, (next) => {
+                                insertAtCursor(ta, template, msg(), (next) => {
                                   const arr = [...formData().firstMessages];
-                                  arr[idx()] = next;
+                                  arr[idx] = next;
                                   setFormData({ ...formData(), firstMessages: arr });
                                 })
                               }
@@ -625,10 +625,10 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                               ref={(el) => {
                                 ta = el;
                               }}
-                              value={msg}
+                              value={msg()}
                               onInput={(e) => {
                                 const next = [...formData().firstMessages];
-                                next[idx()] = e.currentTarget.value;
+                                next[idx] = e.currentTarget.value;
                                 setFormData({ ...formData(), firstMessages: next });
                               }}
                               class="w-full bg-transparent border border-white/10 rounded-lg py-2 px-2 text-sm focus:outline-none focus:border-accent transition-all text-mist-solid min-h-20 custom-scrollbar resize-y"
@@ -636,7 +636,7 @@ export const CharacterSidebar: Component<CharacterSidebarProps> = (props) => {
                           </div>
                         );
                       }}
-                    </For>
+                    </Index>
                   </div>
                 </div>
 

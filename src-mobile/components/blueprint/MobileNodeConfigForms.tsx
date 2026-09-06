@@ -12,7 +12,7 @@
  * - 表单不做后端校验，仅做最小前端格式约束（如数字解析）；保存时由父级决定
  */
 
-import { Component, For, Match, Show, Switch, createSignal } from 'solid-js';
+import { Component, For, Index, Match, Show, Switch, createSignal } from 'solid-js';
 import type {
   BlueprintNode,
   BranchCase,
@@ -407,27 +407,27 @@ const GateForm: Component<{
       <div>
         <FieldLabel label="选项列表" hint={props.isMultiple ? '多选' : '单选'} />
         <div class="flex flex-col gap-2">
-          <For each={props.config.options}>
+          <Index each={props.config.options}>
             {(opt, idx) => (
               <div class="flex flex-col gap-1.5 p-2 rounded-lg bg-white/[0.02] border border-white/5">
                 <div class="flex gap-2 items-center">
                   <input
                     type="text"
-                    value={opt.key}
+                    value={opt().key}
                     placeholder="key"
-                    onInput={(e) => updateOption(idx(), { key: e.currentTarget.value })}
+                    onInput={(e) => updateOption(idx, { key: e.currentTarget.value })}
                     class="w-1/3 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[12px] text-mist-solid/80 focus:outline-none"
                   />
                   <input
                     type="text"
-                    value={opt.label}
+                    value={opt().label}
                     placeholder="显示名"
-                    onInput={(e) => updateOption(idx(), { label: e.currentTarget.value })}
+                    onInput={(e) => updateOption(idx, { label: e.currentTarget.value })}
                     class="flex-1 px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[13px] text-mist-solid focus:outline-none"
                   />
                   <button
                     type="button"
-                    onClick={() => removeOption(idx())}
+                    onClick={() => removeOption(idx)}
                     disabled={props.config.options.length <= 1}
                     class="shrink-0 w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 disabled:opacity-30 flex items-center justify-center"
                     aria-label="删除选项"
@@ -437,14 +437,14 @@ const GateForm: Component<{
                 </div>
                 <input
                   type="text"
-                  value={opt.description}
+                  value={opt().description}
                   placeholder="描述（在预设工作区选择时展示给用户）"
-                  onInput={(e) => updateOption(idx(), { description: e.currentTarget.value })}
+                  onInput={(e) => updateOption(idx, { description: e.currentTarget.value })}
                   class="w-full px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 focus:outline-none"
                 />
               </div>
             )}
-          </For>
+          </Index>
           <button
             type="button"
             onClick={addOption}
@@ -584,35 +584,40 @@ const BranchForm: Component<{
             + 添加
           </button>
         </div>
-        <For each={props.config.cases}>
+        {/*
+          用 <Index> 而非 <For>：每次按键都会生成新的 case 对象，<For> 按引用
+          比对会判定为"换了一项"从而销毁重建整行 DOM，输入框随即失焦。<Index>
+          按下标比对，只更新行内 signal，不重建 DOM。
+        */}
+        <Index each={props.config.cases}>
           {(caseItem, index) => (
             <div class="flex items-center gap-2 mb-2 p-2 rounded-xl bg-night-deep/40 border border-white/5">
               <input
                 type="text"
                 class="flex-1 min-w-0 h-10 px-2 rounded-lg bg-night-deep/80 border border-white/10 text-xs text-mist-solid focus:outline-none focus:border-accent/40"
                 placeholder="匹配值 (如 single)"
-                value={caseItem.match_value}
-                onInput={(e) => handleUpdateCase(index(), { match_value: e.currentTarget.value })}
+                value={caseItem().match_value}
+                onInput={(e) => handleUpdateCase(index, { match_value: e.currentTarget.value })}
               />
               <span class="text-mist-solid/40 text-xs">→</span>
               <input
                 type="text"
                 class="flex-1 min-w-0 h-10 px-2 rounded-lg bg-night-deep/80 border border-white/10 text-xs text-mist-solid focus:outline-none focus:border-accent/40"
                 placeholder="出口端口 (如 out_single)"
-                value={caseItem.port}
-                onInput={(e) => handleUpdateCase(index(), { port: e.currentTarget.value })}
+                value={caseItem().port}
+                onInput={(e) => handleUpdateCase(index, { port: e.currentTarget.value })}
               />
               <button
                 type="button"
                 class="text-mist-solid/40 active:text-red-400 w-8 h-8 flex items-center justify-center"
-                onClick={() => handleRemoveCase(index())}
+                onClick={() => handleRemoveCase(index)}
                 aria-label="删除规则"
               >
                 ×
               </button>
             </div>
           )}
-        </For>
+        </Index>
         <Show when={props.config.cases.length === 0}>
           <p class="text-[12px] text-mist-solid/40 leading-5 py-2">
             尚无匹配规则。点击"添加"创建一条。

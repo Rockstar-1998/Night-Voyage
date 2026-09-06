@@ -131,13 +131,21 @@ pub async fn conversations_create(
     let title = normalize_title(title);
     let mut tx = state.db.begin().await.map_err(|err| err.to_string())?;
 
-    let player_character_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM character_cards WHERE id = ?"
+    let (player_character_name, player_character_desc) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT name, description FROM character_cards WHERE id = ?"
     )
     .bind(host_player_character_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| format!("玩家角色卡不存在: {err}"))?;
+
+    let (host_character_name, host_character_desc) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT name, description FROM character_cards WHERE id = ?"
+    )
+    .bind(host_character_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| format!("角色卡不存在: {err}"))?;
 
     let host_display_name = match host_display_name {
         Some(name) if !name.trim().is_empty() => normalize_display_name(&name)?,
@@ -254,6 +262,14 @@ pub async fn conversations_create(
             };
 
             if let Some(content) = opening_content {
+                let rendered_content = crate::services::prompt_compiler::render_opening_template(
+                    &content,
+                    &host_character_name,
+                    host_character_desc.as_deref().unwrap_or(""),
+                    &player_character_name,
+                    player_character_desc.as_deref().unwrap_or(""),
+                )?;
+
                 let message_id = MessageRepository::insert_record(
                     &mut tx,
                     InsertMessageRecord {
@@ -262,7 +278,7 @@ pub async fn conversations_create(
                         member_id: None,
                         role: "assistant",
                         message_kind: "assistant_visible",
-                        content: &content,
+                        content: &rendered_content,
                         display_name: None,
                         is_hidden: false,
                         is_swipe: false,

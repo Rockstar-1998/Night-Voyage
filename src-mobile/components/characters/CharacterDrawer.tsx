@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, For, Show, createMemo } from 'solid-js';
+import { Component, createSignal, createEffect, For, Index, Show, createMemo } from 'solid-js';
 import { Save, Trash2, X, Upload, Plus, ChevronDown, ChevronUp } from 'lucide-solid';
 import { 
   CharacterCard,
@@ -261,15 +261,15 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
               
               <Show when={expandedSection() === 'base'}>
                 <div class="p-4 pt-0 flex flex-col gap-4 border-t border-white/5">
-                  <For each={baseSections()}>
+                  <Index each={baseSections()}>
                     {(section, idx) => (
                       <div class="bg-black/20 rounded-xl p-3 border border-white/5 flex flex-col gap-3">
                          <div class="flex justify-between items-center gap-2">
                            <select
-                              value={section.sectionKey}
+                              value={section().sectionKey}
                               onChange={(e) => {
                                 const next = [...baseSections()];
-                                next[idx()] = { ...next[idx()], sectionKey: e.currentTarget.value };
+                                next[idx] = { ...next[idx], sectionKey: e.currentTarget.value };
                                 setBaseSections(next);
                               }}
                               class="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-accent"
@@ -280,7 +280,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
                            </select>
                            <button 
                              onClick={() => {
-                               const next = baseSections().filter((_, i) => i !== idx());
+                               const next = baseSections().filter((_, i) => i !== idx);
                                setBaseSections(next);
                              }}
                              class="text-mist-solid/40 hover:text-red-400 p-1"
@@ -289,20 +289,20 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
                            </button>
                          </div>
                          <input
-                            value={section.title}
+                            value={section().title}
                             onInput={(e) => {
                               const next = [...baseSections()];
-                              next[idx()] = { ...next[idx()], title: e.currentTarget.value };
+                              next[idx] = { ...next[idx], title: e.currentTarget.value };
                               setBaseSections(next);
                             }}
                             placeholder="段落标题 (可选)"
                             class="bg-transparent border-b border-white/10 py-1 text-xs text-white focus:outline-none focus:border-accent"
                          />
                          <textarea
-                            value={section.content}
+                            value={section().content}
                             onInput={(e) => {
                               const next = [...baseSections()];
-                              next[idx()] = { ...next[idx()], content: e.currentTarget.value };
+                              next[idx] = { ...next[idx], content: e.currentTarget.value };
                               setBaseSections(next);
                             }}
                             placeholder="输入正文内容..."
@@ -310,7 +310,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
                          />
                       </div>
                     )}
-                  </For>
+                  </Index>
                   <button 
                     onClick={() => setBaseSections([...baseSections(), createEmptyBaseSection()])}
                     class="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed border-white/20 text-xs text-accent hover:bg-accent/10 transition-colors"
@@ -366,22 +366,22 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
               
               <Show when={expandedSection() === 'firstMsg'}>
                 <div class="p-4 pt-0 flex flex-col gap-3 border-t border-white/5">
-                  <For each={firstMessages()}>
+                  <Index each={firstMessages()}>
                     {(msg, idx) => (
                       <div class="flex gap-2 items-start">
                         <textarea
-                          value={msg}
+                          value={msg()}
                           onInput={(e) => {
                             const next = [...firstMessages()];
-                            next[idx()] = e.currentTarget.value;
+                            next[idx] = e.currentTarget.value;
                             setFirstMessages(next);
                           }}
-                          placeholder={`第 ${idx() + 1} 条开局白...`}
+                          placeholder={`第 ${idx + 1} 条开局白...`}
                           class="flex-1 bg-black/20 border border-white/10 rounded-xl p-3 text-xs text-mist-solid focus:outline-none focus:border-accent min-h-[80px] custom-scrollbar"
                         />
                         <button 
                           onClick={() => {
-                            const next = firstMessages().filter((_, i) => i !== idx());
+                            const next = firstMessages().filter((_, i) => i !== idx);
                             setFirstMessages(next);
                           }}
                           class="mt-2 text-mist-solid/40 hover:text-red-400 p-1"
@@ -390,7 +390,7 @@ export const CharacterDrawer: Component<CharacterDrawerProps> = (props) => {
                         </button>
                       </div>
                     )}
-                  </For>
+                  </Index>
                   <button 
                     onClick={() => setFirstMessages([...firstMessages(), ''])}
                     class="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed border-white/20 text-xs text-accent hover:bg-accent/10 transition-colors"

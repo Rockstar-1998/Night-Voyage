@@ -26,6 +26,7 @@ pub async fn init_pool(app: &AppHandle) -> DbResult<SqlitePool> {
     sqlx::migrate!().run(&pool).await?;
 
     cleanup_stale_rounds(&pool).await;
+    repair_unrendered_opening_messages(&pool).await;
     crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository::recover_running_snapshots(&pool).await?;
 
     Ok(pool)
@@ -163,6 +164,96 @@ pub(crate) async fn cleanup_stale_rooms(db: &SqlitePool) {
         "[startup] cleanup_stale_rooms: cleaned {} stale rooms",
         stale_rooms.len()
     );
+}
+
+async fn repair_unrendered_opening_messages(db: &SqlitePool) {
+    let unrendered_messages: Vec<(i64, i64, String)> = match sqlx::query_as(
+        "SELECT id, conversation_id, content FROM messages \
+         WHERE role = 'assistant' \
+         AND (content LIKE '%{{%' OR content LIKE '%<user>%' OR content LIKE '%<char>%')",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            dbg_eprintln!("[startup] repair_unrendered_opening_messages query failed: {err}");
+            return;
+        }
+    };
+
+    if unrendered_messages.is_empty() {
+        return;
+    }
+
+    for (msg_id, conversation_id, content) in unrendered_messages {
+        let normalized = crate::services::prompt_compiler::normalize_st_placeholder_macros(&content);
+        if !normalized.contains("{{") {
+            continue;
+        }
+
+        let conv_info: Option<(i64, i64)> = match sqlx::query_as(
+            "SELECT c.host_character_id, cm.player_character_id \
+             FROM conversations c \
+             JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.member_role = 'host' \
+             WHERE c.id = ? LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(db)
+        .await
+        {
+            Ok(info) => info,
+            Err(_) => None,
+        };
+
+        let Some((host_char_id, player_char_id)) = conv_info else {
+            continue;
+        };
+
+        let char_data: Option<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT name, description FROM character_cards WHERE id = ?",
+        )
+        .bind(host_char_id)
+        .fetch_optional(db)
+        .await
+        {
+            Ok(d) => d,
+            Err(_) => None,
+        };
+
+        let player_data: Option<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT name, description FROM character_cards WHERE id = ?",
+        )
+        .bind(player_char_id)
+        .fetch_optional(db)
+        .await
+        {
+            Ok(d) => d,
+            Err(_) => None,
+        };
+
+        let (char_name, char_desc) = char_data.unwrap_or_default();
+        let (player_name, player_desc) = player_data.unwrap_or_default();
+
+        if let Ok(rendered) = crate::services::prompt_compiler::render_opening_template(
+            &content,
+            &char_name,
+            char_desc.as_deref().unwrap_or(""),
+            &player_name,
+            player_desc.as_deref().unwrap_or(""),
+        ) {
+            if rendered != content {
+                dbg_eprintln!(
+                    "[startup] repairing unrendered opening message {msg_id} in conv {conversation_id}"
+                );
+                let _ = sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+                    .bind(rendered)
+                    .bind(msg_id)
+                    .execute(db)
+                    .await;
+            }
+        }
+    }
 }
 
 pub fn resolve_db_path(app: &AppHandle) -> DbResult<PathBuf> {
