@@ -408,7 +408,8 @@ fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult, graph: &Bl
             }
         }
 
-        if props.and_then(|p| p.get("text")).is_none() {
+        let has_body_field = result.display_config.values().any(|cfg| cfg.body);
+        if !has_body_field && props.and_then(|p| p.get("text")).is_none() {
             miss.push("text");
         }
         miss

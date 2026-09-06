@@ -313,15 +313,22 @@ fn merge_system_blocks(blocks: &[crate::services::prompt_compiler::PromptBlock])
 }
 
 /// 构造 structured_json 模式下的 JSON 输出指令，追加到 system 末尾。
-/// 从 JSON Schema 提取顶层字段名/类型/必填标记/描述，生成可读的字段清单，并强制要求：
-/// 1) 仅输出一个 JSON 对象，无额外散文/Markdown；
-/// 2) 覆盖系统提示中残留的散文格式指令；
-/// 3) 叙事散文放入额外的 `narrative` 字段（response_format 用 strict:false，允许 schema 外字段）。
+/// 从 JSON Schema 提取顶层字段名/类型/必填标记/描述，生成可读的字段清单，并要求：
+/// 1) 仅输出一个符合给定 Schema 的 JSON 对象，无额外散文/Markdown；
+/// 2) 指示模型将叙事正文写入对应定义的主体字段（如 `text` 或 `narrative`）。
 fn build_structured_json_directive(schema_json: &str) -> String {
     let mut fields: Vec<String> = Vec::new();
+    let mut has_text_field = false;
+    let mut has_narrative_field = false;
+
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(schema_json) {
         if let Some(props) = value.get("properties").and_then(|p| p.as_object()) {
             for (name, meta) in props {
+                if name == "text" {
+                    has_text_field = true;
+                } else if name == "narrative" {
+                    has_narrative_field = true;
+                }
                 let desc = meta
                     .get("description")
                     .and_then(|d| d.as_str())
@@ -342,17 +349,27 @@ fn build_structured_json_directive(schema_json: &str) -> String {
         }
     }
     let field_list = if fields.is_empty() {
-        "（以下方 JSON Schema 的 properties 为准）".to_string()
+        "（以 JSON Schema 的 properties 为准）".to_string()
     } else {
         fields.join("\n")
     };
+
+    let content_target_hint = if has_text_field {
+        "叙事正文写入 `text` 字段。"
+    } else if has_narrative_field {
+        "叙事正文写入 `narrative` 字段。"
+    } else {
+        "所有内容均严格写入对应定义的 Schema 字段。"
+    };
+
     format!(
-        "【输出格式：严格 JSON】\n\
-你必须以且仅以一个 JSON 对象作为完整回复，不得输出任何 JSON 以外的解释、散文或 Markdown 代码块标记。\n\
-忽略本提示中其它所有关于「散文格式」「电影镜头」「推演路标文本标记」等输出样式的指令——它们已被本条规则覆盖。\n\
-JSON 必须严格符合下方给定的 JSON Schema。除 schema 规定的字段外，额外包含一个 `narrative` 字段（string），用于承载本轮的叙事散文（电影感描写、对话、动作等）。\n\
-字段清单：\n{}\n\
-严禁返回散文或伪 XML；若返回非 JSON 文本，将被视为无效响应。",
+        "【输出契约：严格结构化 JSON】\n\
+你必须以且仅以一个符合给定 JSON Schema 的 JSON 对象作为完整回复。\n\
+严禁输出任何 JSON 以外的解释、散文、前言或 Markdown 代码块标记（如 ```json）。\n\
+{}\n\
+字段定义清单：\n{}\n\
+严禁返回伪 JSON 或非 JSON 纯文本。",
+        content_target_hint,
         field_list
     )
 }
@@ -1226,5 +1243,24 @@ mod tests {
         let error = build_provider_http_request(&request, "https://api.anthropic.com", "test-key")
             .expect_err("structured_json with empty schema should be rejected");
         assert!(error.contains("structured_output_schema"));
+    }
+
+    #[test]
+    fn structured_json_directive_adapts_to_text_and_has_no_stray_narrative_or_preset_names() {
+        use super::build_structured_json_directive;
+        let schema = r#"{
+            "type": "object",
+            "properties": {
+                "text": { "type": "string", "description": "叙事正文" },
+                "status_bar": { "type": "object", "description": "状态栏" }
+            },
+            "required": ["text"]
+        }"#;
+        let directive = build_structured_json_directive(schema);
+        assert!(directive.contains("叙事正文写入 `text` 字段"));
+        assert!(!directive.contains("narrative"), "不应凭空提及未在 schema 中的 narrative 字段");
+        assert!(!directive.contains("电影镜头"), "不应硬编码具体预设工位名称");
+        assert!(!directive.contains("推演路标"), "不应硬编码具体预设工位名称");
+        assert!(!directive.contains("散文格式"), "不应硬编码具体预设工位名称");
     }
 }

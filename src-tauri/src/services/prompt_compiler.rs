@@ -670,9 +670,21 @@ pub async fn compile_prompt(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.replace('\\', "/"))?;
+    let blueprint_has_multiplayer_rules = blueprint_result.blocks.iter().any(|b| {
+        b.identifier == "multiplayer_rules"
+            || b.content.contains("多人联机")
+            || b.content.contains("多人房间")
+            || b.content.contains("多人对话")
+            || b.content.contains("本轮放弃发言")
+    });
+
     system_blocks = blueprint_blocks;
+    // 仅当蓝图自身未显式定义多人协议规则时，才注入系统级保底协议；
+    // 若蓝图已显式定义（如 V2.2 的【多人联机 · 逐人落笔纪律】），则完全由蓝图接管，严禁硬编码重复注入。
     if let Some(block) = multiplayer_block {
-        system_blocks.push(block);
+        if !blueprint_has_multiplayer_rules {
+            system_blocks.push(block);
+        }
     }
 
     // 2. structured_output_schema: 蓝图产出的 JSON Value 序列化为字符串
@@ -3181,6 +3193,29 @@ mod tests {
             out,
             "你好，林风！我是爱丽丝。林风，很高兴见到你，林风。我是爱丽丝。"
         );
+    }
+
+    #[test]
+    fn test_blueprint_multiplayer_rules_suppresses_system_protocol_injection() {
+        use crate::models::blueprint::CompiledBlock;
+        let block = CompiledBlock {
+            identifier: "multiplayer_rules".to_string(),
+            block_type: "system".to_string(),
+            content: "【多人联机 · 逐人落笔纪律】...".to_string(),
+            priority: Some(95),
+            is_locked: false,
+        };
+
+        let blocks = vec![block];
+        let has_multiplayer = blocks.iter().any(|b| {
+            b.identifier == "multiplayer_rules"
+                || b.content.contains("多人联机")
+                || b.content.contains("多人房间")
+                || b.content.contains("多人对话")
+                || b.content.contains("本轮放弃发言")
+        });
+
+        assert!(has_multiplayer);
     }
 }
 

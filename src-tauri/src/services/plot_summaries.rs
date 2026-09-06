@@ -868,7 +868,7 @@ fn build_plot_summary_messages(context: &PlotSummaryGenerationContext) -> Vec<(S
                  不要输出 JSON，不要输出代码块，不要解释过程。\n\
                  第一行写这一窗口内最重要的剧情推进。\n\
                  后续可按“键：值”继续写委托、场景、人物状态、关系变化、重要事实。\n\
-                 变量直接写进文本本体，例如“委托：已接受”“伊诺状态：犯困”。\n\
+                 变量直接写进文本本体，例如“委托：已接受”“角色状态：警惕”。\n\
                  不要编造输入中不存在的事实。",
                 context.batch.covered_round_count
             ),
