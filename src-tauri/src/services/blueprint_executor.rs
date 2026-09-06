@@ -303,10 +303,10 @@ pub async fn execute_blueprint(
         &mut values,
     )?;
 
-    // 强制核心基线：每个蓝图预设都必须包含「内部推理 thinking」与「叙事正文 text」。
-    // 否则模型只能把正文塞进某个 string 字段（如 thinking），导致回复无可读正文。
-    // 仅当字段缺失时插入，绝不覆盖蓝图作者显式定义的字段——是「组合」而非「继承」。
-    inject_core_schema_baseline(&mut result);
+    // 强制核心基线：每个蓝图预设都必须包含「叙事正文 text」（若缺失则注入）。
+    // 对于内部推理 thinking：仅当蓝图完全未定义 thinking 节点且未启用原生思维链时作为旧版兜底注入。
+    // 绝不覆盖或跨分支强行注入蓝图作者未激活的 thinking 字段。
+    inject_core_schema_baseline(&mut result, &working_graph);
 
     // 按语义固定顺序重排 schema 字段（properties + required 同步）。
     // 理由：serde_json 的 Map 保留首次插入顺序，而插入顺序由 DFS 遍历（端口/order）
@@ -378,7 +378,21 @@ fn order_schema_properties(result: &mut BlueprintExecutionResult) {
 /// 基线字段以「组合」方式叠加：仅当蓝图未显式定义该字段时才插入。这避免了让每个
 /// 蓝图作者手动记得加 `text` 的脆弱约定，契合 AGENTS.md「组合优于继承」——公共基线
 /// 通过编译器注入，而非要求每个节点重复声明。
-fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult) {
+fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult, graph: &BlueprintGraph) {
+    // 检查蓝图整张图是否显式包含了 thinking 节点。
+    // 如果蓝图作者已经放置了 field_name 为 "thinking" 的 SchemaField 节点（例如在特定 Gate 分支下），
+    // 则说明思维链字段的启闭完全由图分支调度，绝不跨分支强行兜底。
+    let graph_has_thinking_node = graph.nodes.iter().any(|node| {
+        if let NodeConfig::SchemaField(cfg) = &node.config {
+            cfg.field_name == "thinking"
+        } else {
+            false
+        }
+    });
+
+    // 检查是否启用了原生思维链通道。
+    let native_thinking_enabled = result.sampling_params.thinking_enabled == Some(true);
+
     // 先不可变读，确定缺失的核心字段；避免与后续可变借用冲突。
     let missing: Vec<&str> = {
         let props = result
@@ -386,10 +400,16 @@ fn inject_core_schema_baseline(result: &mut BlueprintExecutionResult) {
             .get("properties")
             .and_then(|v| v.as_object());
         let mut miss = Vec::new();
-        for name in ["thinking", "text"] {
-            if props.and_then(|p| p.get(name)).is_none() {
-                miss.push(name);
+
+        // 仅当图完全未定义 thinking 节点，且未启用原生思维链时，才为旧版极简蓝图保底注入 thinking。
+        if !native_thinking_enabled && !graph_has_thinking_node {
+            if props.and_then(|p| p.get("thinking")).is_none() {
+                miss.push("thinking");
             }
+        }
+
+        if props.and_then(|p| p.get("text")).is_none() {
+            miss.push("text");
         }
         miss
     };
@@ -2837,5 +2857,91 @@ mod tests {
             "already-migrated graph must not be rewritten"
         );
         assert_eq!(g.edges.len(), edge_count_before, "no duplicate edges");
+    }
+
+    /// 原生思维链模式下，不强行注入 thinking schema 字段，避免双重思维链。
+    #[tokio::test]
+    async fn test_native_thinking_suppresses_schema_thinking_injection() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                prompt("n_prompt", "role", "system", "Narrate"),
+                BlueprintNode {
+                    id: "n_sampling".to_string(),
+                    config: NodeConfig::SamplingParamsAnthropic(AnthropicSamplingParamsConfig {
+                        temperature: Some(1.0),
+                        max_tokens: Some(4096),
+                        top_p: None,
+                        stop: None,
+                        thinking_enabled: Some(true),
+                        thinking_budget_tokens: Some(1024),
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_prompt", "in"),
+                edge("e2", "n_prompt", "out", "n_sampling", "in"),
+                edge("e3", "n_sampling", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx_with_protocol("stateless", "anthropic"))
+            .await
+            .expect("graph with native thinking must execute");
+
+        let props = result.structured_output_schema["properties"]
+            .as_object()
+            .expect("properties must be an object");
+
+        assert!(
+            !props.contains_key("thinking"),
+            "thinking schema must NOT be injected when native thinking is enabled"
+        );
+        assert!(props.contains_key("text"), "text baseline must still be injected");
+    }
+
+    /// 蓝图在未激活分支下存在 thinking 节点时，绝不跨分支强行注入 thinking。
+    #[tokio::test]
+    async fn test_unvisited_branch_thinking_suppresses_injection() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                mutex_gate(
+                    "n_gate",
+                    "思考通道",
+                    &[("native", "原生", "原生描述"), ("schema", "指令", "指令描述")],
+                ),
+                prompt("n_native", "p_native", "system", "Native prompt"),
+                prompt("n_schema", "p_schema", "system", "Schema prompt"),
+                schema_field("n_thinking", "thinking", "string", "自定义指令思考"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_gate", "in"),
+                edge("e2", "n_gate", "out_native", "n_native", "in"),
+                edge("e3", "n_gate", "out_schema", "n_schema", "in"),
+                edge("e4", "n_schema", "out", "n_thinking", "in"),
+                edge("e5", "n_native", "out", "n_end", "in"),
+                edge("e6", "n_thinking", "out", "n_end", "in"),
+            ],
+        );
+
+        // 选择走 native 分支，未访问 n_thinking 节点
+        let result = execute_blueprint(&g, &ctx_with_gates("stateless", &[("n_gate", &["native"])]))
+            .await
+            .expect("graph must execute");
+
+        let props = result.structured_output_schema["properties"]
+            .as_object()
+            .expect("properties must be an object");
+
+        assert!(
+            !props.contains_key("thinking"),
+            "thinking schema must NOT be injected when thinking node is on unselected branch"
+        );
+        assert!(props.contains_key("text"), "text baseline must still be injected");
     }
 }
