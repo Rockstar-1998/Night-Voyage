@@ -2,6 +2,7 @@ import { Component, Show, createMemo, createSignal, createEffect } from 'solid-j
 import { RefreshCw, RotateCcw, Pencil, GitFork, ChevronLeft, ChevronRight, Check, X, Trash2 } from '../lib/icons';
 import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig, type StructuredField } from '../lib/messageFormatter';
 import { clearStreamingRenderCache, MessageFormatRenderer } from './MessageFormatRenderer';
+import { NativeThinkingBlock } from './NativeThinkingBlock';
 import type { CapabilityProfile } from '../lib/backend/types';
 import { showConfirm } from './Toast';
 
@@ -9,6 +10,7 @@ export interface ChatMessage {
   id: string;
   sender: 'user' | 'ai';
   content: string;
+  thinking?: string;
   avatar?: string;
   senderName: string;
   isStreaming?: boolean;
@@ -166,6 +168,13 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
               </span>
             </Show>
           </h3>
+
+          <Show when={props.message.sender === 'ai' && (props.message.thinking || (props.message.isStreaming && !props.message.content))}>
+            <NativeThinkingBlock
+              thinking={props.message.thinking ?? ''}
+              isStreaming={props.message.isStreaming && !props.message.content}
+            />
+          </Show>
 
           <Show
             when={isEditing()}

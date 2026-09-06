@@ -108,6 +108,8 @@ pub struct UiMessage {
     pub summary_entry_id: Option<i64>,
     pub is_active_in_round: bool,
     pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

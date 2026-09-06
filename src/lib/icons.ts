@@ -6,6 +6,8 @@ export { default as ArrowRightToLine } from 'lucide-solid/icons/arrow-right-to-l
 export { default as Book } from 'lucide-solid/icons/book';
 export { default as BookOpen } from 'lucide-solid/icons/book-open';
 export { default as Braces } from 'lucide-solid/icons/braces';
+export { default as Brain } from 'lucide-solid/icons/brain';
+export { default as BrainCircuit } from 'lucide-solid/icons/brain-circuit';
 export { default as Check } from 'lucide-solid/icons/check';
 export { default as CheckCircle2 } from 'lucide-solid/icons/check-circle-2';
 export { default as ChevronDown } from 'lucide-solid/icons/chevron-down';

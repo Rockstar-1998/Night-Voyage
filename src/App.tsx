@@ -21,6 +21,7 @@ import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { NotificationContainer, showToast, showConfirm } from './components/Toast';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
 import { selectProfile, FALLBACK_PROFILE } from './lib/capability-profile';
@@ -65,7 +66,7 @@ import {
   presetsDelete,
   presetsRename,
   presetsDuplicate,
-  presetsExport,
+  presetsExportToFile,
   presetsImport,
   providersCreate,
   providersDelete,
@@ -174,6 +175,7 @@ const toChatMessage = (
     senderName,
     avatar: message.role === 'assistant' ? aiAvatar : playerAvatar,
     content: message.content,
+    thinking: message.thinking,
     isStreaming: false,
     roundId: message.roundId,
     messageKind: message.messageKind,
@@ -416,10 +418,17 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
     if (presetBusy() !== null) return;
     setPresetBusy(id);
     try {
-      const payloadJson = await presetsExport(id);
       const fileName = `${sanitizeFileName(currentName, 'preset')}.nvpreset.json`;
-      downloadJsonFile(fileName, payloadJson);
-      showToast(`已导出预设「${currentName}」`, 'success');
+      const filePath = await presetsExportToFile(id, fileName);
+      const open = await showConfirm({
+        title: '预设导出成功',
+        message: `已保存到：\n${filePath}\n\n是否打开所在文件夹？`,
+        confirmText: '打开文件夹',
+        cancelText: '知道了',
+      });
+      if (open) {
+        await revealItemInDir(filePath);
+      }
     } catch (err) {
       showToast(`导出预设失败：${toErrorMessage(err)}`, 'error');
     } finally {
@@ -2107,7 +2116,15 @@ function App() {
           break;
         }
         case 'thinking_delta': {
-          console.debug('[llm-stream-event] hidden thinking delta', payload);
+          const delta = payload.textDelta ?? '';
+          if (!delta) break;
+          upsertStreamingAssistant(payload.messageId, payload.roundId);
+          updateMessageContent(payload.messageId, (message) => ({
+            thinking: `${message.thinking ?? ''}${delta}`,
+            isStreaming: true,
+          }));
+          setReplyStatus('responding');
+          setAbortingRoundId(payload.roundId);
           break;
         }
         case 'content_block_start':

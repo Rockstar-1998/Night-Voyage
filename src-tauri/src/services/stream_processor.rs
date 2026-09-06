@@ -1130,15 +1130,44 @@ async fn stream_openai_text_response(
                 }
             }
 
-            if let Some(reasoning) = value
+            let reasoning_opt = value
                 .get("choices")
                 .and_then(|choices| choices.get(0))
                 .and_then(|choice| choice.get("delta"))
-                .and_then(|delta| delta.get("reasoning_content"))
-                .and_then(|rc| rc.as_str())
-            {
+                .and_then(|delta| {
+                    delta.get("reasoning_content")
+                        .or_else(|| delta.get("reasoning"))
+                        .or_else(|| delta.get("thinking"))
+                })
+                .and_then(|rc| rc.as_str());
+
+            if let Some(reasoning) = reasoning_opt {
                 if !reasoning.is_empty() {
                     thinking_content.push_str(reasoning);
+                    let content_index = ensure_content_part_by_key(
+                        &mut content_parts,
+                        &mut content_part_lookup,
+                        "thinking_0",
+                        0,
+                        "thinking",
+                    );
+                    append_content_part_text(&mut content_parts[content_index], reasoning);
+                    emit_llm_stream_event(
+                        app,
+                        conversation_id,
+                        round_id,
+                        assistant_message_id,
+                        "openai_compatible",
+                        "thinking_delta",
+                        Some(0),
+                        Some("thinking"),
+                        Some(reasoning.to_string()),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
                 }
             }
 
@@ -1239,6 +1268,17 @@ async fn stream_openai_text_response(
                 }
             }
         }
+    }
+    if structured_json_content.is_none() && !full_content.is_empty() {
+        let next_index = content_parts.len() as i64;
+        let content_index = ensure_content_part_by_key(
+            &mut content_parts,
+            &mut content_part_lookup,
+            "text",
+            next_index,
+            "text",
+        );
+        append_content_part_text(&mut content_parts[content_index], &full_content);
     }
     emit_stream_message_stop(
         app,
@@ -2027,6 +2067,17 @@ async fn stream_anthropic_text_response(
                 }
             }
         }
+    }
+    if structured_json_content.is_none() && !full_content.is_empty() && !content_parts.iter().any(|p| p.part_type == "text") {
+        let next_index = content_parts.len() as i64;
+        let content_index = ensure_content_part_by_key(
+            &mut content_parts,
+            &mut content_part_lookup,
+            "text",
+            next_index,
+            "text",
+        );
+        append_content_part_text(&mut content_parts[content_index], &full_content);
     }
     emit_stream_message_stop(
         app,

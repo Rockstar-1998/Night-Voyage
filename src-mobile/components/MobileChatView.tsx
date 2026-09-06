@@ -10,6 +10,7 @@ import {
 import type { UiMessage, LlmStreamEventPayload, StreamErrorEvent, StreamRetryEvent } from '../../src/lib/backend/types';
 import { parseStructuredResponse, parseStreamingFields } from '../lib/structured';
 import { MobileStructuredRenderer } from './MobileStructuredRenderer';
+import { MobileNativeThinkingBlock } from './MobileNativeThinkingBlock';
 import { showToast } from './Toast';
 
 interface MobileChatViewProps {
@@ -140,6 +141,17 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
         patchMessage(payload.messageId, { compatibilityMode: true });
         break;
       }
+      case 'thinking_delta': {
+        const delta = payload.textDelta ?? '';
+        if (!delta) break;
+        upsertAssistantByEvent(payload);
+        patchMessage(payload.messageId, {
+          thinking: `${messages.find((m) => m.id === payload.messageId)?.thinking ?? ''}${delta}`,
+          isStreaming: true,
+        });
+        setReplyStatus('responding');
+        break;
+      }
       default:
         break;
     }
@@ -245,20 +257,28 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
     });
 
     return (
-      <Show
-        when={!streamingFields() && !fullResponse()}
-        fallback={
+      <div class="space-y-1.5">
+        <Show when={m.thinking || (m.isStreaming && !m.content)}>
+          <MobileNativeThinkingBlock
+            thinking={m.thinking ?? ''}
+            isStreaming={m.isStreaming && !m.content}
+          />
+        </Show>
+        <Show
+          when={!streamingFields() && !fullResponse()}
+          fallback={
             <Show when={streamingFields()} fallback={
               <MobileStructuredRenderer response={fullResponse()!} onChoiceSelect={(_i, v) => handleSend(v)} />
             }>
               {(sf) => <MobileStructuredRenderer response={{ fields: sf(), displayConfig: {} }} onChoiceSelect={(_i, v) => handleSend(v)} />}
             </Show>
-        }
-      >
-        <div class="whitespace-pre-wrap text-sm text-mist-solid/90 leading-relaxed">
-          {m.content || (m.isStreaming ? '思考中…' : '')}
-        </div>
-      </Show>
+          }
+        >
+          <div class="whitespace-pre-wrap text-sm text-mist-solid/90 leading-relaxed">
+            {m.content || (m.isStreaming && !m.thinking ? '思考中…' : '')}
+          </div>
+        </Show>
+      </div>
     );
   };
 

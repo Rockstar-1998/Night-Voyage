@@ -90,7 +90,10 @@ impl MessageRepository {
                      END \
                  ELSE 1 \
              END AS is_active_in_round, \
-             m.created_at \
+             m.created_at, \
+             (SELECT mcp.text_value FROM message_content_parts mcp \
+              WHERE mcp.message_id = m.id AND mcp.part_type = 'thinking' \
+              ORDER BY mcp.part_index ASC LIMIT 1) AS thinking \
              FROM messages m \
              LEFT JOIN conversation_members cm ON cm.id = m.member_id \
              LEFT JOIN message_rounds mr ON mr.id = m.round_id \
@@ -119,7 +122,10 @@ impl MessageRepository {
                      END \
                  ELSE 1 \
              END AS is_active_in_round, \
-             m.created_at \
+             m.created_at, \
+             (SELECT mcp.text_value FROM message_content_parts mcp \
+              WHERE mcp.message_id = m.id AND mcp.part_type = 'thinking' \
+              ORDER BY mcp.part_index ASC LIMIT 1) AS thinking \
              FROM messages m \
              LEFT JOIN conversation_members cm ON cm.id = m.member_id \
              LEFT JOIN message_rounds mr ON mr.id = m.round_id \
@@ -471,6 +477,7 @@ impl MessageRepository {
                 .map(|value| value != 0)
                 .unwrap_or(true),
             created_at: row.try_get("created_at").unwrap_or_default(),
+            thinking: row.try_get("thinking").ok(),
         }
     }
 }

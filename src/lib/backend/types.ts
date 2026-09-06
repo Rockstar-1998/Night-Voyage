@@ -110,6 +110,7 @@ export interface UiMessage {
   summaryEntryId?: number;
   isActiveInRound: boolean;
   createdAt: number;
+  thinking?: string;
 }
 
 export interface ChatSubmitInputResult {
