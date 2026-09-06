@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::models::{PresetDetail, PresetSummary};
 use crate::services::preset_service::PresetService;
 use crate::validators::preset_validator::{
@@ -5,6 +7,9 @@ use crate::validators::preset_validator::{
     PresetSemanticGroupInput, PresetStopSequenceInput,
 };
 use crate::AppState;
+
+// AppHandle.path() 由 Manager trait 提供。
+use tauri::Manager;
 
 #[tauri::command]
 pub async fn presets_list(state: tauri::State<'_, AppState>) -> Result<Vec<PresetSummary>, String> {
@@ -25,6 +30,79 @@ pub async fn presets_get(
 pub async fn presets_export(state: tauri::State<'_, AppState>, id: i64) -> Result<String, String> {
     let service = PresetService::new(&state.db);
     service.export(id).await
+}
+
+#[tauri::command]
+pub async fn presets_export_to_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    file_name: String,
+) -> Result<String, String> {
+    let service = PresetService::new(&state.db);
+    let json = service.export(id).await?;
+
+    let dir = resolve_export_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+
+    let file_name = sanitize_export_file_name(&file_name);
+    let path = unique_export_path(&dir, &file_name);
+
+    std::fs::write(&path, json).map_err(|err| err.to_string())?;
+
+    // 跨 IPC 路径统一使用正斜杠，避免 JSON 解析与前端显示问题。
+    Ok(path.to_string_lossy().replace('\\', "/"))
+}
+
+fn resolve_export_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        let base = app.path().app_data_dir().map_err(|err| err.to_string())?;
+        Ok(base.join("exports"))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let base = app
+            .path()
+            .download_dir()
+            .or_else(|_| app.path().app_data_dir())
+            .map_err(|err| err.to_string())?;
+        Ok(base.join("Night Voyage Exports"))
+    }
+}
+
+fn sanitize_export_file_name(input: &str) -> String {
+    let filtered: String = input
+        .chars()
+        .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'))
+        .collect();
+    let mut name = filtered.trim().to_string();
+    if name.is_empty() {
+        name = "preset.nvpreset.json".to_string();
+    }
+    if !name.ends_with(".nvpreset.json") {
+        name.push_str(".nvpreset.json");
+    }
+    name
+}
+
+fn unique_export_path(dir: &std::path::Path, file_name: &str) -> PathBuf {
+    let candidate = dir.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let stem = file_name.strip_suffix(".nvpreset.json").unwrap_or(file_name);
+    let mut counter = 1;
+    loop {
+        let next_name = format!("{} ({}).nvpreset.json", stem, counter);
+        let candidate = dir.join(&next_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+        counter += 1;
+    }
 }
 
 #[tauri::command]

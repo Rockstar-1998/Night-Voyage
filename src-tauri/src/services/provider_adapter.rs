@@ -269,9 +269,9 @@ fn resolve_thinking_config(
     match thinking_enabled {
         Some(true) => {
             let budget = thinking_budget_tokens
-                .or_else(|| max_output_tokens.map(|t| t.clamp(128, 4096)))
+                .or_else(|| max_output_tokens.map(|t| t.clamp(1024, 4096)))
                 .unwrap_or(1024)
-                .clamp(128, 128000);
+                .clamp(1024, 128000);
             Some(LlmThinkingConfig {
                 enabled: true,
                 budget_tokens: Some(budget),
@@ -285,7 +285,7 @@ fn resolve_thinking_config(
             }
             Some(LlmThinkingConfig {
                 enabled: true,
-                budget_tokens: Some(max_output_tokens.unwrap_or(1024).clamp(128, 4096)),
+                budget_tokens: Some(max_output_tokens.unwrap_or(1024).clamp(1024, 4096)),
             })
         }
     }
@@ -613,6 +613,13 @@ fn build_anthropic_http_request(
     }
     if let Some(thinking) = &request.thinking {
         insert_anthropic_thinking(&mut body, thinking)?;
+        if let Some(budget) = thinking.budget_tokens {
+            if let Some(max_tokens_val) = body.get("max_tokens").and_then(|v| v.as_i64()) {
+                if max_tokens_val <= budget {
+                    body.insert("max_tokens".to_string(), json!(budget + 1024));
+                }
+            }
+        }
     }
     if !request.tools.is_empty() {
         body.insert(

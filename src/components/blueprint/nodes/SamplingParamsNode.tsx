@@ -149,17 +149,17 @@ export const SamplingParamsNode: Component<NodeConfigComponentProps<SamplingPara
           />
           thinking_enabled（开启思考/推理）
         </label>
-        <label class={LABEL_CLASS}>thinking_budget_tokens（思考预算，≥128）</label>
+        <label class={LABEL_CLASS}>thinking_budget_tokens（思考预算，≥1024）</label>
         <input
           type="number"
           step="1"
-          min="128"
+          min="1024"
           value={props.config.thinking_budget_tokens ?? ''}
           disabled={props.isLocked || !props.config.thinking_enabled}
           onChange={(e) => {
             const n = parseNum(e.currentTarget.value);
             update({
-              thinking_budget_tokens: n === null ? null : Math.max(128, Math.trunc(n)),
+              thinking_budget_tokens: n === null ? null : Math.max(1024, Math.trunc(n)),
             });
           }}
           class={INPUT_CLASS}

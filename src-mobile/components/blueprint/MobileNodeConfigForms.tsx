@@ -716,7 +716,7 @@ const SamplingParamsForm: Component<{
         />
       </div>
       <div>
-        <FieldLabel label="thinking_budget_tokens（思考预算，≥128）" />
+        <FieldLabel label="thinking_budget_tokens（思考预算，≥1024）" />
         <NumberInput
           value={props.config.thinking_budget_tokens}
           placeholder="留空表示不设置"
@@ -724,7 +724,7 @@ const SamplingParamsForm: Component<{
           onInput={(v) =>
             props.onChange({
               ...props.config,
-              thinking_budget_tokens: v === null ? null : Math.max(128, Math.trunc(v)),
+              thinking_budget_tokens: v === null ? null : Math.max(1024, Math.trunc(v)),
             })
           }
         />
@@ -879,7 +879,7 @@ const AnthropicSamplingParamsForm: Component<{
         />
       </div>
       <div>
-        <FieldLabel label="thinking_budget_tokens（思考预算，≥128）" />
+        <FieldLabel label="thinking_budget_tokens（思考预算，≥1024）" />
         <NumberInput
           value={props.config.thinking_budget_tokens}
           placeholder="留空表示不设置"
@@ -887,7 +887,7 @@ const AnthropicSamplingParamsForm: Component<{
           onInput={(v) =>
             props.onChange({
               ...props.config,
-              thinking_budget_tokens: v === null ? null : Math.max(128, Math.trunc(v)),
+              thinking_budget_tokens: v === null ? null : Math.max(1024, Math.trunc(v)),
             })
           }
         />

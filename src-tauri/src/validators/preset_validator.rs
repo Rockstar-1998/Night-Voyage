@@ -413,8 +413,8 @@ pub fn normalize_thinking_budget_tokens_impl(value: Option<i64>) -> Result<Optio
             Ok(None)
         }
         Some(budget) => {
-            if budget < 128 {
-                return Err("thinkingBudgetTokens 必须 >= 128".to_string());
+            if budget < 1024 {
+                return Err("thinkingBudgetTokens 必须 >= 1024".to_string());
             }
             if budget > 128000 {
                 return Err("thinkingBudgetTokens 必须 <= 128000".to_string());

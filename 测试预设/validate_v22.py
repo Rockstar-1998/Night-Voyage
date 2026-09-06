@@ -1,6 +1,6 @@
 import json, sys
 
-PATH = r"d:\data\Night Voyage\测试预设\Night Voyage 全能进阶核心预设 V2.2.nvpreset.json"
+PATH = sys.argv[1] if len(sys.argv) > 1 else r"d:\data\Night Voyage\测试预设\Night Voyage 全能进阶核心预设 V2.2.nvpreset.json"
 
 with open(PATH, encoding="utf-8") as f:
     doc = json.load(f)
@@ -107,9 +107,12 @@ for gid, ports in valid_gate_ports.items():
 
 orders = sorted([(n["config"]["order"], n["config"]["field_name"]) for n in nodes if n["type"] == "schema_field"])
 print("\nschema order:", orders)
-prios = sorted([(n["config"]["priority"], n["config"]["identifier"]) for n in nodes if n["type"] == "prompt"], reverse=True)
+prios = sorted([(n["config"].get("priority"), n["config"]["identifier"]) for n in nodes if n["type"] == "prompt"], key=lambda x: (x[0] is None, -(x[0] or 0)))
+null_prio = [i for p, i in prios if p is None]
+if null_prio:
+    print(f"\nWARNING: prompt nodes with null priority (executor falls back to PresetRule=100): {null_prio}")
 print("\nprompt priorities:")
-for p, i in prios: print(f"  {p:3}  {i}")
+for p, i in prios: print(f"  {'null' if p is None else p:>4}  {i}")
 
 print(f"\nnodes={len(nodes)} edges={len(edges)}")
 if errors:

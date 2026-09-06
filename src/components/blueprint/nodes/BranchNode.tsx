@@ -8,7 +8,7 @@
  *
  * 每条 case 的 port 必须与节点上的出边端口名一致，否则图校验会失败。
  */
-import { Component, For, Show } from 'solid-js';
+import { Component, Index, Show } from 'solid-js';
 import type { BranchConfig, BranchCase } from '../../../lib/blueprint/types';
 import type { NodeConfigComponentProps } from '../NodeConfigPanel';
 import { Plus, Trash2 } from '../../../lib/icons';
@@ -73,17 +73,22 @@ export const BranchNode: Component<NodeConfigComponentProps<BranchConfig>> = (pr
           </button>
         </div>
 
-        <For each={props.config.cases}>
+        {/*
+          用 <Index> 而非 <For>：每次按键都会生成新的 case 对象，<For> 按引用
+          比对会判定为"换了一项"从而销毁重建整行 DOM，输入框随即失焦。<Index>
+          按下标比对，只更新行内 signal，不重建 DOM。
+        */}
+        <Index each={props.config.cases}>
           {(caseItem, index) => (
             <div class="flex items-center gap-2 p-2 rounded-lg bg-night-deep/40 border border-white/5">
               <input
                 type="text"
                 class={CASE_INPUT_CLASS}
                 placeholder="匹配值（如 single）"
-                value={caseItem.match_value}
+                value={caseItem().match_value}
                 disabled={props.isLocked}
                 onInput={(e) =>
-                  handleUpdateCase(index(), { match_value: e.currentTarget.value })
+                  handleUpdateCase(index, { match_value: e.currentTarget.value })
                 }
               />
               <span class="text-mist-solid/40 text-xs">→</span>
@@ -91,24 +96,24 @@ export const BranchNode: Component<NodeConfigComponentProps<BranchConfig>> = (pr
                 type="text"
                 class={CASE_INPUT_CLASS}
                 placeholder="出口端口名（如 out_single）"
-                value={caseItem.port}
+                value={caseItem().port}
                 disabled={props.isLocked}
                 onInput={(e) =>
-                  handleUpdateCase(index(), { port: e.currentTarget.value })
+                  handleUpdateCase(index, { port: e.currentTarget.value })
                 }
               />
               <button
                 type="button"
                 class="text-mist-solid/40 hover:text-red-400 disabled:opacity-30"
                 disabled={props.isLocked}
-                onClick={() => handleRemoveCase(index())}
+                onClick={() => handleRemoveCase(index)}
                 aria-label="删除规则"
               >
                 <Trash2 size={14} />
               </button>
             </div>
           )}
-        </For>
+        </Index>
 
         <Show when={props.config.cases.length === 0}>
           <p class="text-[11px] text-mist-solid/40 leading-5 py-2">

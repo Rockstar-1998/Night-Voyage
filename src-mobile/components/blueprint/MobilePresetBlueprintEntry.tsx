@@ -27,13 +27,14 @@ import {
   presetsRename,
   presetsDuplicate,
   presetsUpdate,
-  presetsExport,
+  presetsExportToFile,
   presetsImport,
   normalizeBlueprintGraph,
 } from '../../../src/lib/backend';
 import { BlueprintEditor } from './BlueprintEditor';
 import { MobilePresetDetailView } from './MobilePresetDetailView';
 import { showToast, showConfirm } from '../Toast';
+import { openPath } from '@tauri-apps/plugin-opener';
 import { autoLayout as autoLayoutGraph } from './mobileNodeLayout';
 
 // ─── Props ───
@@ -304,7 +305,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
   };
 
   // ─── 导出/导入（便携格式 .nvpreset.json，复用后端 presets_export / presets_import）───
-  // 文件读写走 WebView DOM（Blob 下载 / <input type=file> 读文本）。
+  // 导出改走后端文件写入，返回真实保存路径并提示用户；导入仍走 <input type=file>。
 
   let presetImportInput: HTMLInputElement | undefined;
 
@@ -315,17 +316,17 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     if (presetBusy() !== null) return;
     setPresetBusy(preset.id);
     try {
-      const payloadJson = await presetsExport(preset.id);
-      const blob = new Blob([payloadJson], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${sanitizeFileName(preset.name)}.nvpreset.json`;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      showToast('已导出预设', 'success');
+      const fileName = `${sanitizeFileName(preset.name)}.nvpreset.json`;
+      const filePath = await presetsExportToFile(preset.id, fileName);
+      const open = await showConfirm({
+        title: '预设导出成功',
+        message: `已保存到：\n${filePath}`,
+        confirmText: '打开文件',
+        cancelText: '知道了',
+      });
+      if (open) {
+        await openPath(filePath);
+      }
     } catch (err) {
       showToast(
         `导出预设失败：${err instanceof Error ? err.message : String(err)}`,

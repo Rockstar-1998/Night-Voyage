@@ -30,6 +30,10 @@ export async function presetsExport(id: number) {
   return invokeCommand<string>('presets_export', { id });
 }
 
+export async function presetsExportToFile(id: number, fileName: string) {
+  return invokeCommand<string>('presets_export_to_file', { id, fileName });
+}
+
 export async function presetsImport(payloadJson: string) {
   return invokeCommand<PresetDetail>('presets_import', { payloadJson });
 }

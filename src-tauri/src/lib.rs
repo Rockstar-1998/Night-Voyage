@@ -106,6 +106,7 @@ pub fn run() {
             commands::presets::presets_list,
             commands::presets::presets_get,
             commands::presets::presets_export,
+            commands::presets::presets_export_to_file,
             commands::presets::presets_import,
             commands::presets::presets_create,
             commands::presets::presets_update,
