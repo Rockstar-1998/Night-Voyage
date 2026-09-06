@@ -25,6 +25,12 @@ pub enum NodeType {
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch,
     /// OpenAI / chat_completions 协议专用采样参数节点。
+    ///
+    /// serde 显式重命名为 `sampling_params_openai`：容器级 `snake_case` 会把
+    /// `OpenAi` 的内部大小写边界拆成 `open_ai`，与前端 `sampling_params_openai`
+    /// （PC/mobile 30+ 处引用）不一致，导致前端创建的节点保存即反序列化失败。
+    /// 显式 rename 对齐前端命名，与 `sampling_params_anthropic` 保持对称。
+    #[serde(rename = "sampling_params_openai")]
     SamplingParamsOpenAi,
     /// Anthropic 协议专用采样参数节点。
     SamplingParamsAnthropic,
@@ -54,6 +60,10 @@ pub enum NodeConfig {
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch(BranchConfig),
     /// OpenAI / chat_completions 协议专用采样参数。
+    ///
+    /// serde 显式重命名对齐前端 `sampling_params_openai`（理由见
+    /// [`NodeType::SamplingParamsOpenAi`] 的 doc 注释）。
+    #[serde(rename = "sampling_params_openai")]
     SamplingParamsOpenAi(OpenAiSamplingParamsConfig),
     /// Anthropic 协议专用采样参数。
     SamplingParamsAnthropic(AnthropicSamplingParamsConfig),
@@ -854,5 +864,50 @@ mod tests {
             reserialized.contains("\"type\":\"role_switch\""),
             "RoleSwitch node must emit `type: \"role_switch\"`, got: {reserialized}"
         );
+    }
+
+    /// 回归测试：OpenAI 版采样参数节点的 serde 命名必须是 `sampling_params_openai`
+    /// （前端 PC/mobile 30+ 处引用的拼法）。容器级 `snake_case` 会把 `OpenAi` 拆成
+    /// `open_ai`，导致前端创建的节点保存即反序列化失败（保存蓝图报
+    /// `unknown variant sampling_params_openai`）。两个 variant 均已显式 rename，
+    /// 本测试锁定该序列化合约，防止未来被改回去。
+    #[test]
+    fn sampling_params_openai_serde_round_trip() {
+        let node_json = r#"{
+            "id": "n_sp",
+            "type": "sampling_params_openai",
+            "position": {"x": 0, "y": 0},
+            "config": {
+                "temperature": 0.9,
+                "max_tokens": 16384,
+                "top_p": 0.95,
+                "frequency_penalty": 0.3,
+                "presence_penalty": 0.15,
+                "stop": null,
+                "is_locked": false
+            }
+        }"#;
+
+        // 反序列化：前端拼法必须能直接读入
+        let node: BlueprintNode = serde_json::from_str(node_json)
+            .expect("`sampling_params_openai` (frontend spelling) must deserialize");
+        assert!(matches!(node.config, NodeConfig::SamplingParamsOpenAi(_)));
+        assert_eq!(node.node_type(), NodeType::SamplingParamsOpenAi);
+
+        // 序列化：往返必须保持前端拼法（不出现 open_ai）
+        let reserialized = serde_json::to_string(&node).expect("serialization must succeed");
+        assert!(
+            reserialized.contains("\"type\":\"sampling_params_openai\""),
+            "must emit frontend spelling `sampling_params_openai`, got: {reserialized}"
+        );
+        assert!(
+            !reserialized.contains("open_ai"),
+            "must never emit `open_ai` spelling, got: {reserialized}"
+        );
+
+        // NodeType 判别值同步走前端拼法
+        let type_json = serde_json::to_string(&NodeType::SamplingParamsOpenAi)
+            .expect("NodeType serialization must succeed");
+        assert_eq!(type_json, "\"sampling_params_openai\"");
     }
 }
