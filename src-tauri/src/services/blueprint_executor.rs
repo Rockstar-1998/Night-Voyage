@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
-    AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams, FieldDisplayConfig,
+    AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
     NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
 };
 

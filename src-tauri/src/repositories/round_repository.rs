@@ -419,20 +419,7 @@ impl RoundRepository {
         .map_err(|err| err.to_string())?;
 
         if conversation_type == "online" {
-            let count = rows.len();
-            let player_names: Vec<String> = rows
-                .iter()
-                .map(|row| {
-                    row.try_get("display_name")
-                        .unwrap_or_else(|_| "成员".to_string())
-                })
-                .collect();
-
-            let header = format!("【本轮 · {}名玩家参与】{}", count, player_names.join(" "));
-
-            let mut lines = Vec::with_capacity(rows.len() + 2);
-            lines.push(header);
-            lines.push("---".to_string());
+            let mut lines = Vec::with_capacity(rows.len());
 
             for row in &rows {
                 let action_type: String =
@@ -443,11 +430,11 @@ impl RoundRepository {
                     .unwrap_or_else(|_| "成员".to_string());
 
                 if action_type == "skipped" {
-                    lines.push(format!("{}: （本轮放弃发言）", display_name));
+                    continue;
                 } else if content.trim().is_empty() {
-                    lines.push(format!("{}: ", display_name));
+                    continue;
                 } else {
-                    lines.push(format!("{}: {}", display_name, content));
+                    lines.push(format!("{}: {}", display_name, content.trim()));
                 }
             }
 
@@ -459,9 +446,9 @@ impl RoundRepository {
                     row.try_get("action_type").map_err(|err| err.to_string())?;
                 let content: String = row.try_get("content").unwrap_or_default();
                 if action_type == "skipped" {
-                    lines.push("本轮放弃发言".to_string());
+                    continue;
                 } else if !content.trim().is_empty() {
-                    lines.push(content);
+                    lines.push(content.trim().to_string());
                 }
             }
 

@@ -577,7 +577,7 @@ pub async fn compile_prompt(
         err
     })?;
 
-    let mut system_blocks = preset_compiler_data.blocks;
+    let mut system_blocks;
     let mut latest_world_variable_text = None;
     let memory_mode = load_memory_mode(db, input.conversation_id).await;
     let mem0_active = memory_mode == MEMORY_MODE_MEM0;
@@ -1205,16 +1205,6 @@ async fn load_character_compile_data(
 
 fn build_character_system_message(character_data: &CharacterCompileData) -> Option<String> {
     let mut sections = Vec::new();
-    if !character_data.name.is_empty() {
-        sections.push(format!("Character Name: {}", character_data.name));
-    }
-    if !character_data.tags.is_empty() {
-        sections.push(format!(
-            "Character Tags: {}",
-            character_data.tags.join(", ")
-        ));
-    }
-
     if !character_data.base_sections.is_empty() {
         sections.extend(
             character_data
@@ -1223,10 +1213,7 @@ fn build_character_system_message(character_data: &CharacterCompileData) -> Opti
                 .filter_map(build_character_base_section_message),
         );
     } else if !character_data.description.is_empty() {
-        sections.push(format!(
-            "Character Description: {}",
-            character_data.description
-        ));
+        sections.push(character_data.description.clone());
     }
 
     if sections.is_empty() {
@@ -1243,35 +1230,19 @@ fn build_character_base_section_message(
     if content.is_empty() {
         return None;
     }
-
-    let title = section
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or(default_character_base_section_title(&section.section_key));
-
-    Some(format!("[{title}]\n{content}"))
-}
-
-fn default_character_base_section_title(section_key: &str) -> &'static str {
-    match section_key {
-        "identity" => "Identity",
-        "persona" => "Persona",
-        "background" => "Background",
-        "rules" => "Rules",
-        "custom" => "Custom",
-        _ => "Character Base",
+    if let Some(title) = section.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(format!("{title}\n{content}"))
+    } else {
+        Some(content.to_string())
     }
 }
 
 fn build_character_base_block(character_data: &CharacterCompileData) -> Option<PromptBlock> {
     let content = build_character_system_message(character_data)?;
-
     Some(build_block(
         PromptBlockKind::CharacterBase,
         PromptRole::System,
-        Some("Character Base".to_string()),
+        None,
         content,
         PromptBlockSource::Character {
             character_id: character_data.character_id,
@@ -1285,7 +1256,7 @@ fn build_player_base_block(character_data: &CharacterCompileData) -> Option<Prom
     Some(build_block(
         PromptBlockKind::PlayerBase,
         PromptRole::System,
-        Some("Player Base".to_string()),
+        None,
         content,
         PromptBlockSource::Player {
             character_id: character_data.character_id,
@@ -1299,7 +1270,7 @@ fn build_player_base_block_for_guest(character_data: &CharacterCompileData) -> O
     Some(build_block(
         PromptBlockKind::PlayerBase,
         PromptRole::System,
-        Some(format!("Player Base — {}", character_data.name)),
+        None,
         content,
         PromptBlockSource::Player {
             character_id: character_data.character_id,
@@ -1310,63 +1281,21 @@ fn build_player_base_block_for_guest(character_data: &CharacterCompileData) -> O
 
 fn build_player_system_message(character_data: &CharacterCompileData) -> Option<String> {
     let mut sections = Vec::new();
-    if !character_data.name.is_empty() {
-        sections.push(format!("Player Name: {}", character_data.name));
-    }
-    if !character_data.tags.is_empty() {
-        sections.push(format!(
-            "Player Tags: {}",
-            character_data.tags.join(", ")
-        ));
-    }
-
     if !character_data.base_sections.is_empty() {
         sections.extend(
             character_data
                 .base_sections
                 .iter()
-                .filter_map(build_player_base_section_message),
+                .filter_map(build_character_base_section_message),
         );
     } else if !character_data.description.is_empty() {
-        sections.push(format!(
-            "Player Description: {}",
-            character_data.description
-        ));
+        sections.push(character_data.description.clone());
     }
 
     if sections.is_empty() {
         None
     } else {
         Some(sections.join("\n\n"))
-    }
-}
-
-fn build_player_base_section_message(
-    section: &CharacterBaseSectionCompileData,
-) -> Option<String> {
-    let content = section.content.trim();
-    if content.is_empty() {
-        return None;
-    }
-
-    let title = section
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or(default_player_base_section_title(&section.section_key));
-
-    Some(format!("[{title}]\n{content}"))
-}
-
-fn default_player_base_section_title(section_key: &str) -> &'static str {
-    match section_key {
-        "identity" => "Player Identity",
-        "persona" => "Player Persona",
-        "background" => "Player Background",
-        "rules" => "Player Rules",
-        "custom" => "Player Custom",
-        _ => "Player Base",
     }
 }
 
@@ -2103,11 +2032,7 @@ async fn load_world_book_blocks(
         let content = if entry.title.trim().is_empty() {
             entry.content.clone()
         } else {
-            format!(
-                "World Book Entry: {}\n{}",
-                entry.title.trim(),
-                entry.content
-            )
+            format!("{}\n{}", entry.title.trim(), entry.content)
         };
         let block = build_block(
             PromptBlockKind::WorldBookMatch,
@@ -2459,11 +2384,9 @@ fn filter_structured_content(
 
 /// Default authority prefix marking retrieved memories as historical, non-authoritative
 /// context so the model defers to recent dialogue on conflict when not customized in blueprint.
-pub const DEFAULT_RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str =
-    "[历史记忆 - 非当前状态，如与最近对话矛盾以最近对话为准]\n";
+pub const DEFAULT_RETRIEVED_DETAIL_AUTHORITY_PREFIX: &str = "";
 
-pub const DEFAULT_WORLD_VARIABLE_AUTHORITY_PREFIX: &str =
-    "[世界变量 - 当前权威状态，由系统维护]\n";
+pub const DEFAULT_WORLD_VARIABLE_AUTHORITY_PREFIX: &str = "";
 
 /// Load the latest world variable snapshot from `message_rounds.world_variables`.
 /// Returns `None` if:
@@ -3039,56 +2962,10 @@ fn source_message_id(source: &PromptBlockSource) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_character_system_message, render_opening_template, render_prompt_template,
-        CharacterBaseSectionCompileData, CharacterCompileData, PromptTemplateCharacterContext,
-        PromptTemplateConversationContext, PromptTemplateCurrentUserContext,
-        PromptTemplateProviderContext, PromptTemplateRenderContext,
+        render_opening_template, render_prompt_template,
+        PromptTemplateCharacterContext, PromptTemplateConversationContext,
+        PromptTemplateCurrentUserContext, PromptTemplateProviderContext, PromptTemplateRenderContext,
     };
-
-    #[test]
-    fn character_base_message_prefers_structured_sections_over_legacy_description() {
-        let message = build_character_system_message(&CharacterCompileData {
-            character_id: 1,
-            name: "Iris".to_string(),
-            description: "Legacy description".to_string(),
-            tags: vec!["guardian".to_string(), "stoic".to_string()],
-            base_sections: vec![
-                CharacterBaseSectionCompileData {
-                    section_key: "identity".to_string(),
-                    title: None,
-                    content: "Last sentinel of the north gate.".to_string(),
-                },
-                CharacterBaseSectionCompileData {
-                    section_key: "rules".to_string(),
-                    title: Some("Oaths".to_string()),
-                    content: "Never abandon the watch.".to_string(),
-                },
-            ],
-        })
-        .expect("character base message should exist");
-
-        assert!(message.contains("Character Name: Iris"));
-        assert!(message.contains("Character Tags: guardian, stoic"));
-        assert!(message.contains("[Identity]\nLast sentinel of the north gate."));
-        assert!(message.contains("[Oaths]\nNever abandon the watch."));
-        assert!(!message.contains("Legacy description"));
-    }
-
-    #[test]
-    fn character_base_message_falls_back_to_legacy_description_when_sections_absent() {
-        let message = build_character_system_message(&CharacterCompileData {
-            character_id: 2,
-            name: "Mina".to_string(),
-            description: "An observant archivist.".to_string(),
-            tags: vec!["scholar".to_string()],
-            base_sections: vec![],
-        })
-        .expect("character base fallback message should exist");
-
-        assert!(message.contains("Character Name: Mina"));
-        assert!(message.contains("Character Tags: scholar"));
-        assert!(message.contains("Character Description: An observant archivist."));
-    }
 
     /// 构造一个含 character + player_character 的渲染上下文，供模板单测复用。
     fn sample_render_context() -> PromptTemplateRenderContext {
@@ -3207,26 +3084,9 @@ mod tests {
     }
 
     #[test]
-    fn test_blueprint_multiplayer_rules_suppresses_system_protocol_injection() {
-        use crate::models::blueprint::CompiledBlock;
-        let block = CompiledBlock {
-            identifier: "multiplayer_rules".to_string(),
-            block_type: "system".to_string(),
-            content: "【多人联机 · 逐人落笔纪律】...".to_string(),
-            priority: Some(95),
-            is_locked: false,
-        };
-
-        let blocks = vec![block];
-        let has_multiplayer = blocks.iter().any(|b| {
-            b.identifier == "multiplayer_rules"
-                || b.content.contains("多人联机")
-                || b.content.contains("多人房间")
-                || b.content.contains("多人对话")
-                || b.content.contains("本轮放弃发言")
-        });
-
-        assert!(has_multiplayer);
+    fn test_default_authority_prefixes_are_empty() {
+        assert_eq!(super::DEFAULT_RETRIEVED_DETAIL_AUTHORITY_PREFIX, "");
+        assert_eq!(super::DEFAULT_WORLD_VARIABLE_AUTHORITY_PREFIX, "");
     }
 }
 

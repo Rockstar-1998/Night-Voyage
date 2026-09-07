@@ -935,51 +935,35 @@ fn build_plot_summary_messages(
     context: &PlotSummaryGenerationContext,
     blueprint_instruction: Option<&str>,
 ) -> Vec<(String, String)> {
+    let mut messages = Vec::new();
+
+    if let Some(inst) = blueprint_instruction {
+        let trimmed = inst.trim();
+        if !trimmed.is_empty() {
+            messages.push(("system".to_string(), trimmed.to_string()));
+        }
+    }
+
     let round_sections = context
         .rounds
         .iter()
         .map(|round| {
-            format!(
-                "[第 {} 轮 / round_id={}]\n聚合用户输入:\n{}\n\nassistant 输出:\n{}",
-                round.round_index, round.round_id, round.user_content, round.assistant_content
-            )
+            let user = round.user_content.trim();
+            let assistant = round.assistant_content.trim();
+            if user.is_empty() {
+                assistant.to_string()
+            } else if assistant.is_empty() {
+                user.to_string()
+            } else {
+                format!("{}\n{}", user, assistant)
+            }
         })
+        .filter(|s| !s.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let instruction = match blueprint_instruction {
-        Some(inst) if !inst.trim().is_empty() => {
-            format!("总结要求与字段规范（来自蓝图预设定义）：\n{}", inst.trim())
-        }
-        _ => {
-            "第一行写这一窗口内最重要的剧情推进。\n\
-             后续可按“键：值”继续写重要事件、场景、角色状态、关系变化。\n\
-             变量直接写进文本本体，例如“事件：已调查”“角色状态：警惕”。".to_string()
-        }
-    };
-
-    vec![
-        (
-            "system".to_string(),
-            format!(
-                "你是 Night Voyage 的剧情总结层编译器。\n\
-                 你只总结当前提供的 {} 轮对话窗口，不要总结窗口外内容。\n\
-                 输出必须是可直接注入 Prompt Compiler 第 5 层的条目式纯文本。\n\
-                 不要输出 JSON，不要输出代码块，不要解释过程。\n\
-                 {}\n\
-                 不要编造输入中不存在的事实。",
-                context.batch.covered_round_count,
-                instruction
-            ),
-        ),
-        (
-            "user".to_string(),
-            format!(
-                "请为以下轮次窗口生成剧情总结。\n\n窗口：第 {} 到第 {} 轮\n\n{}",
-                context.batch.start_round_index, context.batch.end_round_index, round_sections
-            ),
-        ),
-    ]
+    messages.push(("user".to_string(), round_sections));
+    messages
 }
 
 async fn load_plot_summary_provider(

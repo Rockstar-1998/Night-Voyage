@@ -149,34 +149,7 @@ pub fn build_llm_chat_request(
         .capability_checks
         .push(format!("thinking_enabled={}", thinking.is_some()));
 
-    // structured_json 模式下，仅靠 `response_format` 不足以保证模型输出 JSON：
-    // 经本地 proxy（如 antigravity-proxy）时 response_format 常被忽略，且系统提示里
-    // 可能残留散文格式指令（「电影镜头」「推演路标」等）。因此在这里向 system 末尾
-    // 追加一条权威的 JSON 输出指令，明确覆盖上述散文格式要求，并指示模型把叙事散文
-    // 放进 `narrative` 字段（response_format 用 strict:false，允许 schema 外额外字段）。
-    // 这样即便 proxy 不强制 response_format，模型也能按 schema 产出结构化 JSON，
-    // 避免结构化解析器把散文判为「LLM 响应为空」（见 llm_debug 中
-    // `incomplete JSON: parser stopped at phase BeforeObject`）。
-    let system = if result.params.response_mode.as_deref() == Some("structured_json")
-        && result
-            .params
-            .structured_output_schema
-            .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
-    {
-        let mut sys = merge_system_blocks(&result.system_blocks);
-        sys.push(build_structured_json_directive(
-            result
-                .params
-                .structured_output_schema
-                .as_deref()
-                .unwrap_or("{}"),
-        ));
-        sys
-    } else {
-        merge_system_blocks(&result.system_blocks)
-    };
+    let system = merge_system_blocks(&result.system_blocks);
     let mut messages = Vec::new();
     messages.extend(result.history_blocks.iter().map(block_to_llm_message));
     messages.push(block_to_llm_message(&result.current_user_block));
@@ -312,62 +285,6 @@ fn merge_system_blocks(blocks: &[crate::services::prompt_compiler::PromptBlock])
         .collect()
 }
 
-/// 构造 structured_json 模式下的 JSON 输出指令，追加到 system 末尾。
-/// 从 JSON Schema 提取顶层字段名/类型/必填标记/描述，生成可读的字段清单，并要求：
-/// 1) 仅输出一个符合给定 Schema 的 JSON 对象，无额外散文/Markdown；
-/// 2) 指示模型将内容严格按 Schema 字段输出。
-fn build_structured_json_directive(schema_json: &str) -> String {
-    let mut fields: Vec<String> = Vec::new();
-    let mut has_text_field = false;
-
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(schema_json) {
-        if let Some(props) = value.get("properties").and_then(|p| p.as_object()) {
-            for (name, meta) in props {
-                if name == "text" {
-                    has_text_field = true;
-                }
-                let desc = meta
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("")
-                    .trim();
-                let ty = meta
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("any");
-                let required = value
-                    .get("required")
-                    .and_then(|r| r.as_array())
-                    .map(|arr| arr.iter().any(|v| v.as_str() == Some(name)))
-                    .unwrap_or(false);
-                let mark = if required { "（必填）" } else { "（可选）" };
-                fields.push(format!("- `{}` ({}{})：{}", name, ty, mark, desc));
-            }
-        }
-    }
-    let field_list = if fields.is_empty() {
-        "（以 JSON Schema 的 properties 为准）".to_string()
-    } else {
-        fields.join("\n")
-    };
-
-    let content_target_hint = if has_text_field {
-        "叙事正文写入 `text` 字段。"
-    } else {
-        "所有内容均严格写入对应定义的 Schema 字段。"
-    };
-
-    format!(
-        "【输出契约：严格结构化 JSON】\n\
-你必须以且仅以一个符合给定 JSON Schema 的 JSON 对象作为完整回复。\n\
-严禁输出任何 JSON 以外的解释、散文、前言或 Markdown 代码块标记（如 ```json）。\n\
-{}\n\
-字段定义清单：\n{}\n\
-严禁返回伪 JSON 或非 JSON 纯文本。",
-        content_target_hint,
-        field_list
-    )
-}
 
 fn block_to_llm_message(block: &crate::services::prompt_compiler::PromptBlock) -> LlmMessage {
     LlmMessage::text(prompt_role_to_llm_role(&block.role), block.content.clone())
@@ -1241,21 +1158,32 @@ mod tests {
     }
 
     #[test]
-    fn structured_json_directive_adapts_to_text_and_has_no_stray_narrative_or_preset_names() {
-        use super::build_structured_json_directive;
-        let schema = r#"{
-            "type": "object",
-            "properties": {
-                "text": { "type": "string", "description": "叙事正文" },
-                "status_bar": { "type": "object", "description": "状态栏" }
-            },
-            "required": ["text"]
-        }"#;
-        let directive = build_structured_json_directive(schema);
-        assert!(directive.contains("叙事正文写入 `text` 字段"));
-        assert!(!directive.contains("narrative"), "不应凭空提及未在 schema 中的 narrative 字段");
-        assert!(!directive.contains("电影镜头"), "不应硬编码具体预设工位名称");
-        assert!(!directive.contains("推演路标"), "不应硬编码具体预设工位名称");
-        assert!(!directive.contains("散文格式"), "不应硬编码具体预设工位名称");
+    fn structured_json_mode_does_not_inject_unauthorized_prompt_directive() {
+        use crate::services::prompt_compiler::{PromptBlock, PromptBlockKind, PromptBlockSource, PromptRole};
+        let mut result = empty_result();
+        result.params.response_mode = Some("structured_json".to_string());
+        result.params.structured_output_schema = Some(r#"{"type":"object","properties":{"text":{"type":"string"}}}"#.to_string());
+        result.system_blocks = vec![PromptBlock {
+            kind: PromptBlockKind::PresetRule,
+            priority: 0,
+            role: PromptRole::System,
+            title: Some("Rule".to_string()),
+            content: "You are an assistant.".to_string(),
+            source: PromptBlockSource::Compiler,
+            token_cost_estimate: None,
+            required: true,
+        }];
+
+        let req = build_llm_chat_request(
+            &mut result,
+            "openai_compatible",
+            "test-model",
+            false,
+            None,
+            None,
+        )
+        .expect("build request should succeed");
+
+        assert_eq!(req.system, vec!["You are an assistant.".to_string()]);
     }
 }
