@@ -104,13 +104,49 @@ pub struct Position {
 ///
 /// `position` 带 `#[serde(default)]`：导入文件可省略坐标字段（默认为 0,0），
 /// 节省便携文件体积；编辑器打开后可通过「整理节点」重新计算布局。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BlueprintNode {
     pub id: String,
     #[serde(flatten)]
     pub config: NodeConfig,
     #[serde(default)]
     pub position: Position,
+}
+
+impl<'de> Deserialize<'de> for BlueprintNode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(obj) = value.as_object_mut() {
+            // 前端内存状态或旧 JSON 中，无配置节点（如 start / end）可能携带占位符 `"config": {}`。
+            // NodeConfig 的 Start/End 为单元变体，反序列化时若存在 config 字段会报错
+            // `invalid type: map, expected unit variant NodeConfig::Start`。
+            // 在此将其安全移除，确保前后端序列化边界健壮性。
+            if let Some(node_type) = obj.get("type").and_then(|v| v.as_str()) {
+                if node_type == "start" || node_type == "end" {
+                    obj.remove("config");
+                }
+            }
+        }
+
+        #[derive(Deserialize)]
+        struct NodeRaw {
+            id: String,
+            #[serde(flatten)]
+            config: NodeConfig,
+            #[serde(default)]
+            position: Position,
+        }
+
+        let raw = NodeRaw::deserialize(value).map_err(serde::de::Error::custom)?;
+        Ok(BlueprintNode {
+            id: raw.id,
+            config: raw.config,
+            position: raw.position,
+        })
+    }
 }
 
 impl BlueprintNode {
@@ -951,5 +987,34 @@ mod tests {
         let type_json = serde_json::to_string(&NodeType::SamplingParamsOpenAi)
             .expect("NodeType serialization must succeed");
         assert_eq!(type_json, "\"sampling_params_openai\"");
+    }
+
+    /// 回归测试：前端内存状态或第三方传递的 Start / End 节点可能包含 `"config": {}` 占位符。
+    /// 反序列化必须能够容忍并安全解析为 NodeConfig::Start / End，严禁报错
+    /// `invalid type: map, expected unit variant NodeConfig::Start`。
+    #[test]
+    fn start_and_end_node_tolerates_empty_config_object() {
+        let json = r#"{
+            "version": 2,
+            "nodes": [
+                { "id": "n_start", "type": "start", "config": {}, "position": {"x": 0, "y": 300} },
+                { "id": "n_end", "type": "end", "config": {}, "position": {"x": 400, "y": 300} }
+            ],
+            "edges": []
+        }"#;
+
+        let graph: BlueprintGraph = serde_json::from_str(json)
+            .expect("graph with empty config on start/end must deserialize successfully");
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[0].node_type(), NodeType::Start);
+        assert_eq!(graph.nodes[1].node_type(), NodeType::End);
+
+        // 序列化往返输出标准无 config 格式
+        let reserialized = serde_json::to_string(&graph).expect("serialization must succeed");
+        let round_tripped: BlueprintGraph = serde_json::from_str(&reserialized)
+            .expect("round-trip without config must succeed");
+        assert_eq!(round_tripped.nodes.len(), 2);
+        assert_eq!(round_tripped.nodes[0].node_type(), NodeType::Start);
+        assert_eq!(round_tripped.nodes[1].node_type(), NodeType::End);
     }
 }

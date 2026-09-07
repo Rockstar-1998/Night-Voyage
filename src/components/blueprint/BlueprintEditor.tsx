@@ -973,7 +973,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       <Show when={showCompilePreview()}>
         <BlueprintCompilePreviewModal
           presetId={props.presetId}
-          graphJson={JSON.stringify(graph)}
+          graphJson={serializeBlueprintGraph(graph)}
           onClose={() => setShowCompilePreview(false)}
           onJumpToNode={handleJumpToNode}
         />

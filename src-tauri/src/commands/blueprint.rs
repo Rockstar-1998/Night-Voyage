@@ -227,13 +227,13 @@ pub async fn list_preset_conversations(
         title: String,
         conversation_type: String,
         memory_mode: String,
-        protocol: Option<String>,
+        provider_kind: Option<String>,
         updated_at: i64,
     }
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT c.id, c.title, c.conversation_type, c.memory_mode, c.updated_at, \
-                ap.protocol \
+                ap.provider_kind \
          FROM conversations c \
          LEFT JOIN api_providers ap ON ap.id = c.provider_id \
          ORDER BY (CASE WHEN c.preset_id = ? THEN 1 ELSE 0 END) DESC, c.updated_at DESC \
@@ -251,7 +251,11 @@ pub async fn list_preset_conversations(
             title: r.title,
             conversation_type: r.conversation_type,
             memory_mode: r.memory_mode,
-            protocol: r.protocol.unwrap_or_else(|| "chat_completions".to_string()),
+            protocol: if r.provider_kind.as_deref() == Some("anthropic") {
+                "anthropic".to_string()
+            } else {
+                "chat_completions".to_string()
+            },
             updated_at: r.updated_at,
         })
         .collect())
@@ -275,7 +279,7 @@ pub async fn preview_blueprint_with_session(
 
     let mut memory_mode = "stateless".to_string();
     let mut conversation_type = "single".to_string();
-    let mut protocol = "anthropic".to_string();
+    let mut protocol = "chat_completions".to_string();
     let mut char_name: Option<String> = None;
     let mut gate_selections: HashMap<String, GateSelection> = HashMap::new();
 
@@ -288,7 +292,7 @@ pub async fn preview_blueprint_with_session(
         }
 
         if let Ok(Some(row)) = sqlx::query_as::<_, ConvRow>(
-            "SELECT conversation_type, memory_mode, character_id FROM conversations WHERE id = ?",
+            "SELECT conversation_type, memory_mode, COALESCE(character_id, host_character_id) AS character_id FROM conversations WHERE id = ?",
         )
         .bind(cid)
         .fetch_optional(&state.db)
