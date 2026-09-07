@@ -866,12 +866,12 @@ fn build_http_client_with_timeout(timeout_secs: u64) -> Result<Client, String> {
 }
 
 fn log_text_preview(text: &str) -> String {
-    const MAX_PREVIEW_LEN: usize = 240;
+    const MAX_PREVIEW_CHARS: usize = 240;
     let normalized = text.replace(['\r', '\n'], " ");
-    if normalized.len() <= MAX_PREVIEW_LEN {
-        normalized
+    if let Some((idx, _)) = normalized.char_indices().nth(MAX_PREVIEW_CHARS) {
+        format!("{}...", &normalized[..idx])
     } else {
-        format!("{}...", &normalized[..MAX_PREVIEW_LEN])
+        normalized
     }
 }
 

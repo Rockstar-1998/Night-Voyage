@@ -614,7 +614,13 @@ async fn stream_llm_response(
     dbg_eprintln!(
         "[chat] stream_llm_response: compile_prompt done, response_mode={:?}, structured_output_schema={:?}, system_blocks={}, history_blocks={}",
         compiled_prompt.params.response_mode,
-        compiled_prompt.params.structured_output_schema.as_ref().map(|s| if s.len() > 80 { format!("{}...", &s[..80]) } else { s.clone() }),
+        compiled_prompt.params.structured_output_schema.as_ref().map(|s| {
+            if let Some((idx, _)) = s.char_indices().nth(80) {
+                format!("{}...", &s[..idx])
+            } else {
+                s.clone()
+            }
+        }),
         compiled_prompt.system_blocks.len(),
         compiled_prompt.history_blocks.len(),
     );
