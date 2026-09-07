@@ -318,7 +318,7 @@ const SchemaFieldForm: Component<{
         />
         <p class="text-[10px] text-mist-solid/40 mt-1">
           控制该字段在结构化输出 schema 的 properties / required 中的排列顺序
-          （按 (order, 遍历序) 排序）。核心基线字段 thinking/text 由执行器固定在前。
+          （按 (order, 遍历序) 升序排序，数值越小越靠前；相同 order 按画布连线遍历序）。
         </p>
       </div>
       <div>

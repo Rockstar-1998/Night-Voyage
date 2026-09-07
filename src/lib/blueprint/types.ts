@@ -105,8 +105,8 @@ export interface SchemaFieldConfig {
   lock_reason: string | null;
   /**
    * 字段在结构化输出 schema 中的顺序权重。作者可编辑以控制
-   * `properties` / `required` 的排列顺序。排序按 (order, 遍历插入序) 稳定排序；
-   * 缺省视为 0。核心基线字段 thinking/text 由执行器注入负 order 固定在前。
+   * `properties` / `required` 的排列顺序。排序按 (order, 遍历插入序) 升序稳定排序；
+   * 缺省视为 0。数值越小越靠前；若数值相同则按画布连线遍历序排列。
    */
   order: number;
 }

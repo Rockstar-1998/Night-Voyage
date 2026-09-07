@@ -319,7 +319,7 @@ pub async fn execute_blueprint(
 /// - `order` 来自 [`SchemaFieldConfig::order`]，作者可在配置面板编辑；
 /// - 遍历插入序来自 `result.schema_field_order` 的记录，保证同 order 的字段
 ///   保持蓝图遍历的相对顺序（确定性、可复现）；
-/// - 核心基线字段 thinking(-2) / text(-1) 永远排在作者自定义字段之前。
+/// - 排序完全由作者配置的 order 与遍历序驱动，执行器不预设任何基线字段顺序。
 ///
 /// `required` 与重排后的 `properties` 顺序保持一致（strict 模式硬性要求）。
 fn order_schema_properties(result: &mut BlueprintExecutionResult) {
