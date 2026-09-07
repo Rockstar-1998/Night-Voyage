@@ -1,9 +1,14 @@
+use std::collections::HashMap;
 use serde::Serialize;
 
-use crate::models::blueprint::{BlueprintGraph, GateOption, GroupGateConfig, MutexGateConfig, NodeConfig};
+use crate::models::blueprint::{
+    BlueprintCompilePreviewDto, BlueprintExecutionContext, BlueprintGraph, BlueprintPreviewBlockDto,
+    GateOption, GateSelection, GroupGateConfig, MutexGateConfig, NodeConfig, PresetConversationOptionDto,
+};
+use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::preset_gate_repository::PresetGateRepository;
 use crate::repositories::preset_gate_repository::PresetGateSelection;
-use crate::services::blueprint_executor::normalize_legacy_value_edges;
+use crate::services::blueprint_executor::{execute_blueprint, normalize_legacy_value_edges};
 use crate::AppState;
 
 /// IPC DTO：归一化后的蓝图图 JSON。
@@ -208,4 +213,184 @@ pub async fn load_blueprint_gates(
         .collect();
 
     Ok(gates)
+}
+
+/// 列出与该预设关联（或近期活跃）的会话，供蓝图编译预览选择真实运行上下文。
+#[tauri::command]
+pub async fn list_preset_conversations(
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+) -> Result<Vec<PresetConversationOptionDto>, String> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        title: String,
+        conversation_type: String,
+        memory_mode: String,
+        protocol: Option<String>,
+        updated_at: i64,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT c.id, c.title, c.conversation_type, c.memory_mode, c.updated_at, \
+                ap.protocol \
+         FROM conversations c \
+         LEFT JOIN api_providers ap ON ap.id = c.provider_id \
+         ORDER BY (CASE WHEN c.preset_id = ? THEN 1 ELSE 0 END) DESC, c.updated_at DESC \
+         LIMIT 20",
+    )
+    .bind(preset_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| PresetConversationOptionDto {
+            id: r.id,
+            title: r.title,
+            conversation_type: r.conversation_type,
+            memory_mode: r.memory_mode,
+            protocol: r.protocol.unwrap_or_else(|| "chat_completions".to_string()),
+            updated_at: r.updated_at,
+        })
+        .collect())
+}
+
+/// 基于真实会话运行环境（或默认环境）预览编译当前画布上的蓝图图。
+/// 产出纯净的文本块列表，每个块携带其对应的蓝图节点元数据与整体 Schema。
+#[tauri::command]
+pub async fn preview_blueprint_with_session(
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+    graph_json: String,
+    conversation_id: Option<i64>,
+) -> Result<BlueprintCompilePreviewDto, String> {
+    let graph: BlueprintGraph = serde_json::from_str(&graph_json).map_err(|err| {
+        format!(
+            "blueprint_graph JSON invalid: {}",
+            err.to_string().replace('\\', "/")
+        )
+    })?;
+
+    let mut memory_mode = "stateless".to_string();
+    let mut conversation_type = "single".to_string();
+    let mut protocol = "anthropic".to_string();
+    let mut char_name: Option<String> = None;
+    let mut gate_selections: HashMap<String, GateSelection> = HashMap::new();
+
+    if let Some(cid) = conversation_id {
+        #[derive(sqlx::FromRow)]
+        struct ConvRow {
+            conversation_type: String,
+            memory_mode: String,
+            character_id: Option<i64>,
+        }
+
+        if let Ok(Some(row)) = sqlx::query_as::<_, ConvRow>(
+            "SELECT conversation_type, memory_mode, character_id FROM conversations WHERE id = ?",
+        )
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await
+        {
+            memory_mode = row.memory_mode;
+            conversation_type = row.conversation_type;
+            if let Some(char_id) = row.character_id {
+                if let Ok(Some(name)) = sqlx::query_scalar::<_, String>(
+                    "SELECT name FROM character_cards WHERE id = ?",
+                )
+                .bind(char_id)
+                .fetch_optional(&state.db)
+                .await
+                {
+                    char_name = Some(name);
+                }
+            }
+        }
+
+        protocol = ConversationRepository::resolve_conversation_protocol(&state.db, cid).await;
+
+        #[derive(sqlx::FromRow)]
+        struct GateRow {
+            node_id: String,
+            selected_keys: String,
+        }
+
+        if let Ok(rows) = sqlx::query_as::<_, GateRow>(
+            "SELECT node_id, selected_keys FROM conversation_gate_selections WHERE conversation_id = ?",
+        )
+        .bind(cid)
+        .fetch_all(&state.db)
+        .await
+        {
+            for r in rows {
+                if let Ok(keys) = serde_json::from_str::<Vec<String>>(&r.selected_keys) {
+                    gate_selections.insert(r.node_id, GateSelection { keys });
+                }
+            }
+        }
+    }
+
+    if gate_selections.is_empty() {
+        if let Ok(preset_selections) = PresetGateRepository::load_by_preset(&state.db, preset_id).await {
+            for sel in preset_selections {
+                gate_selections.insert(sel.node_id, GateSelection { keys: sel.selected_keys });
+            }
+        }
+    }
+
+    let exec_context = BlueprintExecutionContext {
+        memory_mode,
+        conversation_type,
+        protocol,
+        gate_selections,
+    };
+
+    let blueprint_result = execute_blueprint(&graph, &exec_context)
+        .await
+        .map_err(|err| err.to_string().replace('\\', "/"))?;
+
+    let mut blocks = Vec::new();
+    let mut full_text_parts = Vec::new();
+
+    for compiled in &blueprint_result.blocks {
+        let mut text = compiled.content.clone();
+        if let Some(ref cn) = char_name {
+            text = text.replace("{{char}}", cn).replace("{{char_name}}", cn);
+        }
+
+        let node_label = graph
+            .nodes
+            .iter()
+            .find(|n| Some(&n.id) == compiled.node_id.as_ref())
+            .map(|n| match &n.config {
+                NodeConfig::Prompt(cfg) => cfg.identifier.clone(),
+                NodeConfig::SchemaField(cfg) => cfg.field_name.clone(),
+                NodeConfig::MutexGate(cfg) => cfg.label.clone(),
+                NodeConfig::GroupGate(cfg) => cfg.label.clone(),
+                _ => n.id.clone(),
+            })
+            .unwrap_or_else(|| compiled.identifier.clone());
+
+        if !text.trim().is_empty() {
+            full_text_parts.push(text.clone());
+        }
+
+        blocks.push(BlueprintPreviewBlockDto {
+            source_kind: "blueprint".to_string(),
+            node_id: compiled.node_id.clone(),
+            node_label: Some(node_label),
+            identifier: compiled.identifier.clone(),
+            content: text,
+        });
+    }
+
+    let full_prompt_text = full_text_parts.join("\n\n");
+
+    Ok(BlueprintCompilePreviewDto {
+        blocks,
+        structured_output_schema: blueprint_result.structured_output_schema,
+        full_prompt_text,
+    })
 }

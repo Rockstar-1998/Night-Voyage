@@ -446,11 +446,53 @@ pub struct BlueprintExecutionContext {
 /// 图执行器产出的 prompt block，供 compile_prompt 注入。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompiledBlock {
+    #[serde(default)]
+    pub node_id: Option<String>,
     pub identifier: String,
     pub block_type: String,
     pub content: String,
     pub priority: Option<i32>,
     pub is_locked: bool,
+}
+
+/// 预览用的编译文本块，标注来源与归属蓝图节点
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlueprintPreviewBlockDto {
+    /// 来源类型："blueprint" | "conversation"
+    pub source_kind: String,
+    /// 若来源为蓝图节点，为节点 ID（如 "n_native_total"）
+    pub node_id: Option<String>,
+    /// 节点名称/标签（如 "native_total"）
+    pub node_label: Option<String>,
+    /// 块标识符（如 "native_total"）
+    pub identifier: String,
+    /// 文本内容
+    pub content: String,
+}
+
+/// 蓝图编译预览的完整结果
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlueprintCompilePreviewDto {
+    /// 有序提示词块列表
+    pub blocks: Vec<BlueprintPreviewBlockDto>,
+    /// 结构化输出 JSON Schema
+    pub structured_output_schema: serde_json::Value,
+    /// 完整拼接后的纯文本（便于一键复制）
+    pub full_prompt_text: String,
+}
+
+/// 预设关联的会话简要选项，供前端下拉切换
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresetConversationOptionDto {
+    pub id: i64,
+    pub title: String,
+    pub conversation_type: String,
+    pub memory_mode: String,
+    pub protocol: String,
+    pub updated_at: i64,
 }
 
 /// 图执行器产出的采样参数。

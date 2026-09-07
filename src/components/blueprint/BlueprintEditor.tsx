@@ -34,7 +34,7 @@
 
 import { Component, Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { ArrowLeft, Eye, LayoutGrid, Save } from '../../lib/icons';
+import { ArrowLeft, Eye, FileText, LayoutGrid, Save } from '../../lib/icons';
 import {
   NODE_TYPES,
   type BlueprintComment,
@@ -59,6 +59,7 @@ import { NodeSelector } from './NodeSelector';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
 import { autoLayout, isNodeLocked, type ViewTransform } from './nodeLayout';
+import { BlueprintCompilePreviewModal } from './BlueprintCompilePreviewModal';
 
 // ─── Props ───
 
@@ -354,8 +355,37 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [isSaving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
+  const [showCompilePreview, setShowCompilePreview] = createSignal(false);
 
   let canvasContainerEl: HTMLDivElement | undefined;
+
+  /** Jump to and center a specific node on the canvas */
+  const handleJumpToNode = (nodeId: string) => {
+    const targetNode = graph.nodes.find((n) => n.id === nodeId);
+    if (!targetNode) return;
+
+    if (hiddenNodeIds().has(nodeId)) {
+      const next = new Set(hiddenNodeIds());
+      next.delete(nodeId);
+      setHiddenNodeIds(next);
+    }
+
+    handleNodeSelect(nodeId);
+
+    if (canvasContainerEl) {
+      const rect = canvasContainerEl.getBoundingClientRect();
+      const width = rect.width || 800;
+      const height = rect.height || 600;
+      const zoom = viewTransform.zoom;
+      const targetCenterX = targetNode.position.x + 120;
+      const targetCenterY = targetNode.position.y + 60;
+      setViewTransform({
+        ...viewTransform,
+        offsetX: width / 2 - targetCenterX * zoom,
+        offsetY: height / 2 - targetCenterY * zoom,
+      });
+    }
+  };
 
   // ─── Selection helpers ───
 
@@ -832,6 +862,14 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             <Eye size={16} />
           </IconButton>
           <IconButton
+            onClick={() => setShowCompilePreview(true)}
+            disabled={isLoading()}
+            label="编译预览"
+            size="sm"
+          >
+            <FileText size={16} />
+          </IconButton>
+          <IconButton
             onClick={() => void handleSave()}
             disabled={isLoading() || isSaving() || !presetDetail()}
             label={isSaving() ? '保存中…' : '保存蓝图'}
@@ -931,6 +969,15 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      <Show when={showCompilePreview()}>
+        <BlueprintCompilePreviewModal
+          presetId={props.presetId}
+          graphJson={JSON.stringify(graph)}
+          onClose={() => setShowCompilePreview(false)}
+          onJumpToNode={handleJumpToNode}
+        />
+      </Show>
     </div>
   );
 };

@@ -99,6 +99,8 @@ pub fn run() {
             commands::blueprint::clear_preset_gate_selection,
             commands::blueprint::load_blueprint_gates,
             commands::blueprint::normalize_blueprint_graph,
+            commands::blueprint::list_preset_conversations,
+            commands::blueprint::preview_blueprint_with_session,
             commands::plot_summaries::plot_summaries_list,
             commands::plot_summaries::plot_summaries_get_pending,
             commands::plot_summaries::plot_summaries_upsert_manual,

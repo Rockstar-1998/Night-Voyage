@@ -410,6 +410,7 @@ fn traverse(
         }
         NodeConfig::Prompt(cfg) => {
             result.blocks.push(CompiledBlock {
+                node_id: Some(node_id.to_string()),
                 identifier: cfg.identifier.clone(),
                 block_type: cfg.block_type.clone(),
                 content: cfg.content.clone(),

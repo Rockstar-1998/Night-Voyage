@@ -90,3 +90,46 @@ export async function normalizeBlueprintGraph(
     graphJson,
   });
 }
+
+export interface PresetConversationOption {
+  id: number;
+  title: string;
+  conversationType: string;
+  memoryMode: string;
+  protocol: string;
+  updatedAt: number;
+}
+
+export interface BlueprintPreviewBlock {
+  sourceKind: string;
+  nodeId?: string | null;
+  nodeLabel?: string | null;
+  identifier: string;
+  content: string;
+}
+
+export interface BlueprintCompilePreview {
+  blocks: BlueprintPreviewBlock[];
+  structuredOutputSchema: Record<string, unknown>;
+  fullPromptText: string;
+}
+
+export async function listPresetConversations(
+  presetId: number,
+): Promise<PresetConversationOption[]> {
+  return invokeCommand<PresetConversationOption[]>('list_preset_conversations', {
+    presetId,
+  });
+}
+
+export async function previewBlueprintWithSession(
+  presetId: number,
+  graphJson: string,
+  conversationId?: number | null,
+): Promise<BlueprintCompilePreview> {
+  return invokeCommand<BlueprintCompilePreview>('preview_blueprint_with_session', {
+    presetId,
+    graphJson,
+    conversationId: conversationId ?? null,
+  });
+}
