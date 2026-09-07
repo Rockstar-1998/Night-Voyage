@@ -34,6 +34,7 @@ import {
 import { BlueprintEditor } from './BlueprintEditor';
 import { MobilePresetDetailView } from './MobilePresetDetailView';
 import { showToast, showConfirm } from '../Toast';
+import { deriveStructuredOutputDisplay } from '../../lib/structured';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { autoLayout as autoLayoutGraph } from './mobileNodeLayout';
 
@@ -378,6 +379,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
     try {
       const detail = await presetsGet(editing.presetId);
       const json = serializeBlueprintGraph(graph);
+      const derivedDisplay = deriveStructuredOutputDisplay(graph);
       const updated = await presetsUpdate({
         id: detail.preset.id,
         name: detail.preset.name,
@@ -394,7 +396,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
         thinkingBudgetTokens: detail.preset.thinkingBudgetTokens,
         betaFeatures: detail.preset.betaFeatures,
         structuredOutputSchema: detail.preset.structuredOutputSchema,
-        structuredOutputDisplay: detail.preset.structuredOutputDisplay,
+        structuredOutputDisplay: derivedDisplay ?? detail.preset.structuredOutputDisplay,
         contextIncludedKeys: detail.preset.contextIncludedKeys,
         blueprintGraph: json,
       });

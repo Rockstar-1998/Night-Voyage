@@ -76,7 +76,7 @@ export interface StructuredField {
 export interface StructuredResponseNode {
   kind: 'structured_response';
   fields: Record<string, StructuredField>;
-  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }>;
 }
 
 export const DEFAULT_FORMAT_CONFIG: MessageFormatConfig = {
@@ -198,7 +198,10 @@ function applyRegexRule(
   return result;
 }
 
-export function parseStructuredResponse(jsonContent: string, displayConfig?: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean }>): StructuredResponseNode | null {
+export function parseStructuredResponse(
+  jsonContent: string,
+  displayConfig?: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }>
+): StructuredResponseNode | null {
   try {
     const parsed = JSON.parse(jsonContent);
     if (typeof parsed !== 'object' || parsed === null) return null;

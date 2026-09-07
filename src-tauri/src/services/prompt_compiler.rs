@@ -745,18 +745,25 @@ pub async fn compile_prompt(
     }
 
     // 3.6 display_config: 序列化为旧版 structured_output_display 兼容格式
-    //     (key -> { defaultCollapsed, hideLabel })，供 MessageItem 渲染。
+    //     (key -> { defaultCollapsed, hideLabel, body, order })，供 MessageItem 渲染。
     if !blueprint_result.display_config.is_empty() {
         let display_map: std::collections::HashMap<String, serde_json::Value> = blueprint_result
             .display_config
             .iter()
             .map(|(k, v)| {
+                let field_order = blueprint_result
+                    .schema_field_order
+                    .iter()
+                    .find(|(name, _)| name == k)
+                    .map(|(_, o)| *o)
+                    .unwrap_or(0);
                 (
                     k.clone(),
                     serde_json::json!({
                         "defaultCollapsed": !v.default_expanded,
                         "hideLabel": v.hide_label,
                         "body": v.body,
+                        "order": field_order,
                     }),
                 )
             })

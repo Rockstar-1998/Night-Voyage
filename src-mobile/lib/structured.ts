@@ -11,6 +11,7 @@ export interface StructuredDisplayConfig {
   defaultCollapsed?: boolean;
   hideLabel?: boolean;
   body?: boolean;
+  order?: number;
 }
 
 export interface StructuredResponse {
@@ -104,4 +105,41 @@ export function parseStreamingFields(
   }
 
   return fields;
+}
+
+/**
+ * 从 BlueprintGraph 对象派生 structured_output_display JSON 字符串。
+ */
+export function deriveStructuredOutputDisplay(graph: any): string | null {
+  const displayMap: Record<string, StructuredDisplayConfig> = {};
+  let hasFields = false;
+  if (!graph || !Array.isArray(graph.nodes)) return null;
+  for (const node of graph.nodes) {
+    if (node.type === 'schema_field' && node.config) {
+      const cfg = node.config;
+      if (cfg.field_name) {
+        hasFields = true;
+        displayMap[cfg.field_name] = {
+          defaultCollapsed: !(cfg.display?.default_expanded ?? true),
+          hideLabel: cfg.display?.hide_label ?? false,
+          body: cfg.display?.body ?? false,
+          order: cfg.order ?? 0,
+        };
+      }
+    }
+  }
+  return hasFields ? JSON.stringify(displayMap) : null;
+}
+
+/**
+ * 从 blueprint_graph JSON 字符串派生 structured_output_display JSON 字符串。
+ */
+export function deriveStructuredOutputDisplayFromGraphJson(graphJson?: string | null): string | undefined {
+  if (!graphJson) return undefined;
+  try {
+    const parsed = JSON.parse(graphJson);
+    return deriveStructuredOutputDisplay(parsed) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }

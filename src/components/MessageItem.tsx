@@ -58,7 +58,7 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
   });
 
   const structuredResponse = createMemo(() => {
-    let displayConfig: Record<string, { defaultCollapsed: boolean }> | undefined;
+    let displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }> | undefined;
     if (props.structuredOutputDisplay) {
       try {
         displayConfig = JSON.parse(props.structuredOutputDisplay);

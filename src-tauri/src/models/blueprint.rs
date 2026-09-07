@@ -236,6 +236,43 @@ pub struct BlueprintGraph {
     pub comments: Vec<BlueprintComment>,
 }
 
+impl BlueprintGraph {
+    /// 从当前图节点中的所有 SchemaField 提取并生成前端展示偏好映射 JSON。
+    ///
+    /// 结构化输出展示偏好（defaultCollapsed, hideLabel, body, order）以 SchemaFieldConfig
+    /// 的 display / order 字段为单一真相源。
+    pub fn derive_display_config(&self) -> Option<String> {
+        let mut display_map: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        for node in &self.nodes {
+            if let NodeConfig::SchemaField(cfg) = &node.config {
+                if !cfg.field_name.is_empty() {
+                    display_map.insert(
+                        cfg.field_name.clone(),
+                        serde_json::json!({
+                            "defaultCollapsed": !cfg.display.default_expanded,
+                            "hideLabel": cfg.display.hide_label,
+                            "body": cfg.display.body,
+                            "order": cfg.order,
+                        }),
+                    );
+                }
+            }
+        }
+        if display_map.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&display_map).ok()
+        }
+    }
+}
+
+/// 从蓝图图 JSON 字符串解析出所有 SchemaField 节点，派生 structured_output_display 映射。
+pub fn derive_blueprint_display_config(blueprint_graph_json: &str) -> Option<String> {
+    let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_json).ok()?;
+    graph.derive_display_config()
+}
+
 /// 蓝图版本号反序列化校验：仅接受 v2 运行时执行架构。
 fn deserialize_blueprint_version<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where

@@ -923,6 +923,14 @@ impl PresetRepository {
     }
 
     fn row_to_preset_summary(row: sqlx::sqlite::SqliteRow) -> Result<PresetSummary, String> {
+        let blueprint_graph = row
+            .try_get::<Option<String>, _>("blueprint_graph")
+            .unwrap_or(None);
+        let structured_output_display = row
+            .try_get::<Option<String>, _>("structured_output_display")
+            .unwrap_or(None)
+            .or_else(|| blueprint_graph.as_deref().and_then(crate::models::blueprint::derive_blueprint_display_config));
+
         Ok(PresetSummary {
             id: row.try_get("id").map_err(|e| e.to_string())?,
             name: Self::normalize_required_from_row(
@@ -974,15 +982,11 @@ impl PresetRepository {
             structured_output_schema: row
                 .try_get::<Option<String>, _>("structured_output_schema")
                 .unwrap_or(None),
-            structured_output_display: row
-                .try_get::<Option<String>, _>("structured_output_display")
-                .unwrap_or(None),
+            structured_output_display,
             context_included_keys: row
                 .try_get::<Option<String>, _>("context_included_keys")
                 .unwrap_or(None),
-            blueprint_graph: row
-                .try_get::<Option<String>, _>("blueprint_graph")
-                .unwrap_or(None),
+            blueprint_graph,
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
         })

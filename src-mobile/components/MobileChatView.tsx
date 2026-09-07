@@ -6,9 +6,10 @@ import {
   listenLlmStreamEvent,
   listenStreamError,
   listenStreamRetry,
+  presetsGet,
 } from '../../src/lib/backend';
 import type { UiMessage, LlmStreamEventPayload, StreamErrorEvent, StreamRetryEvent } from '../../src/lib/backend/types';
-import { parseStructuredResponse, parseStreamingFields } from '../lib/structured';
+import { parseStructuredResponse, parseStreamingFields, type StructuredDisplayConfig, deriveStructuredOutputDisplayFromGraphJson } from '../lib/structured';
 import { MobileStructuredRenderer } from './MobileStructuredRenderer';
 import { MobileNativeThinkingBlock } from './MobileNativeThinkingBlock';
 import { showToast } from './Toast';
@@ -16,6 +17,7 @@ import { showToast } from './Toast';
 interface MobileChatViewProps {
   conversationId: number;
   providerId?: number;
+  presetId?: number;
   onBack: () => void;
 }
 
@@ -37,7 +39,37 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
   const [sending, setSending] = createSignal(false);
   const [inputText, setInputText] = createSignal('');
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'responding'>('idle');
+  const [presetDisplayConfig, setPresetDisplayConfig] = createSignal<Record<string, StructuredDisplayConfig>>({});
   let scrollRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const pid = props.presetId;
+    if (!pid) {
+      setPresetDisplayConfig({});
+      return;
+    }
+    presetsGet(pid).then((detail) => {
+      const raw = detail.preset.structuredOutputDisplay;
+      if (raw) {
+        try {
+          setPresetDisplayConfig(JSON.parse(raw));
+          return;
+        } catch {}
+      }
+      if (detail.preset.blueprintGraph) {
+        const derived = deriveStructuredOutputDisplayFromGraphJson(detail.preset.blueprintGraph);
+        if (derived) {
+          try {
+            setPresetDisplayConfig(JSON.parse(derived));
+            return;
+          } catch {}
+        }
+      }
+      setPresetDisplayConfig({});
+    }).catch(() => {
+      setPresetDisplayConfig({});
+    });
+  });
 
   const providerId = () => props.providerId;
 
@@ -253,7 +285,7 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
     const fullResponse = createMemo(() => {
       const content = m.content;
       if (!content || !content.trimStart().startsWith('{')) return null;
-      return parseStructuredResponse(content);
+      return parseStructuredResponse(content, presetDisplayConfig());
     });
 
     return (
@@ -270,7 +302,7 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
             <Show when={streamingFields()} fallback={
               <MobileStructuredRenderer response={fullResponse()!} onChoiceSelect={(_i, v) => handleSend(v)} />
             }>
-              {(sf) => <MobileStructuredRenderer response={{ fields: sf(), displayConfig: {} }} onChoiceSelect={(_i, v) => handleSend(v)} />}
+              {(sf) => <MobileStructuredRenderer response={{ fields: sf(), displayConfig: presetDisplayConfig() }} onChoiceSelect={(_i, v) => handleSend(v)} />}
             </Show>
           }
         >

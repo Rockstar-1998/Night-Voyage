@@ -15,6 +15,7 @@ import { SettingsSidebar } from './components/SettingsSidebar';
 import { SettingsArea } from './components/SettingsArea';
 import { AuroraBackground } from './components/AuroraBackground';
 import { BlueprintEditor } from './components/blueprint/BlueprintEditor';
+import { deriveStructuredOutputDisplayFromGraphJson } from './lib/blueprint/types';
 import { PresetDetailView } from './components/PresetDetailView';
 import { NewChatModal } from './components/NewChatModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
@@ -386,6 +387,15 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [renamingValue, setRenamingValue] = createSignal('');
   const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
+  const effectiveStructuredOutputDisplay = createMemo(() => {
+    const preset = activePreset();
+    if (!preset) return undefined;
+    if (preset.structuredOutputDisplay) return preset.structuredOutputDisplay;
+    if (preset.blueprintGraph) {
+      return deriveStructuredOutputDisplayFromGraphJson(preset.blueprintGraph);
+    }
+    return undefined;
+  });
 
   let presetImportInputRef: HTMLInputElement | undefined;
 
@@ -590,7 +600,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                   </Show>
                                 </div>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={activePreset()?.structuredOutputDisplay} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={effectiveStructuredOutputDisplay()} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">

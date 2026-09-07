@@ -211,6 +211,17 @@ export const SchemaFieldNode: Component<NodeConfigComponentProps<SchemaFieldConf
             />
             hide_label（消息列表隐藏字段标签）
           </label>
+          <label class={CHECKBOX_ROW}>
+            <input
+              type="checkbox"
+              checked={display.body ?? false}
+              onChange={(e) =>
+                updateDisplay({ body: e.currentTarget.checked })
+              }
+              class="accent-accent"
+            />
+            body（作为叙事正文展示，不折叠）
+          </label>
         </div>
       </div>
 

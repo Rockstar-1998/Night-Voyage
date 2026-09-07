@@ -221,6 +221,7 @@ function App() {
                                 <MobileChatView
                                     conversationId={selectedConversationId()!}
                                     providerId={sessions.find((s) => s.id === selectedConversationId())?.providerId}
+                                    presetId={sessions.find((s) => s.id === selectedConversationId())?.presetId}
                                     onBack={() => setActiveView('sessions')}
                                 />
                             </Show>

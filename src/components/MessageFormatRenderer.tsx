@@ -234,7 +234,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
 
 const StructuredResponseRenderer: Component<{
   fields: Record<string, StructuredField>;
-  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }>;
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
@@ -244,13 +244,19 @@ const StructuredResponseRenderer: Component<{
   formatConfig: MessageFormatConfig;
   worldBookKeywords: string[];
 }> = (props) => {
-  const fieldEntries = () => Object.entries(props.fields);
+  const sortedFieldEntries = () => {
+    return Object.entries(props.fields).sort(([keyA], [keyB]) => {
+      const orderA = props.displayConfig[keyA]?.order ?? 0;
+      const orderB = props.displayConfig[keyB]?.order ?? 0;
+      return orderA - orderB;
+    });
+  };
   const parseFieldContent = (value: string) =>
     parseMessageContent(value, props.formatConfig, props.worldBookKeywords);
 
   return (
-    <div class="structured-response">
-      <For each={fieldEntries()}>
+    <div class="structured-response flex flex-col gap-3">
+      <For each={sortedFieldEntries()}>
         {([key, field], index) => {
           const isCollapsed = () => props.displayConfig[key]?.defaultCollapsed ?? false;
           const isHidden = () => props.displayConfig[key]?.hideLabel ?? false;
@@ -259,45 +265,44 @@ const StructuredResponseRenderer: Component<{
 
           // 叙事正文（body）：渲染为消息主体，与 thinking 折叠区在视觉上明确区分，
           // 不套用折叠标签，直接以带强调边线的正文块呈现。
-          if (isBody() && field.kind === 'string') {
-            return (
-              <div class="my-1 px-3 py-2 border-l-2 border-accent/60 bg-accent/[0.05] rounded-r-md">
-                <MessageFormatRenderer
-                  nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
-                  defaultExpanded={props.defaultExpanded}
-                  onChoiceSelect={props.onChoiceSelect}
-                  onSchemaToggle={props.onSchemaToggle}
-                  isStreaming={props.isStreaming}
-                  toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
-                  streamKey={childStreamKey(props.streamKey, `${fieldPath()}:body`)}
-                  formatConfig={props.formatConfig}
-                  worldBookKeywords={props.worldBookKeywords}
-                />
-              </div>
-            );
-          }
+          if (field.kind === 'string') {
+            if (isBody()) {
+              return (
+                <div class="my-1 px-3 py-2 border-l-2 border-accent/60 bg-accent/[0.05] rounded-r-md">
+                  <MessageFormatRenderer
+                    nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
+                    defaultExpanded={props.defaultExpanded}
+                    onChoiceSelect={props.onChoiceSelect}
+                    onSchemaToggle={props.onSchemaToggle}
+                    isStreaming={props.isStreaming}
+                    toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
+                    streamKey={childStreamKey(props.streamKey, `${fieldPath()}:body`)}
+                    formatConfig={props.formatConfig}
+                    worldBookKeywords={props.worldBookKeywords}
+                  />
+                </div>
+              );
+            }
 
-          return (
-            <Show
-              when={field.kind === 'string' && !isHidden()}
-              fallback={
-                <Show when={field.kind === 'string' && isHidden()}>
-                  <div class="whitespace-pre-wrap">
-                    <MessageFormatRenderer
-                      nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
-                      defaultExpanded={props.defaultExpanded}
-                      onChoiceSelect={props.onChoiceSelect}
-                      onSchemaToggle={props.onSchemaToggle}
-                      isStreaming={props.isStreaming}
-                      toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
-                      streamKey={childStreamKey(props.streamKey, `${fieldPath()}:main`)}
-                      formatConfig={props.formatConfig}
-                      worldBookKeywords={props.worldBookKeywords}
-                    />
-                  </div>
-                </Show>
-              }
-            >
+            if (isHidden()) {
+              return (
+                <div class="whitespace-pre-wrap">
+                  <MessageFormatRenderer
+                    nodes={parseFieldContent((field as { kind: 'string'; value: string }).value)}
+                    defaultExpanded={props.defaultExpanded}
+                    onChoiceSelect={props.onChoiceSelect}
+                    onSchemaToggle={props.onSchemaToggle}
+                    isStreaming={props.isStreaming}
+                    toggleScope={`${props.toggleScope ?? 'structured'}:${key}`}
+                    streamKey={childStreamKey(props.streamKey, `${fieldPath()}:main`)}
+                    formatConfig={props.formatConfig}
+                    worldBookKeywords={props.worldBookKeywords}
+                  />
+                </div>
+              );
+            }
+
+            return (
               <MessageFormatRenderer
                 nodes={[
                   {
@@ -315,53 +320,50 @@ const StructuredResponseRenderer: Component<{
                 formatConfig={props.formatConfig}
                 worldBookKeywords={props.worldBookKeywords}
               />
-            </Show>
-          );
-        }}
-      </For>
-      {/* Object fields: read-only key-value display (not clickable) */}
-      <For each={fieldEntries()}>
-        {([key, field]) => (
-          <Show when={field.kind === 'object'}>
-            <div class="mt-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
-              <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-accent/60">{key}</div>
-              <div class="flex flex-col gap-1.5">
-                <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
-                  {([k, v]) => (
-                    <div class="flex gap-3 text-sm">
-                      <span class="shrink-0 text-mist-solid/45">{k}</span>
-                      <span class="text-mist-solid/80 leading-relaxed">{v}</span>
-                    </div>
+            );
+          }
+
+          if (field.kind === 'object') {
+            return (
+              <div class="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-accent/60">{key}</div>
+                <div class="flex flex-col gap-1.5">
+                  <For each={Object.entries((field as { kind: 'object'; value: Record<string, string> }).value)}>
+                    {([k, v]) => (
+                      <div class="flex gap-3 text-sm">
+                        <span class="shrink-0 text-mist-solid/45">{k}</span>
+                        <span class="text-mist-solid/80 leading-relaxed">{v}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            );
+          }
+
+          if (field.kind === 'array') {
+            return (
+              <div class="flex flex-col gap-2 mt-2">
+                <For each={(field as { kind: 'array'; value: string[] }).value}>
+                  {(optValue, i) => (
+                    <button
+                      class="group flex flex-col md:flex-row items-start md:items-center gap-4 px-5 py-3.5 bg-xuanqing/40 border border-white/5 hover:border-accent/40 hover:bg-white/[0.04] transition-all text-left rounded-none w-full relative overflow-hidden"
+                      onClick={() => {
+                        props.onChoiceSelect?.(String(i() + 1), optValue);
+                      }}
+                    >
+                      <div class="absolute inset-y-0 left-0 w-[2px] bg-white/10 group-hover:bg-accent transition-colors"></div>
+                      <span class="text-accent font-black tracking-widest uppercase text-xs w-4 shrink-0 mt-0.5">{`${i() + 1}`}</span>
+                      <span class="text-mist-solid/80 text-sm leading-relaxed">{optValue}</span>
+                    </button>
                   )}
                 </For>
               </div>
-            </div>
-          </Show>
-        )}
-      </For>
+            );
+          }
 
-      {/* Array fields: clickable choices (player options) */}
-      <For each={fieldEntries()}>
-        {([_key, field]) => (
-          <Show when={field.kind === 'array'}>
-            <div class="flex flex-col gap-2 mt-4">
-              <For each={(field as { kind: 'array'; value: string[] }).value}>
-                {(optValue, i) => (
-                  <button
-                    class="group flex flex-col md:flex-row items-start md:items-center gap-4 px-5 py-3.5 bg-xuanqing/40 border border-white/5 hover:border-accent/40 hover:bg-white/[0.04] transition-all text-left rounded-none w-full relative overflow-hidden"
-                    onClick={() => {
-                      props.onChoiceSelect?.(String(i() + 1), optValue);
-                    }}
-                  >
-                    <div class="absolute inset-y-0 left-0 w-[2px] bg-white/10 group-hover:bg-accent transition-colors"></div>
-                    <span class="text-accent font-black tracking-widest uppercase text-xs w-4 shrink-0 mt-0.5">{`${i() + 1}`}</span>
-                    <span class="text-mist-solid/80 text-sm leading-relaxed">{optValue}</span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
-        )}
+          return null;
+        }}
       </For>
     </div>
   );

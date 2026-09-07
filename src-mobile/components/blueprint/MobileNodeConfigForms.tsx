@@ -349,6 +349,11 @@ const SchemaFieldForm: Component<{
             onChange={(v) => props.onChange({ ...props.config, display: { ...props.config.display, hide_label: v } })}
             label="hide_label（消息列表隐藏字段标签）"
           />
+          <Toggle
+            checked={props.config.display.body ?? false}
+            onChange={(v) => props.onChange({ ...props.config, display: { ...props.config.display, body: v } })}
+            label="body（叙事正文展示，不折叠）"
+          />
         </div>
       </div>
       <div>

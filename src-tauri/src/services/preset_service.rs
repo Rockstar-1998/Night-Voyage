@@ -252,6 +252,10 @@ impl<'a> PresetService<'a> {
             .as_deref()
             .map(validate_blueprint_graph)
             .transpose()?;
+        let structured_output_display = blueprint_graph
+            .as_deref()
+            .and_then(crate::models::blueprint::derive_blueprint_display_config)
+            .or(structured_output_display);
         let direct_blocks = PresetValidator::validate_blocks(blocks)?;
         let semantic_groups = PresetValidator::validate_semantic_groups(semantic_groups)?;
         let stop_sequences = PresetValidator::validate_stop_sequences(stop_sequences)?;
@@ -351,6 +355,10 @@ impl<'a> PresetService<'a> {
             .as_deref()
             .map(validate_blueprint_graph)
             .transpose()?;
+        let structured_output_display = blueprint_graph
+            .as_deref()
+            .and_then(crate::models::blueprint::derive_blueprint_display_config)
+            .or(structured_output_display);
         let direct_blocks_input = match blocks {
             Some(blocks) => Some(PresetValidator::validate_blocks(Some(blocks))?),
             None => None,

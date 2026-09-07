@@ -45,6 +45,7 @@ import {
   type NodePositionPatch,
   type NodeType,
   type Position,
+  deriveStructuredOutputDisplayFromGraphJson,
 } from '../../lib/blueprint/types';
 import {
   normalizeBlueprintGraph,
@@ -266,6 +267,7 @@ function buildBlueprintUpdatePayload(
   detail: PresetDetail,
   blueprintGraph: string,
 ): CreatePresetPayload & { id: number } {
+  const derivedDisplay = deriveStructuredOutputDisplayFromGraphJson(blueprintGraph);
   return {
     id: detail.preset.id,
     name: detail.preset.name,
@@ -282,7 +284,7 @@ function buildBlueprintUpdatePayload(
     thinkingBudgetTokens: detail.preset.thinkingBudgetTokens,
     betaFeatures: detail.preset.betaFeatures,
     structuredOutputSchema: detail.preset.structuredOutputSchema,
-    structuredOutputDisplay: detail.preset.structuredOutputDisplay,
+    structuredOutputDisplay: derivedDisplay ?? detail.preset.structuredOutputDisplay,
     contextIncludedKeys: detail.preset.contextIncludedKeys,
     blueprintGraph,
   };
