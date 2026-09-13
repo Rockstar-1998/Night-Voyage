@@ -434,6 +434,87 @@ async fn spawn_post_round_tasks(
             // Stateless: only world variable generation (preset-gated).
         }
     }
+
+    spawn_agent_post_round_tasks(app, db, conversation_id, round_id, structured_content).await;
+}
+
+async fn spawn_agent_post_round_tasks(
+    app: &AppHandle,
+    db: &SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    full_content: &str,
+) {
+    let chat_mode: String = sqlx::query_scalar(
+        "SELECT chat_mode FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "classic".to_string());
+
+    if chat_mode == "classic" {
+        return;
+    }
+
+    let round_index: i64 = sqlx::query_scalar(
+        "SELECT round_index FROM message_rounds WHERE id = ? LIMIT 1",
+    )
+    .bind(round_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(1);
+
+    if let Ok(sandbox) = crate::services::agent::AgentSandbox::new(conversation_id) {
+        let filter = crate::services::agent::BannedWordsFilter::new_default();
+        if let Ok(filter) = filter {
+            match filter.validate(full_content) {
+                Ok(()) => {
+                    let _ = app.emit(
+                        "agent:critic_feedback",
+                        serde_json::json!({
+                            "conversation_id": conversation_id,
+                            "round_id": round_id,
+                            "passed": true,
+                            "banned_words": []
+                        }),
+                    );
+                }
+                Err(violation) => {
+                    let _ = app.emit(
+                        "agent:critic_feedback",
+                        serde_json::json!({
+                            "conversation_id": conversation_id,
+                            "round_id": round_id,
+                            "passed": false,
+                            "banned_words": violation.matched_words,
+                            "feedback": violation.feedback_instruction
+                        }),
+                    );
+                    let _ = sandbox.write_scratch(
+                        &format!("critique_v1_round_{round_index}.json"),
+                        &serde_json::to_string_pretty(&violation).unwrap_or_default(),
+                    );
+                }
+            }
+        }
+
+        let _ = sandbox.commit_turn(round_index, full_content);
+
+        let _ = app.emit(
+            "agent:committed",
+            serde_json::json!({
+                "conversation_id": conversation_id,
+                "round_id": round_id,
+                "round_index": round_index,
+                "output_file": format!("turn_{round_index}.md")
+            }),
+        );
+    }
 }
 
 /// Extract fields declared in `db_mappings` from the AI's structured_output
@@ -544,6 +625,35 @@ async fn stream_llm_response(
 
     let compile_mode = resolve_prompt_compile_mode(&db, round_id, assistant_message_id).await?;
     dbg_eprintln!("[chat] stream_llm_response: compile_mode={:?}", compile_mode);
+
+    let chat_mode: String = sqlx::query_scalar(
+        "SELECT chat_mode FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "classic".to_string());
+
+    if chat_mode != "classic" {
+        let (step_name, step_desc) = match chat_mode.as_str() {
+            "director_actor" => ("director_delegating", "导演 Agent 正在分析局势并派发演员任务..."),
+            "scriptwriter" => ("drafter_writing", "剧本初稿 Agent 正在起草叙事段落..."),
+            "director_scriptwriter" => ("director_coordinating", "复合大剧场正在协调导演统筹与写手编排..."),
+            _ => ("agent_active", "Agent 正在执行..."),
+        };
+        let _ = app.emit(
+            "agent:step",
+            serde_json::json!({
+                "conversation_id": conversation_id,
+                "round_id": round_id,
+                "step": step_name,
+                "message": step_desc,
+                "timestamp": crate::utils::now_ts(),
+            }),
+        );
+    }
 
     let conv_preset_id: Option<i64> = sqlx::query_scalar(
         "SELECT preset_id FROM conversations WHERE id = ? LIMIT 1",

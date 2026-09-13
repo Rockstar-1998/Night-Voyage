@@ -589,6 +589,17 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                               return prev;
                             });
 
+                            const currentSession = createMemo(() => props.sessions.find((s) => s.id === props.selectedConversationId));
+                            const isHighCost = createMemo(() => {
+                              const s = currentSession();
+                              if (!s) return false;
+                              const directorActive = s.chatMode === 'director_actor' || s.chatMode === 'director_agents' || s.chatMode === 'director_scriptwriter';
+                              const scriptwriterActive = s.chatMode === 'scriptwriter' || s.chatMode === 'director_scriptwriter';
+                              const mem0Active = s.memoryMode === 'mem0';
+                              const count = (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
+                              return count >= 2;
+                            });
+
                             return (
                               <div class="h-full w-full flex flex-col relative bg-transparent overflow-hidden">
                                 <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between" data-workspace-title>
@@ -612,6 +623,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                       disabled={props.sending || !props.selectedConversationId}
                                       placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
                                       isRoomClient={props.isRoomClient}
+                                      highCostWarning={isHighCost()}
                                     />
                                   </div>
                                 </div>
@@ -659,6 +671,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                           roomPort={props.roomPort}
                           roomIsOpen={props.roomIsOpen}
                           onUpdateRoomPort={props.onUpdateRoomPort}
+                          chatMode={props.sessions.find((s) => s.id === props.selectedConversationId)?.chatMode}
                         />
                       </div>
                     </>

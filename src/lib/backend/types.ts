@@ -1,7 +1,7 @@
 // ─── Common type aliases ───
 
 export type ConversationType = 'single' | 'online';
-export type ChatMode = 'classic' | 'director_agents';
+export type ChatMode = 'classic' | 'director_actor' | 'director_agents' | 'scriptwriter' | 'director_scriptwriter';
 export type AgentProviderPolicy = 'shared_host_provider' | 'mixed_cost_optimized';
 export type CharacterCardType = 'npc' | 'player';
 export type CharacterBaseSectionKey = 'identity' | 'persona' | 'background' | 'rules' | 'custom';

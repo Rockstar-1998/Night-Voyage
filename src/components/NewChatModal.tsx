@@ -1,7 +1,7 @@
 import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
-import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
-import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
+import { CharacterCard, ApiProviderSummary, ConversationType, ChatMode, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 import { showToast } from './Toast';
 
@@ -28,6 +28,14 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
   const [memoryMode, setMemoryMode] = createSignal<'stateless' | 'legacy' | 'mem0'>('stateless');
+  const [chatMode, setChatMode] = createSignal<ChatMode>('classic');
+
+  const highCostCount = createMemo(() => {
+    const directorActive = chatMode() === 'director_actor' || chatMode() === 'director_agents' || chatMode() === 'director_scriptwriter';
+    const scriptwriterActive = chatMode() === 'scriptwriter' || chatMode() === 'director_scriptwriter';
+    const mem0Active = memoryMode() === 'mem0';
+    return (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
+  });
 
   const [roomPort, setRoomPort] = createSignal('');
   const [roomPassphrase, setRoomPassphrase] = createSignal('');
@@ -67,6 +75,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setSelectedOpeningIndex(0);
     setSelectedPresetId(undefined);
     setMemoryMode('stateless');
+    setChatMode('classic');
   };
 
   const canGoNext = createMemo(() => Boolean(selectedCharacterId()));
@@ -98,7 +107,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       providerId: selectedProviderId(),
       presetId: selectedPresetId(),
       hostPlayerCharacterId: selectedPlayerCharacterId()!,
-      chatMode: 'classic',
+      chatMode: chatMode(),
       agentProviderPolicy: 'shared_host_provider',
       openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
       memoryMode: memoryMode(),
@@ -139,7 +148,7 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
         providerId: selectedProviderId(),
         presetId: selectedPresetId(),
         hostPlayerCharacterId: selectedPlayerCharacterId()!,
-        chatMode: 'classic',
+        chatMode: chatMode(),
         agentProviderPolicy: 'shared_host_provider',
         openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
         memoryMode: memoryMode(),
@@ -457,6 +466,70 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       </button>
                     </div>
                   </div>
+
+                  <div class="space-y-2">
+                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">智能体模式</label>
+                    <p class="text-[11px] text-mist-solid/40">选择 Agent 编排模式，支持导演心智隔离与多工种接力打磨。</p>
+                    <div class="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('classic')}
+                        class={`rounded-xl border p-3 text-left transition-all ${
+                          chatMode() === 'classic'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold text-xs">经典模式</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">单次直接对话，无额外 Agent 介入</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('director_actor')}
+                        class={`rounded-xl border p-3 text-left transition-all ${
+                          chatMode() === 'director_actor' || chatMode() === 'director_agents'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold text-xs">导演-演员模式</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">Return-mode 心智隔离，严防全知污染</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('scriptwriter')}
+                        class={`rounded-xl border p-3 text-left transition-all ${
+                          chatMode() === 'scriptwriter'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold text-xs">剧本模式</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">Handoff 接力，初稿-审阅-终稿润色</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('director_scriptwriter')}
+                        class={`rounded-xl border p-3 text-left transition-all ${
+                          chatMode() === 'director_scriptwriter'
+                            ? 'border-accent/40 bg-accent/15 text-accent'
+                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        }`}
+                      >
+                        <div class="font-bold text-xs">复合大剧场</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">导演统筹 + 演员演绎 + 监制润色</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  <Show when={highCostCount() >= 2}>
+                    <div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs font-semibold text-rose-500 dark:text-rose-400 flex items-start gap-3 animate-pulse">
+                      <AlertTriangle size={18} class="shrink-0 mt-0.5 text-rose-500" />
+                      <div>
+                        ⚠️ 这会导致消耗的TOKEN激增，尤其是对于按次计费的API来说，而这仅仅只是为了一次回答，请仔细斟酌这是否值得！
+                      </div>
+                    </div>
+                  </Show>
 
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">世界书</label>

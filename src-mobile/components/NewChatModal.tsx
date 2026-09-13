@@ -1,6 +1,6 @@
 import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import { CheckCircle2, ChevronDown, User, Users, AlertTriangle } from 'lucide-solid';
-import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, PresetSummary } from '../../src/lib/backend';
+import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, resolveImageSrc, PresetSummary, ChatMode } from '../../src/lib/backend';
 import { showToast } from './Toast';
 
 interface NewChatModalProps {
@@ -24,6 +24,15 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | undefined>();
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
+  const [memoryMode, setMemoryMode] = createSignal<'stateless' | 'legacy' | 'mem0'>('stateless');
+  const [chatMode, setChatMode] = createSignal<ChatMode>('classic');
+
+  const highCostCount = createMemo(() => {
+    const directorActive = chatMode() === 'director_actor' || chatMode() === 'director_agents' || chatMode() === 'director_scriptwriter';
+    const scriptwriterActive = chatMode() === 'scriptwriter' || chatMode() === 'director_scriptwriter';
+    const mem0Active = memoryMode() === 'mem0';
+    return (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
+  });
 
   const selectedCharacter = createMemo(() =>
     props.npcCharacters.find((character) => character.id === selectedCharacterId()),
@@ -44,6 +53,8 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setSelectedProviderId(props.providers[0]?.id);
     setSelectedPresetId(undefined);
     setSelectedOpeningIndex(0);
+    setMemoryMode('stateless');
+    setChatMode('classic');
   };
 
   const conversationConfigError = createMemo(() => {
@@ -71,9 +82,10 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       providerId: selectedProviderId(),
       presetId: selectedPresetId(),
       hostPlayerCharacterId: selectedPlayerCharacterId()!,
-      chatMode: 'classic',
+      chatMode: chatMode(),
       agentProviderPolicy: 'shared_host_provider',
       openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
+      memoryMode: memoryMode(),
     };
     try {
       await props.onCreateConversation(payload);
@@ -324,6 +336,114 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
               </button>
             </div>
           </div>
+
+          {/* Memory Mode Selection */}
+          <div class="flex flex-col gap-2">
+            <h3 class="text-sm font-bold text-mist-solid/60 mb-1">记忆模式</h3>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setMemoryMode('stateless')}
+                class={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1 transition-all ${
+                  memoryMode() === 'stateless'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${memoryMode() === 'stateless' ? 'text-accent' : 'text-mist-solid/80'}`}>无状态</span>
+                <span class="text-[10px] text-mist-solid/40">多轮直出</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMemoryMode('legacy')}
+                class={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1 transition-all ${
+                  memoryMode() === 'legacy'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${memoryMode() === 'legacy' ? 'text-accent' : 'text-mist-solid/80'}`}>传统</span>
+                <span class="text-[10px] text-mist-solid/40">剧情总结</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMemoryMode('mem0')}
+                class={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1 transition-all ${
+                  memoryMode() === 'mem0'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${memoryMode() === 'mem0' ? 'text-accent' : 'text-mist-solid/80'}`}>Mem0</span>
+                <span class="text-[10px] text-mist-solid/40">AI托管</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Agent Mode Selection */}
+          <div class="flex flex-col gap-2">
+            <h3 class="text-sm font-bold text-mist-solid/60 mb-1">智能体模式</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setChatMode('classic')}
+                class={`p-3 rounded-2xl border text-left flex flex-col gap-1 transition-all ${
+                  chatMode() === 'classic'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${chatMode() === 'classic' ? 'text-accent' : 'text-mist-solid/80'}`}>经典模式</span>
+                <span class="text-[10px] text-mist-solid/40 line-clamp-1">直接对话，无额外 Agent</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setChatMode('director_actor')}
+                class={`p-3 rounded-2xl border text-left flex flex-col gap-1 transition-all ${
+                  chatMode() === 'director_actor' || chatMode() === 'director_agents'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${chatMode() === 'director_actor' || chatMode() === 'director_agents' ? 'text-accent' : 'text-mist-solid/80'}`}>导演-演员</span>
+                <span class="text-[10px] text-mist-solid/40 line-clamp-1">心智隔离，分角演绎</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setChatMode('scriptwriter')}
+                class={`p-3 rounded-2xl border text-left flex flex-col gap-1 transition-all ${
+                  chatMode() === 'scriptwriter'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${chatMode() === 'scriptwriter' ? 'text-accent' : 'text-mist-solid/80'}`}>剧本模式</span>
+                <span class="text-[10px] text-mist-solid/40 line-clamp-1">Handoff 初稿-批注-终稿</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setChatMode('director_scriptwriter')}
+                class={`p-3 rounded-2xl border text-left flex flex-col gap-1 transition-all ${
+                  chatMode() === 'director_scriptwriter'
+                    ? 'bg-accent/10 border-accent/40 shadow-sm'
+                    : 'bg-white/5 border-white/5 hover:bg-white/10'
+                }`}
+              >
+                <span class={`text-[12px] font-bold ${chatMode() === 'director_scriptwriter' ? 'text-accent' : 'text-mist-solid/80'}`}>复合大剧场</span>
+                <span class="text-[10px] text-mist-solid/40 line-clamp-1">导演统筹 + 演员 + 润色</span>
+              </button>
+            </div>
+          </div>
+
+          {/* High Cost Warning */}
+          <Show when={highCostCount() >= 2}>
+            <div class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs font-semibold text-rose-400 flex items-start gap-2.5 animate-pulse">
+              <AlertTriangle size={16} class="shrink-0 mt-0.5 text-rose-500" />
+              <div class="leading-relaxed">
+                ⚠️ 这会导致消耗的TOKEN激增，尤其是对于按次计费的API来说，而这仅仅只是为了一次回答，请仔细斟酌这是否值得！
+              </div>
+            </div>
+          </Show>
 
         </div>
 

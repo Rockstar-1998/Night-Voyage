@@ -2219,6 +2219,18 @@ async fn load_recent_history_blocks(
             })?
     };
 
+    let chat_mode: String = sqlx::query_scalar(
+        "SELECT chat_mode FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "classic".to_string());
+
+    let is_redaction_enabled = chat_mode == "scriptwriter" || chat_mode == "director_scriptwriter";
+
     let mut blocks = Vec::with_capacity(rows.len());
     for row in rows {
         let message_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
@@ -2231,6 +2243,11 @@ async fn load_recent_history_blocks(
                 .unwrap_or_else(|_| "user".to_string()),
         )?;
         let content: String = row.try_get("content").unwrap_or_default();
+        let final_content = if is_redaction_enabled && role == PromptRole::Assistant {
+            crate::services::agent::RedactedText::apply(&content, 80, 50).masked_text
+        } else {
+            content
+        };
         let message_kind: String = row.try_get("message_kind").unwrap_or_default();
         debug
             .input_sources
@@ -2239,7 +2256,7 @@ async fn load_recent_history_blocks(
             PromptBlockKind::RecentHistory,
             role,
             None,
-            content,
+            final_content,
             PromptBlockSource::Message { message_id },
             false,
         ));
