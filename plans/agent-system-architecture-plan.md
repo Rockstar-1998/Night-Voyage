@@ -21,16 +21,16 @@ Night Voyage 运行在三层清晰解耦的状态架构之上：底层是已有�
  STATELESS        LEGACY          MEM0            【传统模式: Schema 覆写流】                       【Agent 模式: 数据容器 ToolCall 流】
 (无状态感知)    (经典滑动窗口)  (向量与实体检索)     (适用 STATELESS / LEGACY)                        (适用 Director / Scriptwriter)
     │               │               │                    │                                                 │
-    └───────────────┼───────────────┘                    ├─ 上下文: 塞入历史 Schema (支持保留 N 层倒序裁剪) ├─ 上下文: 纯净叙事，无需复读全量背包/属性
-                    ▼                                    ├─ 模型回复: 完整填充覆盖整张 Schema              ├─ 状态管理: 独立 Rust 内存 DataContainer
-           [蓝图 ModeSwitch 节点]                        └─ 状态变更: 靠大模型覆写新数值                   └─ 状态变更: ToolCall 针对性 查看与修改
+    └───────────────┼───────────────┘                    ├─ 上下文: 塞入历史 Schema (按单个 Schema 保留层数) ├─ 上下文: 纯净剧情，通过 ToolCall 查看状态
+                    ▼                                    ├─ 模型回复: 完整填充覆盖整张 Schema              ├─ 状态管理: 独立 Rust 内存 DataContainer (ToolCall 修改)
+           [蓝图 ModeSwitch 节点]                        └─ 状态变更: 靠大模型覆写新数值                   └─ 终稿输出: 正文处理完毕后按 Schema 规范结构化输出
      (out_stateless / out_legacy / out_mem0)                     │                                                 │
-                    │                                            │ (解析 Schema 字段)                              │ (ToolCall 增量更新)
+                    │                                            │ (解析 Schema 字段)                              │ (ToolCall 增量更新 / 正文 Schema 提取)
                     └────────────────────────────────────────────┴────────────────────────┬────────────────────────┘
                                                                                           ▼
                                                                      [2. 全模式通用常驻响应式 HUD 表现层]
                                                                        (支持 STATELESS / LEGACY / Agent)
-                                                                       (自由拖拽定位 / 容器嵌套 / 主题 / Shadow DOM 隔离 CSS)
+                                                                       (自由拖拽定位 / 默认玄青色主题 / 自定义 CSS 隔离于 Shadow DOM)
 ```
 
 ### 1.1 三态会话记忆基石（Session Memory Baseline）
@@ -40,18 +40,18 @@ Night Voyage 运行在三层清晰解耦的状态架构之上：底层是已有�
 3. **`MEM0`（向量与实体图谱记忆模式）**：外挂本地向量数据库与实体抽取服务，跨会话、跨轮次进行语义相关性检索注入。
 
 ### 1.2 状态管理双轨制核心分工：Schema 覆写 vs. 数据容器 ToolCall
-系统在状态流转上确立两条物理隔离、哲学完全不同的范式：
+系统在状态流转上确立两条物理隔离、职责清晰的执行范式：
 
 | 维度 | **传统单次模式（STATELESS / LEGACY）** | **Agent 跑团游戏机制引擎** |
 | :--- | :--- | :--- |
 | **状态载体** | **结构化 Schema（JSON Schema）** | **独立数据容器（`DataContainer` / `GameState`）** |
-| **流转机制** | **上下文注入 + 回复覆写填充（Context Injection & Overwrite）** | **内存外部容器 + ToolCall 精准查看与修改（Inspect & Mutate）** |
-| **输入机制** | 将历史累积状态作为结构化上下文塞入 Prompt（**支持通过「保留层数」倒数保留最新 $N$ 层，过远直接丢弃**） | 仅输入当前剧情与局部视界，无需在上下文中强塞全量数据字典 |
-| **回复输出** | 模型必须在回复末尾重新生成整张 Schema，通过全量覆盖来更新状态 | 模型直接输出纯净文学叙事，**绝不复读或重新填充覆盖庞大 Schema** |
+| **流转机制** | **上下文全量注入 + 回复覆写填充（Context Injection & Overwrite）** | **内存外部容器 + ToolCall 精准查看与修改（Inspect & Mutate）** |
+| **输入机制** | 将历史累积状态作为结构化上下文塞入 Prompt（**支持在单个 Schema 中配置「保留层数」倒序保留最新 $N$ 层，过远直接丢弃**） | 仅输入当前剧情与局部视界，大模型按需通过 ToolCall 查看数据容器，上下文不强塞全量数据字典 |
+| **回复输出** | 模型必须在回复末尾重新生成整张 Schema，通过全量覆盖来更新状态 | **正文处理完毕后依然按照 Schema 规范进行结构化输出（如 thinking、narrative 等）**，但无需在 Schema 中重新生成与覆写整个庞大的业务背包数据 |
 | **状态查看** | 大模型直接在上下文的 Prompt 历史 Schema 中静态阅读 | 大模型通过 `ToolCall: check_inventory / get_stats` **按需动态调阅** |
-| **状态修改** | 依赖大模型“自觉”输出正确的新数值（极易算错金币、吞掉道具） | 通过 `ToolCall: buy_item / use_item` 由 Rust 运算器与门禁确定性执行 |
-| **Token 效率**| 随对话轮次增加，开启保留层数限制后锁定为常数级；未开启则线性膨胀 | **极度节省 Token**：仅传输发生变动的几十 Token 参数，无多余复读 |
-| **常驻 HUD** | **开启「常驻于会话中」后**：`stream_processor` 解析覆写 Schema 字段 $\rightarrow$ 发射 Patch 刷新 HUD，允许 UI 设计器随意放置位置，始终显示最新数据 | ToolCall 触发数据容器变更 $\rightarrow$ 即刻发射 Patch 原地刷新 HUD，与 UI 设计器自由联动 |
+| **状态修改** | 依赖大模型“自觉”输出正确的新数值（极易算错金币、吞掉道具） | 通过 `ToolCall: buy_item / use_item` 由 Rust 确定性运算器与门禁原子执行 |
+| **Token 效率**| 随对话轮次增加，开启单个 Schema 保留层数后锁定为常数级；未开启则线性膨胀 | **极度节省 Token**：仅传输发生变动的几十 Token 参数，终稿 Schema 仅用于规范正文，无业务数值覆写冗余 |
+| **常驻 HUD** | **取决于定义时的行为**：Schema 字段定义为 `PersistentHUD` 并完成 UI 挂载后，`stream_processor` 解析覆写字段 $\rightarrow$ 发射 Patch 原地刷新，始终显示最新数据 | ToolCall 触发数据容器变更 $\rightarrow$ 即刻发射 Patch 原地刷新 HUD，与 UI 设计器自由排版联动 |
 
 ---
 
@@ -86,7 +86,7 @@ pub struct InventoryItem {
 * **ToolCall 原生接口**：
   * **查看类工具（Inspect Tools）**：向 LLM 暴露 `check_inventory()`、`get_player_stats()`、`inspect_item(item_id)`，LLM 仅在剧情需要时调阅数据容器内容；
   * **修改类工具（Mutate Tools）**：向 LLM 暴露 `add_item(id, count)`、`use_item(id)`、`deduct_gold(amount)`，由 Rust 确定性运算器执行原子扣减与增删；
-* **单次结算持久化**：回合内由于多次 ToolCall 引发的数据容器变动全在内存瞬时执行；仅当本回合最终叙事文本 `commit` 时，最新的 `DataContainer` 快照单次持久化写入 SQLite `session_states` 表。
+* **单次结算持久化**：回合内由于多次 ToolCall 引发的数据容器变动全在内存瞬时执行；仅当本回合最终正文处理完毕并通过 Schema 规范输出定稿时，最新的 `DataContainer` 快照单次持久化写入 SQLite `session_states` 表。
 
 ### 2.2 纯内存文本工作区（In-Memory Text Workspace）
 针对多智能体协同（导演委派、审阅润色），系统维护独立的 `HashMap<String, String>`：
@@ -98,7 +98,7 @@ pub struct InventoryItem {
 
 ## 3. 结构化 Schema 体系：传统模式的状态管理与独立非节点式编辑器
 
-Schema 体系作为**传统单次推进模式（STATELESS / LEGACY）的状态管理载体**，彻底告别散落节点堆砌，确立为独立资产。本系统在 Schema 编辑器层面集成两大核心功能控制：**「常驻于会话中」**与**「保留层数限制」**。
+Schema 体系在系统中扮演双重核心职责：既是**传统单次推进模式（STATELESS / LEGACY）的状态管理载体**，也是 **Agent 模式在正文处理完毕后的结构化输出规范（Structure Output Schema）**。彻底告别散落节点堆砌，确立为独立资产。
 
 ### 3.1 独立非节点式 Schema 编辑器模型与交互布局 (Non-Node Schema Editor)
 创作者在预设配置界面或独立的 Schema 编辑模态框中直观维护数据结构，不再受图节点连线约束：
@@ -106,9 +106,8 @@ Schema 体系作为**传统单次推进模式（STATELESS / LEGACY）的状态�
 ┌──────────────────────────── 独立 Schema 编辑器 (RPG 回合总结) ────────────────────────────┐
 │ Schema ID: rpg_turn_summary       描述: 约束传统单次模式大模型每轮输出与状态覆写            │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 全局功能开关:                                                                                │
-│ [🔘 常驻于会话中: ON ]  ──> 解锁 UI 编辑器自由排版，始终原地渲染最新数据，消除消息垃圾卡片   │
-│ [🔘 限制保留层数: ON ]  [保留层数: 3 ] ──> 从最新层倒数保留 3 层历史状态注入 Prompt，更早丢弃│
+│ 当前 Schema 属性配置:                                                                        │
+│ [⏳ 限制历史保留层数: ON ]  [保留层数: 3 ] ──> 仅对本 Schema 生效：从最新层倒数保留 3 层，更早丢弃 │
 ├──────┬─────────────────┬──────────┬──────────┬─────────────────┬─────────────────┬──────────────┤
 │ 排序 │ 字段名 (Field)   │ 类型     │ 必填     │ 展示目标        │ 数据库映射       │ 说明         │
 ├──────┼─────────────────┼──────────┼──────────┼─────────────────┼─────────────────┬──────────────┤
@@ -127,11 +126,9 @@ pub struct SchemaDefinition {
     pub id: String,
     pub name: String,
     pub description: String,
-    /// 1. 常驻于会话中按钮：开启后联动 UI 编辑器自由放置位置，始终显示最新数据；关闭则附着在每条消息尾部作为卡片展示
-    pub persistent_in_session: bool,
-    /// 2. 保留层数按钮：开启后需要输入正整数；从最新层倒数保留指定层数在上下文中，过远的历史直接丢弃
+    /// 单个 Schema 独立配置保留层数：None 表示不限制；Some(N) 表示从最新层倒数保留指定层数在上下文中，过远的历史直接丢弃
     pub retention_depth: Option<u32>,
-    /// 字段列表（严格遵循编辑器拖拽物理排序）
+    /// 字段列表（严格遵循编辑器拖拽物理排序；display_target 决定行为表现）
     pub fields: Vec<SchemaFieldDefinition>,
 }
 
@@ -140,35 +137,47 @@ pub struct SchemaFieldDefinition {
     pub name: String,
     pub field_type: SchemaFieldType,
     pub required: bool,
+    /// 决定呈现行为：PersistentHUD 常驻视口 / InlineMessage 内联消息气泡
     pub display_target: DisplayTarget,
     pub db_mapping: Option<String>,
     pub description: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DisplayTarget {
+    /// 常驻于会话视口中（根据 UI 设计器自由排版，始终原地渲染最新数据）
+    PersistentHUD,
+    /// 当前轮次内联消息气泡流（如正文叙事、思维链）
+    InlineMessage,
+}
 ```
 
-### 3.2 功能一：常驻于会话中机制（Persistent in Session & In-Place Updates）
-* **开关关闭状态（`persistent_in_session: false`）**：
-  * **传统消息尾随卡片模式**：每轮大模型输出的结构化数据直接渲染为当前最新消息气泡底部的小卡片；
-  * 对话滚动时，旧卡片留在对应历史消息下方，不与常驻视口发生交互。
-* **开关开启状态（`persistent_in_session: true`）**：
+### 3.2 常驻于会话中机制（取决于定义时的行为与布局绑定）
+常驻行为并非全局机械开关，而是**由创作者在定义 Schema 字段时的展示目标（`display_target`）与 UI 模板编辑器的布局绑定共同决定的固有行为**：
+* **定义为 `InlineMessage` 的字段行为**：
+  * 作为当轮消息气泡的内容呈现（如 `narrative` 叙事文本、`thinking` 推演过程）；
+  * 随历史对话自然滚动，留存在当次消息流中。
+* **定义为 `PersistentHUD` 的字段行为**：
   * **联动 UI 编辑器自由定位排版**：
-    * 解锁常驻响应式 HUD 表现层绑定，允许创作者在 UI 模板编辑器中随意指定位置（PC 侧边仪表盘 `RightDock`、顶部吸顶折叠栏 `TopSticky`、自由浮动画中画 `FloatingHUD`，或移动端吸顶抽屉 `TopHUD` 等）；
-    * 自由配置组件尺寸（W/H）、多层容器嵌套（Panel, Tabs, Grid）与挂载 Shadow DOM 隔离的自定义 CSS 主题；
-  * **始终显示最新数据（原地局部刷新）**：
-    * `stream_processor` 流式解析 Schema 字段后，不再每轮在对话气泡下方堆叠孤立的废弃历史卡片，而是直接向常驻视口发射 `session:hud_state_patch` 增量补丁；
-    * 常驻区域始终显示最新一轮的状态数据，视口稳固停靠，实现“数据原地流式刷新，消息流纯净无污染”的高品质体验。
+    * 创作者在 UI 模板编辑器中，可将该字段自由绑定至常驻视口容器中（PC 侧边仪表盘 `RightDock`、顶部吸顶折叠栏 `TopSticky`、自由浮动画中画 `FloatingHUD`，或移动端吸顶抽屉 `TopHUD` 等）；
+    * 自由配置组件尺寸（W/H）、多层容器嵌套（Panel, Tabs, Grid）与挂载 Shadow DOM 隔离的自定义 CSS 代码；
+  * **始终原地显示最新数据（局部高频更新）**：
+    * `stream_processor` 流式解析该 Schema 字段后，提取标记为 `PersistentHUD` 的数据，直接向常驻视口发射 `session:hud_state_patch` 增量补丁；
+    * 常驻视口通过细粒度响应式 Signal 原地刷新，始终向玩家展示该字段的最新数值，气泡流中不再堆叠冗余的垃圾状态卡片。
 
-### 3.3 功能二：保留层数控制与倒序裁剪机制（Retention Depth & Reverse Sliding Pruning）
-* **开关关闭状态（`retention_depth: None`）**：
-  * 不限制保留层数，将历史会话中产生的所有 Schema 结构化数据全量注入 Prompt 上下文（或遵循全局滑动窗口默认规则）。
-* **开关开启状态（`retention_depth: Some(N)`，要求正整数 $N \ge 1$）**：
-  * **解决核心痛点**：传统模式（`STATELESS` / `LEGACY`）随对话轮数增加（如 50 轮），若每一轮都全量塞入历史 Schema，会导致上下文长度爆炸、Token 严重浪费与模型注意力稀释；
+### 3.3 单个 Schema 保留层数控制与倒序裁剪机制（Per-Schema Retention Depth）
+针对特定 Schema，创作者可在当前 Schema 属性中独立配置历史保留层数，彻底解决传统模式长对话场景下的 Token 膨胀：
+* **配置为不限制（`retention_depth: None`）**：
+  * 当前 Schema 的所有历史结构化输出全量塞入 Prompt 上下文（或受限于模型全局 Token 预算）。
+* **配置为指定层数（`retention_depth: Some(N)`，要求正整数 $N \ge 1$）**：
+  * **解决核心痛点**：传统模式在 50+ 轮长对话中，若每轮都全量塞入包含完整状态的 Schema，会导致上下文长度爆炸、Token 严重浪费与注意力稀释；
   * **倒序滑动裁剪执行逻辑（Reverse Sliding Pruner）**：
-    1. `prompt_compiler.rs` 在装配上下文历史消息时，逆序遍历包含该 Schema 的历史输出记录；
-    2. **倒数保留最新 $N$ 层**：从最新一轮历史开始向前倒数，严格**仅提取最近 $N$ 层的 Schema 历史状态数据**编译进当前 Prompt；
+    1. `prompt_compiler.rs` 在装配上下文历史消息时，逆序遍历当前 Schema 的历史输出记录；
+    2. **倒数保留最新 $N$ 层**：从最新一轮历史开始向前倒数，严格**仅提取最近 $N$ 层的该 Schema 历史数据**编译进当前 Prompt；
     3. **过远层级直接丢弃（Hard Pruning）**：距离最新轮次超过 $N$ 层的更久远 Schema 历史记录，直接从上下文注入队列中彻底丢弃，绝不送入大模型输入；
   * **确定性状态连续性保障**：
-    * 例如配置 $N = 1$ 时，大模型上下文永远只注入上一轮的基线状态 Schema，既能完成当前轮次的状态覆写计算，又彻底将历史 Schema 的 Token 开销锁定在 $O(1)$ 常数界内；
+    * 例如配置 $N = 1$ 时，大模型上下文永远只注入上一轮的基线状态 Schema，既能完成当前轮次的状态覆写计算，又彻底将该 Schema 的历史 Token 开销锁定在 $O(1)$ 常数界内；
+    * 单个 Schema 独立生效：创作者可对即时状态 Schema 设 $N=1$，对重要任务线 Schema 设 $N=5$ 或不限制，策略灵活精确；
     * 非法输入防护：前端表单强制要求正整数（$N \in \mathbb{N}^+$），输入非整数或 $\le 0$ 时实时阻断提示，符合 C2 零静默回退要求。
 
 ### 3.4 物理顺序严格对齐编辑器
@@ -179,13 +188,14 @@ pub struct SchemaFieldDefinition {
 * **节点类型**：`InvokeSchema`（`InvokeSchemaConfig { schema_id: String }`）；
 * **按需激活机理**：
   * 仅当蓝图 DFS 执行流实际到达 `InvokeSchema` 节点时，执行器才读取指定 `schema_id` 的完整定义，并将其装配进本次编译的 `structured_output_schema`；
-  * 若因前置分支判断（如走入不带结构化输出的轻量闲聊分支，或走入纯 ToolCall 数据容器驱动的 Agent 分支），该节点未被遍历，则**根本不激活任何 Schema**，彻底消除冗余开销。
+  * 若因前置分支判断未遍历到该节点，则**根本不激活任何 Schema**，彻底消除冗余开销；
+  * 在 Agent 模式下，`InvokeSchema` 专门用于约束大模型最终正文回复的结构化规范（如 thinking, narrative 等）。
 
 ---
 
 ## 4. 全模式常驻响应式 UI 引擎与可视化 UI 模板编辑器 (Universal Persistent Reactive HUD & UI Designer)
 
-彻底摒弃“每轮回复底部追加临时卡片”的旧式设计，构建**跨 STATELESS、LEGACY 与 Agent 全模式通用、常驻视口、自由布局、主题丰富、多层容器、物理隔离的响应式 HUD**。
+构建**跨 STATELESS、LEGACY 与 Agent 全模式通用、常驻视口、自由布局、项目默认玄青色、多层容器、物理隔离的响应式 HUD**。
 
 ```
                                 ┌─── PC: 右侧固定仪表盘 (RightDock)
@@ -198,12 +208,12 @@ pub struct SchemaFieldDefinition {
                                           │ 纳秒级原地局部刷新 (零全局重绘)
 ┌────────────────────────────────────────┴────────────────────────────────────────┐
 │ 统一常驻 HUD 双驱动数据源 (Dual Data Sources)                                   │
-│ ├─ 通道 A [Agent 模式]: ToolCall 针对性查看与修改 -> DataContainer 状态机       │
-│ └─ 通道 B [STATELESS / LEGACY 模式]: 开启常驻会话 -> 覆写 Schema 状态字段原地提取│
+│ ├─ 通道 A [Agent 模式]: ToolCall 修改 DataContainer -> 增量发射 Patch            │
+│ └─ 通道 B [STATELESS / LEGACY 模式]: 定义为 PersistentHUD 的字段 -> 原地提取 Patch│
 └────────────────────────────────────────┬────────────────────────────────────────┘
                                           ▲
                           [SolidJS 宿主内的 Shadow DOM 沙箱]
-                          (预设主题 + 自定义 CSS 样式代码绝对隔离)
+                          (默认玄青色主题 + 自定义 CSS 样式代码绝对隔离)
 ```
 
 ### 4.1 UI 设计器：自由布局、尺寸与多层容器组件 (Freeform Layout & Hierarchy)
@@ -220,33 +230,29 @@ pub struct SchemaFieldDefinition {
    * **`AvatarFrame`（形象/状态框）**：显示玩家头像与即时 Buff 图标。
 
 ### 4.2 UI 设计器：主题系统与自定义 CSS 外观代码 (Themes & CSS Sandbox)
-1. **预设主题资产库（Built-in Theme Presets）**：
-   * **`Dark Fantasy`（黑金奇幻）**：羊皮纸底纹、哥特金属框线、暗金装饰、猩红血条；
-   * **`Cyberpunk 2077`（赛博霓虹）**：荧光青绿、故障描边、等宽科技字体、高对比度深灰底板；
-   * **`Minimal Ink`（极简水墨）**：宣纸质感底色、淡墨线条、朱砂印章点缀、古典留白；
-   * **`Classic Tabletop`（经典跑团）**：复古木纹边框、拟物羊皮纸背景、古典衬线体。
-2. **设计令牌（Design Tokens）**：
-   * 提供可视化调色板调节核心变量：`--hud-bg-color`、`--hud-border-radius`、`--hud-font-family`、`--hud-accent` 等。
-3. **自定义 CSS 样式注入与 C4 物理隔离（CSS Sandbox & Isolation）**：
-   * 提供内置代码编辑器，允许创作者编写原生 CSS 样式规则覆盖任意类名；
-   * **C4 硬性隔离红线**：
-     * 自定义 CSS 与模板**绝对禁止直接注入 SolidJS 宿主全局 DOM**；
-     * **技术落地基准**：常驻 HUD 模板容器强制挂载在 **`Shadow DOM`**（或隔离的 `iframe`）内部；
-     * CSS 规则仅在 Shadow Root 内部生效，物理阻断样式泄露，100% 保护 SolidJS 宿主界面与动画引擎。
+1. **项目默认预设主题（Built-in Preset Theme）**：
+   * **仅提供项目默认的「玄青色」主题（Default Xuanqing Theme）**：以沉稳克制的玄青深色为底板，配以精致的微暗青金属边线、柔和层级阴影与高可读性字体排版，作为全模式常驻 HUD 开箱即用的工业级默认外观。
+2. **其他风格全量由自定义 CSS 代码定义（Custom CSS）**：
+   * 系统不预设繁杂冗余的主题包，所有个性化视觉样式（如羊皮纸奇幻风、暗夜赛博风、水墨古风等）**完全由创作者通过设计器内置的代码编辑器编写自定义 CSS 实现**；
+   * 创作者可自由编写原生 CSS 选择器覆盖任意容器与原子控件类名。
+3. **C4 物理隔离与 Shadow DOM 沙箱（CSS Sandbox & Isolation）**：
+   * **硬性隔离红线**：自定义 CSS 代码**绝对禁止直接注入 SolidJS 宿主全局 DOM**；
+   * **技术落地基准**：常驻 HUD 模板容器强制挂载在 **`Shadow DOM`**（或独立 `iframe`）内部；
+   * 自定义 CSS 规则仅在 Shadow Root 内部生效，物理阻断样式泄露，100% 保护 SolidJS 宿主界面、动画与主线程。
 
 ### 4.3 跨模式常驻 HUD 驱动链路对比
 * **Agent 模式驱动链路**：
-  * 大模型输出 `ToolCall: buy_item` $\rightarrow$ 蓝图 `Calculator` 变更内存 `DataContainer` $\rightarrow$ 后端发射 `session:hud_state_patch` $\rightarrow$ 常驻 HUD 基于 SolidJS Signal 毫秒级原地定向刷新对应组件；
-  * 模型最终回复仅输出叙事文本，**不产生任何 Schema 输出与复读**；
+  * 大模型在思考过程中输出 `ToolCall: buy_item` $\rightarrow$ 蓝图 `Calculator` 变更内存 `DataContainer` $\rightarrow$ 后端即刻发射 `session:hud_state_patch` $\rightarrow$ 常驻 HUD 原地定向刷新对应组件；
+  * **正文处理完毕后，模型按照 Schema 规范结构化输出最终叙事文本**（如 `thinking`、`narrative`），Schema 不再冗余复读业务背包数值；
 * **STATELESS / LEGACY 模式驱动链路**：
-  * 当 Schema 启用**「常驻于会话中」**：`stream_processor` 流式解析 Schema 字段后，提取标记为 `PersistentHUD` 的字段打包发射 `session:hud_state_patch` $\rightarrow$ 常驻 HUD 在用户于 UI 设计器设定的位置原地刷新最新数据；
-  * 消息气泡仅呈现 `body: true` 叙事，彻底消灭历史消息底部的堆叠卡片。
+  * 当 Schema 字段定义为 `PersistentHUD` 并配置了 UI 布局：`stream_processor` 流式解析 Schema 字段后，提取对应字段发射 `session:hud_state_patch` $\rightarrow$ 常驻 HUD 在用户于 UI 设计器设定的位置原地刷新最新数据；
+  * 消息气泡仅呈现定义为 `InlineMessage`（`body: true`）的叙事文本，彻底消灭历史消息底部的堆叠垃圾卡片。
 
 ---
 
 ## 5. 蓝图高级跑团功能体系：ToolCall 与数据容器管理
 
-在 Agent 模式下，蓝图作为**数据容器的规则与运算控制器**，完全取代 Schema 承担游戏状态管理职责。
+在 Agent 模式下，蓝图作为**数据容器的规则与运算控制器**，负责管理业务数值与背包状态，与负责正文结构化输出的 Schema 清晰分工。
 
 ```
 大模型查看容器: ToolCall: check_inventory {}
@@ -287,8 +293,8 @@ pub struct SchemaFieldDefinition {
        └──────────────┬──────────────┘
                       ├──────────────────────────┐
                       ▼                          ▼
-             回传大模型继续纯文本叙事       实时驱动常驻 HUD 原地刷新 (第 4 节)
-             (大模型无需复读覆盖 Schema)
+       回传大模型继续后续生成              实时驱动常驻 HUD 原地刷新 (第 4 节)
+       (正文处理完毕后按 Schema 输出)
 ```
 
 ### 5.1 `ToolDefinition` 节点（自定义 ToolCall 契约定义）
@@ -313,7 +319,7 @@ pub struct SchemaFieldDefinition {
   * `blocked`（拦截）：完全阻断数据容器修改，流向错误回执。
 
 ### 5.4 `ToolReturn` 节点（结果装配与大模型恢复）
-将运算器成功结果或门禁拦截信息封装为标准 `ToolResult` 回传大模型，强迫 Agent 基于客观事实继续推进纯文本叙事。
+将运算器成功结果或门禁拦截信息封装为标准 `ToolResult` 回传大模型，强迫 Agent 基于客观事实继续推进，并在正文处理完毕后按 Schema 规范格式化输出。
 
 ---
 
@@ -350,7 +356,7 @@ pub enum NodeType {
     // 现有基础节点 (保留兼容)
     Start, End, Prompt, MutexGate, GroupGate, ModeSwitch, RoleSwitch,
     Constant, Branch, SamplingParamsOpenAi, SamplingParamsAnthropic,
-    // 独立 Schema 调用节点 (仅传统模式或特定格式化需要时调用)
+    // 独立 Schema 调用节点 (用于传统模式状态覆写或 Agent 最终回复正文结构化规范)
     InvokeSchema,
     // 高级 Agent 与游戏机制节点 (数据容器 ToolCall 管理)
     ToolDefinition,
@@ -369,11 +375,11 @@ pub enum NodeType {
 
 ### 7.2 实战连线拓扑（双轨制状态管理范例）
 
-#### (1) Agent 模式下：ToolCall 管理数据容器与常驻 HUD 原地刷新（无 Schema 覆写）
+#### (1) Agent 模式下：ToolCall 管理数据容器与正文 Schema 规范输出
 ```
 [Start] ──> [Prompt: 基础世界观] ──> [UILayoutConfig: 挂载 RightDock 仪表盘] ──> [Agent 推理]
-                                                                                      │
-                                                                                      ▼ 当 Agent 发起 buy_item ToolCall
+                                                                                       │
+                                                                                       ▼ 当 Agent 发起 buy_item ToolCall
 ┌─────────────────────────────────────────────────────────────────────────────────────┴────────────────────────┐
 │ 蓝图 ToolCall 处理拓扑                                                                                       │
 │                                                                                                              │
@@ -384,7 +390,11 @@ pub enum NodeType {
 │                                   [Calculator: 修改 DataContainer 容器] ──> [驱动常驻 HUD 原地刷新]            │
 │                                               │                                                              │
 │                                               ▼                                                              │
-│                                   [ToolReturn: "购买成功!"] ──> [回传 Agent 继续纯文本叙事 (0 Schema 复读)]    │
+│                                   [ToolReturn: "购买成功!"] ──> [回传大模型处理正文]                         │
+│                                                                             │                                │
+│                                                                             ▼                                │
+│                                                        [InvokeSchema: narrative_output_schema]               │
+│                                                        (规范最终输出 thinking 与 narrative 槽位)             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -394,9 +404,9 @@ pub enum NodeType {
                  │
                  ▼
          [InvokeSchema: status_summary_schema]
-                 │ (按保留层数注入历史 Schema，开启常驻后大模型回复覆写原地刷新 HUD)
+                 │ (按单个 Schema 保留层数注入历史 Schema，输出覆写原地刷新 HUD)
                  ▼
-         [UILayoutConfig: 挂载 TopSticky 吸顶栏 + Dark Fantasy 主题]
+         [UILayoutConfig: 挂载 TopSticky 吸顶栏 (默认玄青色主题)]
                  │
                  ▼
          [End: 提交执行 stream_processor 单次推理]
@@ -413,19 +423,20 @@ pub enum NodeType {
 1. **三态记忆基石无缝兼容**：
    * 现有 `ModeSwitch` 节点输出端口（`out_stateless` / `out_legacy` / `out_mem0`）原样保留，作为上下文装配层的前置通道。
 2. **`prompt_compiler.rs` 上下文装配插槽**：
-   * 传统单次生成（`STATELESS` / `LEGACY`）：根据 Schema 配置的 `retention_depth`（保留层数），从最新层倒序保留 $N$ 层历史 Schema 数据，超出层级硬丢弃；
+   * 针对每个调用的 Schema，读取其独立的 `retention_depth`（保留层数）；
+   * 从最新层倒序保留 $N$ 层历史 Schema 数据，超出层级硬丢弃，控制单次 Prompt 预算。
 3. **`stream_processor.rs` 双通道广播**：
-   * 传统模式（`STATELESS` / `LEGACY`）：当 Schema 的 `persistent_in_session` 开启时，从模型输出中提取 `PersistentHUD` 字段发射补丁，否则保留内联卡片；
-   * Agent 模式：在 ToolCall 运算器执行成功修改 `DataContainer` 后发射补丁，模型最终回复不再处理任何 Schema 字段；
+   * 传统模式（`STATELESS` / `LEGACY`）：从模型输出中提取 `display_target: PersistentHUD` 的字段发射补丁，`InlineMessage` 字段送入气泡流；
+   * Agent 模式：ToolCall 运算器执行成功修改 `DataContainer` 后发射补丁，正文生成完毕后按 Schema 规范格式化流式推送到气泡；
 4. **SQLite 持久化无缝扩展**：
-   * 新增 `preset_schemas` 表存储独立 Schema 定义（包含 `persistent_in_session` 与 `retention_depth` 配置）；
+   * 新增 `preset_schemas` 表存储独立 Schema 定义（包含独立 `retention_depth` 与字段 `display_target`）；
    * 新增 `session_states` 表存储各会话最新的 `DataContainer`（`GameState`）JSON 快照。
 
 ### 8.2 极简代码改动插槽
 1. **`models/blueprint.rs` & `blueprint_executor.rs`**：
    * 增加 `InvokeSchema`、`ToolDefinition`、`Calculator`、`ConditionGate`、`ToolReturn`、`UILayoutConfig` 节点反序列化与图执行逻辑；
 2. **`stream_processor.rs` / `agent_runtime.rs`**：
-   * 区分双轨制：Agent 模式拦截 `tool_calls` 操作 `DataContainer`，传统模式解析 Schema 字段；
+   * 区分双轨制：Agent 模式通过 ToolCall 拦截并操作 `DataContainer`，终稿执行正文 Schema 结构化提取；传统模式执行 Schema 状态覆写提取；
 3. **前端双端宿主插槽**：
    * PC：`ChatArea.tsx` 挂载 `PersistentHudContainer.tsx`（内嵌 Shadow DOM）；
    * Mobile：`MobileChatView.tsx` 挂载 `MobilePersistentHud.tsx`。
@@ -437,22 +448,24 @@ pub enum NodeType {
 ### 9.1 创作者：双轨制预设搭建实操
 1. **搭建传统 Schema 覆写型预设（适用 STATELESS / LEGACY）**：
    * 在预设详情页点击“结构化 Schema 管理”，新建或编辑 Schema；
-   * **开启【📌 常驻于会话中】按钮**：允许 UI 编辑器自由排版，使该 Schema 始终原地显示最新数据；
-   * **开启【⏳ 限制保留层数】按钮**：输入正整数 $N$（如 `1` 或 `3`），系统将从最新层倒数保留 $N$ 层上下文，过远的历史直接丢弃，彻底消除长文本下的 Token 恶性膨胀；
-   * 在表格中定义字段（`hp`、`gold`），展示目标设为 `PersistentHUD`；
+   * **配置该 Schema 独立属性**：若需要限制历史深度，开启【限制保留层数】并输入正整数 $N$（如 `1` 或 `3`），系统将从最新层倒数保留 $N$ 层上下文，更早的历史直接丢弃，彻底消除长文本下的 Token 恶性膨胀；
+   * 在表格中定义字段：将需要在视口常驻的数值字段（如 `hp`、`gold`）的展示目标设置为 `PersistentHUD`，将正文叙事设为 `InlineMessage`；
+   * 在 UI 设计器中自由排布容器并绑定上述 `PersistentHUD` 字段；
    * 蓝图连接 `InvokeSchema` 节点，模型每轮自动在回复时填充覆盖，常驻 HUD 自动原地更新；
 2. **搭建 Agent 数据容器型预设（适用 RPG 深度游戏）**：
-   * 无需配置复杂的全量状态 Schema；
-   * 直接在蓝图定义 `ToolDefinition`（`check_inventory`, `buy_item`）与 `Calculator`；
-   * 模型像真人玩家一样通过 ToolCall 读写数据容器，纯文本回复叙事，HUD 极速联动。
+   * 在蓝图定义 `ToolDefinition`（`check_inventory`, `buy_item`）与 `Calculator` 操作数据容器；
+   * 视口所需数值直接绑定 `DataContainer` 变量（如 `stats.hp`）；
+   * 在正文输出引脚连接 `InvokeSchema`（定义 `thinking`、`narrative` 规范回复格式）；
+   * 模型通过 ToolCall 读写数据容器，正文处理完毕后按 Schema 规范格式化输出，HUD 毫秒级原地刷新联动。
 
 ### 9.2 创作者：UI 设计器自由布局与主题定制实操
 1. **容器与尺寸排版**：
    * 在 UI 设计器画布中拖入 `PanelContainer`，自由调整尺寸与坐标；
    * 绑定 `DataContainer` 变量（`stats.hp`）或 Schema 字段（`schema.hp`）；
 2. **主题与自定义 CSS**：
-   * 选择预设主题（`Dark Fantasy`、`Cyberpunk 2077` 等）或编写自定义 CSS；
-   * 强制在 `Shadow DOM` 内隔离运行，宿主界面 100% 零受影响。
+   * 默认应用项目工业级「玄青色」主题（沉稳暗色与高对比度边框）；
+   * 如需其他风格（奇幻羊皮纸、赛博霓虹等），切换至“自定义 CSS”代码编辑器编写 CSS 规则；
+   * 样式强制在 `Shadow DOM` 内隔离运行，宿主界面 100% 零受影响。
 
 ### 9.3 终端用户交互体验与调试排错
 * **双轨制无缝体验**：无论进入哪种预设，玩家均享受统一的右侧/顶部常驻 HUD 体验；
@@ -465,7 +478,7 @@ pub enum NodeType {
 ```
 实施里程碑:
 ┌────────────────────────────────────────┐
-│ Milestone 1: 独立 Schema 编辑器与调用  │ ──> 独立表单编辑器、常驻按钮/保留层数、InvokeSchema 节点
+│ Milestone 1: 独立 Schema 编辑器与调用  │ ──> 独立表单编辑器、单个Schema保留层数、InvokeSchema 节点
 └──────────────────┬─────────────────────┘
                    ▼
 ┌────────────────────────────────────────┐
@@ -473,7 +486,7 @@ pub enum NodeType {
 └──────────────────┬─────────────────────┘
                    ▼
 ┌────────────────────────────────────────┐
-│ Milestone 3: 全模式常驻 HUD 与 UI 设计器│ ──> 自由布局/容器嵌套/主题切换/双轨制数据源贯通
+│ Milestone 3: 全模式常驻 HUD 与 UI 设计器│ ──> 自由布局/容器嵌套/默认玄青色/自定义CSS沙箱/双轨制数据源贯通
 └──────────────────┬─────────────────────┘
                    ▼
 ┌────────────────────────────────────────┐
@@ -486,16 +499,16 @@ pub enum NodeType {
 ```
 
 ### 验收指标：
-1. **Schema 系统两大新功能执行保真**：
-   * **常驻于会话中**：开启后，Schema 结构化数据不再作为消息垃圾卡片堆叠，而是无缝联动 UI 编辑器自由定位排版，并在每轮回复时始终显示最新数据、原地局部刷新；
-   * **保留层数限制**：开启后强制要求正整数 $N \ge 1$（非法输入即刻阻断），`prompt_compiler` 严格从最新层倒数保留 $N$ 层历史 Schema 状态，超出的更远历史 100% 丢弃，长对话 Token 消耗恒定；
-2. **状态管理双轨制严格隔离**：
-   * 传统模式（`STATELESS` / `LEGACY`）：每轮塞入（受保留层数控制的）历史 Schema，回复输出覆写 Schema 并驱动 HUD 原地刷新；
-   * Agent 模式：通过 ToolCall 读写 `DataContainer`，最终回复**100% 为纯文本叙事，不产生任何 Schema 复读**，Token 消耗大幅降低；
+1. **Schema 系统定义行为与单 Schema 保留层数保真**：
+   * **常驻行为驱动**：Schema 字段定义为 `PersistentHUD` 并挂载 UI 布局后，结构化数据流向常驻视口原地刷新，气泡流不产生任何垃圾状态卡片；
+   * **单个 Schema 保留层数限制**：针对单个 Schema 独立生效，输入强制要求正整数 $N \ge 1$（非法输入即刻阻断），`prompt_compiler` 严格从最新层倒数保留 $N$ 层该 Schema 历史状态，超出的更远历史 100% 丢弃；
+2. **状态管理双轨制严格隔离与规范输出**：
+   * 传统模式（`STATELESS` / `LEGACY`）：每轮塞入（受该 Schema 保留层数控制的）历史 Schema，回复输出覆写 Schema 并驱动 HUD 原地刷新；
+   * Agent 模式：通过 ToolCall 读写 `DataContainer`，**正文处理完毕后依然按照 Schema 规范进行结构化输出（如 thinking、narrative）**，业务背包数据无需在 Schema 中重新复读覆盖，Token 消耗大幅降低；
 3. **UI 设计器自由度与物理隔离（C4 约束）**：
    * 创作者在 UI 设计器中调整容器与控件的坐标（X/Y）与尺寸（W/H）忠实呈现；
-   * 自定义 CSS 代码与主题在所有模式下均在 Shadow DOM 内部隔离生效，绝不污染外层 SolidJS 宿主样式；
+   * 项目内置默认「玄青色」主题，所有其他风格均通过自定义 CSS 代码在 Shadow DOM 内部隔离生效，绝不污染外层 SolidJS 宿主样式；
 4. **常驻 UI 原地刷新与零尾随卡片**：
-   * 无论双轨制哪条路径，常驻 HUD 均原地刷新，消息气泡流不追加任何冗余卡片；
+   * 无论双轨制哪条路径，常驻 HUD 均原地刷新，消息气泡流不追加任何冗余状态卡片；
 5. **背包规则确定性执行**：
    * 金币不足与超重时 100% 触发阻断拦截，数据容器零篡改。
