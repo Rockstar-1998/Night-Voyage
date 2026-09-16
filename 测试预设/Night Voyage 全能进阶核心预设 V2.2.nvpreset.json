@@ -2169,8 +2169,8 @@
               "id": "healing_potion",
               "name": "微光治疗药剂",
               "count": 1,
-              "unit_weight": 0.5,
-              "unit_price": 25.0,
+              "unitWeight": 0.5,
+              "unitPrice": 25.0,
               "icon": "🧪",
               "properties": {
                 "effect": "restore_hp_30"
