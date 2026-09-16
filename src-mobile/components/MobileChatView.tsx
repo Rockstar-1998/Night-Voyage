@@ -12,15 +12,14 @@ import type { UiMessage, LlmStreamEventPayload, StreamErrorEvent, StreamRetryEve
 import { parseStructuredResponse, parseStreamingFields, type StructuredDisplayConfig, deriveStructuredOutputDisplayFromGraphJson } from '../lib/structured';
 import { MobileStructuredRenderer } from './MobileStructuredRenderer';
 import { MobileNativeThinkingBlock } from './MobileNativeThinkingBlock';
-import { AlertTriangle } from 'lucide-solid';
+import { MobilePersistentHud } from './MobilePersistentHud';
+import { MobileAgentDebugModal } from './MobileAgentDebugModal';
 import { showToast } from './Toast';
 
 interface MobileChatViewProps {
   conversationId: number;
   providerId?: number;
   presetId?: number;
-  chatMode?: string;
-  memoryMode?: string;
   onBack: () => void;
 }
 
@@ -43,16 +42,8 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
   const [inputText, setInputText] = createSignal('');
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'responding'>('idle');
   const [presetDisplayConfig, setPresetDisplayConfig] = createSignal<Record<string, StructuredDisplayConfig>>({});
+  const [isDebugOpen, setIsDebugOpen] = createSignal(false);
   let scrollRef: HTMLDivElement | undefined;
-
-  const isHighCost = createMemo(() => {
-    const cm = props.chatMode;
-    const mm = props.memoryMode;
-    const directorActive = cm === 'director_actor' || cm === 'director_agents' || cm === 'director_scriptwriter';
-    const scriptwriterActive = cm === 'scriptwriter' || cm === 'director_scriptwriter';
-    const mem0Active = mm === 'mem0';
-    return ((directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0)) >= 2;
-  });
 
   createEffect(() => {
     const pid = props.presetId;
@@ -328,6 +319,14 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
 
   return (
     <div class="min-h-0 flex-1 flex flex-col overflow-hidden">
+      {/* 常驻 Persistent HUD */}
+      <Show when={props.conversationId}>
+        <MobilePersistentHud
+          conversationId={props.conversationId}
+          onOpenDebug={() => setIsDebugOpen(true)}
+        />
+      </Show>
+
       {/* 消息列表 */}
       <div ref={scrollRef} class="min-h-0 flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-3">
         <Show when={loading()}>
@@ -369,12 +368,6 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
 
       {/* 输入栏 */}
       <div class="shrink-0 border-t border-white/5 bg-xuanqing/90 backdrop-blur-md p-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
-        <Show when={isHighCost()}>
-          <div class="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold text-rose-400 flex items-center gap-2 mb-2 animate-pulse">
-            <AlertTriangle size={14} class="shrink-0 text-rose-500" />
-            <span class="truncate">⚠️ 这会导致消耗的TOKEN激增，尤其是按次计费API，请斟酌是否值得！</span>
-          </div>
-        </Show>
         <Show when={replyStatus() !== 'idle'}>
           <div class="text-[10px] text-accent/60 mb-1 px-1">
             {replyStatus() === 'connecting' ? '连接中…' : '回复中…'}
@@ -402,6 +395,12 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
           </button>
         </div>
       </div>
+
+      <MobileAgentDebugModal
+        isOpen={isDebugOpen()}
+        onClose={() => setIsDebugOpen(false)}
+        conversationId={props.conversationId}
+      />
     </div>
   );
 };

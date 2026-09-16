@@ -114,6 +114,12 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   sampling_params_anthropic: '#d97757',
   constant: '#14b8a6',
   branch: '#d946ef',
+  invoke_schema: '#8b5cf6',
+  tool_definition: '#38bdf8',
+  calculator: '#f59e0b',
+  condition_gate: '#ef4444',
+  tool_return: '#10b981',
+  ui_layout_config: '#ec4899',
 };
 
 export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
@@ -124,10 +130,21 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
       return [];
     case 'prompt':
     case 'schema_field':
+    case 'invoke_schema':
     case 'sampling_params':
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
+    case 'tool_definition':
+    case 'calculator':
+    case 'ui_layout_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
+    case 'condition_gate':
+      return [
+        { port: 'pass', label: node.config.pass_label || '放行', kind: 'bool', direction: 'output' },
+        { port: 'blocked', label: node.config.blocked_label || '拦截', kind: 'bool', direction: 'output' },
+      ];
+    case 'tool_return':
+      return [];
     // 判定节点：每个选项/分支一个 bool 出口
     case 'mutex_gate':
     case 'group_gate':
@@ -190,6 +207,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'end':
     case 'prompt':
     case 'schema_field':
+    case 'invoke_schema':
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
@@ -197,6 +215,11 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'sampling_params':
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
+    case 'tool_definition':
+    case 'calculator':
+    case 'condition_gate':
+    case 'tool_return':
+    case 'ui_layout_config':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
 }
@@ -211,8 +234,15 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
       return node.config.is_locked;
+    case 'tool_definition':
+    case 'calculator':
+    case 'condition_gate':
+    case 'tool_return':
+    case 'ui_layout_config':
+      return node.config.is_locked;
     case 'start':
     case 'end':
+    case 'invoke_schema':
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
@@ -245,6 +275,18 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.label || 'Constant';
     case 'branch':
       return node.config.label || 'Branch';
+    case 'invoke_schema':
+      return 'Invoke Schema';
+    case 'tool_definition':
+      return node.config.tool_name || 'Tool Definition';
+    case 'calculator':
+      return node.config.target ? `Calc: ${node.config.target}` : 'Calculator';
+    case 'condition_gate':
+      return node.config.gate_type ? `Gate: ${node.config.gate_type}` : 'Condition Gate';
+    case 'tool_return':
+      return 'Tool Return';
+    case 'ui_layout_config':
+      return 'UI Layout';
     case 'sampling_params':
       return 'Sampling Params';
     case 'sampling_params_openai':
@@ -279,6 +321,18 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return 'chat_completions';
     case 'sampling_params_anthropic':
       return 'anthropic';
+    case 'invoke_schema':
+      return node.config.schema_id ? `Schema: ${node.config.schema_id}` : '未指定 Schema';
+    case 'tool_definition':
+      return node.config.description || 'tool_call';
+    case 'calculator':
+      return `${node.config.op} ${node.config.operand_a}`;
+    case 'condition_gate':
+      return node.config.expression || null;
+    case 'tool_return':
+      return node.config.is_blocked ? '已阻断' : '正常回执';
+    case 'ui_layout_config':
+      return node.config.mount_type || 'RightDock';
   }
 }
 
@@ -765,6 +819,15 @@ export function createNode(
           default_port: 'out_single',
         },
       };
+    case 'invoke_schema':
+      return {
+        id: genNodeId('invoke_schema'),
+        type: 'invoke_schema',
+        position,
+        config: {
+          schema_id: '',
+        },
+      };
     case 'sampling_params':
       return {
         id: genNodeId('sampling'),
@@ -809,6 +872,69 @@ export function createNode(
           stop: null,
           thinking_enabled: null,
           thinking_budget_tokens: null,
+          is_locked: false,
+        },
+      };
+    case 'tool_definition':
+      return {
+        id: genNodeId('tool_def'),
+        type: 'tool_definition',
+        position,
+        config: {
+          tool_name: '',
+          description: '',
+          parameters_schema: '',
+          is_locked: false,
+        },
+      };
+    case 'calculator':
+      return {
+        id: genNodeId('calc'),
+        type: 'calculator',
+        position,
+        config: {
+          calc_mode: 'math',
+          target: '',
+          op: '+',
+          operand_a: '',
+          operand_b: null,
+          item_def: null,
+          is_locked: false,
+        },
+      };
+    case 'condition_gate':
+      return {
+        id: genNodeId('c_gate'),
+        type: 'condition_gate',
+        position,
+        config: {
+          gate_type: 'gold',
+          expression: '',
+          pass_label: '放行',
+          blocked_label: '拦截',
+          block_reason: '',
+          is_locked: false,
+        },
+      };
+    case 'tool_return':
+      return {
+        id: genNodeId('tool_ret'),
+        type: 'tool_return',
+        position,
+        config: {
+          return_template: '',
+          is_blocked: false,
+          is_locked: false,
+        },
+      };
+    case 'ui_layout_config':
+      return {
+        id: genNodeId('ui_layout'),
+        type: 'ui_layout_config',
+        position,
+        config: {
+          layout_id: 'default_hud_layout',
+          mount_type: 'MobileDrawer',
           is_locked: false,
         },
       };

@@ -1,6 +1,5 @@
 // character_state_overlays removed (migration 0036): table dropped,
 // WorldVariable merged into message_rounds.world_variables.
-pub mod agent;
 pub mod blueprint_executor;
 pub mod chat;
 pub mod chat_service;
@@ -17,3 +16,5 @@ pub mod provider_adapter;
 pub mod stream_processor;
 pub mod structured_output_parser;
 pub mod world_book_matcher;
+pub mod agent_runtime;
+pub mod agent_guards;

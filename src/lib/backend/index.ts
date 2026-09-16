@@ -16,6 +16,15 @@ export * from './messages';
 // Presets
 export * from './presets';
 
+// Preset Schema Assets
+export * from './schema';
+
+// Game State & Agent Mechanics
+export * from './game_state';
+
+// UI Layout & HUD Templates
+export * from './ui_layout';
+
 // Preset Gate Selection (preset-level Gate selection API for preset detail view)
 export * from './gates';
 

@@ -193,6 +193,66 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           is_locked: false,
         },
       };
+    case 'invoke_schema':
+      return {
+        type: 'invoke_schema',
+        config: {
+          schema_id: '',
+        },
+      };
+    case 'tool_definition':
+      return {
+        type: 'tool_definition',
+        config: {
+          tool_name: 'new_tool',
+          description: '',
+          parameters_schema: '{}',
+          is_locked: false,
+        },
+      };
+    case 'calculator':
+      return {
+        type: 'calculator',
+        config: {
+          calc_mode: 'math',
+          target: 'stats.gold',
+          op: '+',
+          operand_a: '10',
+          operand_b: null,
+          item_def: null,
+          is_locked: false,
+        },
+      };
+    case 'condition_gate':
+      return {
+        type: 'condition_gate',
+        config: {
+          gate_type: 'gold',
+          expression: '50',
+          pass_label: '放行',
+          blocked_label: '拦截',
+          block_reason: '条件未达成',
+          is_locked: false,
+        },
+      };
+    case 'tool_return':
+      return {
+        type: 'tool_return',
+        config: {
+          return_template: '操作完成',
+          is_blocked: false,
+          is_locked: false,
+        },
+      };
+    case 'ui_layout_config':
+      return {
+        type: 'ui_layout_config',
+        config: {
+          layout_id: '',
+          mount_type: 'RightDock',
+          is_locked: false,
+        },
+      };
   }
 }
 

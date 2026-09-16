@@ -605,26 +605,57 @@ pub async fn compile_prompt(
         "[prompt-compiler] compile_prompt: step=execute_blueprint conversation_id={}",
         input.conversation_id
     );
-    let gate_selections_raw = {
-        let preset_id = context.preset_id.ok_or_else(|| {
-            format!(
-                "conversation {} has no preset; cannot load gate selections",
-                input.conversation_id
-            )
-        })?;
-        PresetGateRepository::load_by_preset(db, preset_id)
-            .await
-            .map_err(|err| err.replace('\\', "/"))?
-    };
+    let preset_id = context.preset_id.ok_or_else(|| {
+        format!(
+            "conversation {} has no preset; cannot load gate selections",
+            input.conversation_id
+        )
+    })?;
+    let gate_selections_raw = PresetGateRepository::load_by_preset(db, preset_id)
+        .await
+        .map_err(|err| err.replace('\\', "/"))?;
     let gate_selections: HashMap<String, GateSelection> = gate_selections_raw
         .into_iter()
         .map(|sel| (sel.node_id, GateSelection { keys: sel.selected_keys }))
         .collect();
+    let mut preset_schemas = HashMap::new();
+    if let Ok(rows) = sqlx::query(
+        "SELECT id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at \
+         FROM preset_schemas WHERE preset_id = ?"
+    )
+    .bind(preset_id)
+    .fetch_all(db)
+    .await {
+        for row in rows {
+            if let Ok(schema_def) = crate::models::schema::SchemaDefinition::from_row(&row) {
+                preset_schemas.insert(schema_def.id.clone(), schema_def);
+            }
+        }
+    }
+
+    let game_state: Option<crate::models::game_state::DataContainer> = {
+        let row_opt = sqlx::query("SELECT state_json FROM session_states WHERE session_id = ?")
+            .bind(input.conversation_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+        if let Some(row) = row_opt {
+            use sqlx::Row;
+            let json_str: String = row.try_get("state_json").unwrap_or_default();
+            serde_json::from_str(&json_str).ok()
+        } else {
+            None
+        }
+    };
+
     let exec_context = BlueprintExecutionContext {
         memory_mode: memory_mode.clone(),
         conversation_type: context.conversation_type.clone(),
         gate_selections,
         protocol: crate::repositories::conversation_repository::ConversationRepository::resolve_conversation_protocol(db, input.conversation_id).await,
+        preset_schemas,
+        game_state,
     };
 
     let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_str).map_err(|err| {
@@ -910,6 +941,41 @@ pub async fn compile_prompt(
     } else {
         history_blocks
     };
+
+    // 倒序滑动裁剪（Reverse Sliding Pruner）：针对每个激活的 Schema，若其配置了 retention_depth: Some(N) (N >= 1)
+    // 逆序遍历历史消息中的 Assistant 结构化输出，仅保留最近 N 层该 Schema 的历史数据，超出层级硬丢弃
+    for schema in &blueprint_result.active_schemas {
+        if let Some(depth) = schema.retention_depth {
+            if depth >= 1 {
+                let mut kept_count = 0u32;
+                let mut drop_indices = std::collections::HashSet::new();
+                for (idx, block) in history_blocks.iter().enumerate().rev() {
+                    if block.role == PromptRole::Assistant {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&block.content) {
+                            if v.is_object() {
+                                kept_count += 1;
+                                if kept_count > depth {
+                                    drop_indices.insert(idx);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !drop_indices.is_empty() {
+                    dbg_eprintln!(
+                        "[prompt-compiler] reverse sliding pruner: schema='{}' retention_depth={}, dropping {} older historical schema turn(s)",
+                        schema.name, depth, drop_indices.len()
+                    );
+                    let mut i = 0;
+                    history_blocks.retain(|_| {
+                        let keep = !drop_indices.contains(&i);
+                        i += 1;
+                        keep
+                    });
+                }
+            }
+        }
+    }
 
     // Ensure the opening message is always present and marked as required
     // across all memory modes. The opening establishes the initial scene and
@@ -2219,18 +2285,6 @@ async fn load_recent_history_blocks(
             })?
     };
 
-    let chat_mode: String = sqlx::query_scalar(
-        "SELECT chat_mode FROM conversations WHERE id = ? LIMIT 1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| "classic".to_string());
-
-    let is_redaction_enabled = chat_mode == "scriptwriter" || chat_mode == "director_scriptwriter";
-
     let mut blocks = Vec::with_capacity(rows.len());
     for row in rows {
         let message_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
@@ -2243,11 +2297,6 @@ async fn load_recent_history_blocks(
                 .unwrap_or_else(|_| "user".to_string()),
         )?;
         let content: String = row.try_get("content").unwrap_or_default();
-        let final_content = if is_redaction_enabled && role == PromptRole::Assistant {
-            crate::services::agent::RedactedText::apply(&content, 80, 50).masked_text
-        } else {
-            content
-        };
         let message_kind: String = row.try_get("message_kind").unwrap_or_default();
         debug
             .input_sources
@@ -2256,7 +2305,7 @@ async fn load_recent_history_blocks(
             PromptBlockKind::RecentHistory,
             role,
             None,
-            final_content,
+            content,
             PromptBlockSource::Message { message_id },
             false,
         ));

@@ -47,6 +47,12 @@ import type {
   SamplingParamsConfig,
   SchemaFieldConfig,
   StartConfig,
+  InvokeSchemaConfig,
+  ToolDefinitionConfig,
+  CalculatorConfig,
+  ConditionGateConfig,
+  ToolReturnConfig,
+  UiLayoutConfig,
 } from '../../lib/blueprint/types';
 import { isNodeLocked } from './nodeLayout';
 import { Lock, Trash2 } from '../../lib/icons';
@@ -64,6 +70,12 @@ import { BranchNode } from './nodes/BranchNode';
 import { SamplingParamsNode } from './nodes/SamplingParamsNode';
 import { SamplingParamsOpenAiNode } from './nodes/SamplingParamsOpenAiNode';
 import { SamplingParamsAnthropicNode } from './nodes/SamplingParamsAnthropicNode';
+import { InvokeSchemaNode } from './nodes/InvokeSchemaNode';
+import { ToolDefinitionNode } from './nodes/ToolDefinitionNode';
+import { CalculatorNode } from './nodes/CalculatorNode';
+import { ConditionGateNode } from './nodes/ConditionGateNode';
+import { ToolReturnNode } from './nodes/ToolReturnNode';
+import { UiLayoutConfigNode } from './nodes/UiLayoutConfigNode';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -97,6 +109,12 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   sampling_params: 'Sampling Params（legacy）',
   sampling_params_openai: 'Sampling Params (OpenAI)',
   sampling_params_anthropic: 'Sampling Params (Anthropic)',
+  invoke_schema: 'Invoke Schema',
+  tool_definition: 'Tool Definition',
+  calculator: 'Calculator',
+  condition_gate: 'Condition Gate',
+  tool_return: 'Tool Return',
+  ui_layout_config: 'UI Layout Config',
 };
 
 // ─── Component ───
@@ -182,6 +200,54 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onUpdate(nodeId, {
       type: 'sampling_params_anthropic',
       config: { ...(props.node!.config as AnthropicSamplingParamsConfig), ...updates },
+    });
+  const updateInvokeSchema = (
+    nodeId: string,
+    updates: Partial<InvokeSchemaConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'invoke_schema',
+      config: { ...(props.node!.config as InvokeSchemaConfig), ...updates },
+    });
+  const updateToolDefinition = (
+    nodeId: string,
+    updates: Partial<ToolDefinitionConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'tool_definition',
+      config: { ...(props.node!.config as ToolDefinitionConfig), ...updates },
+    });
+  const updateCalculator = (
+    nodeId: string,
+    updates: Partial<CalculatorConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'calculator',
+      config: { ...(props.node!.config as CalculatorConfig), ...updates },
+    });
+  const updateConditionGate = (
+    nodeId: string,
+    updates: Partial<ConditionGateConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'condition_gate',
+      config: { ...(props.node!.config as ConditionGateConfig), ...updates },
+    });
+  const updateToolReturn = (
+    nodeId: string,
+    updates: Partial<ToolReturnConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'tool_return',
+      config: { ...(props.node!.config as ToolReturnConfig), ...updates },
+    });
+  const updateUiLayoutConfig = (
+    nodeId: string,
+    updates: Partial<UiLayoutConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'ui_layout_config',
+      config: { ...(props.node!.config as UiLayoutConfig), ...updates },
     });
 
   return (
@@ -316,6 +382,48 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as AnthropicSamplingParamsConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateSamplingParamsAnthropic(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'invoke_schema'}>
+                  <InvokeSchemaNode
+                    config={node().config as InvokeSchemaConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateInvokeSchema(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'tool_definition'}>
+                  <ToolDefinitionNode
+                    config={node().config as ToolDefinitionConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateToolDefinition(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'calculator'}>
+                  <CalculatorNode
+                    config={node().config as CalculatorConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateCalculator(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'condition_gate'}>
+                  <ConditionGateNode
+                    config={node().config as ConditionGateConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateConditionGate(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'tool_return'}>
+                  <ToolReturnNode
+                    config={node().config as ToolReturnConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateToolReturn(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'ui_layout_config'}>
+                  <UiLayoutConfigNode
+                    config={node().config as UiLayoutConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateUiLayoutConfig(node().id, updates)}
                   />
                 </Match>
               </Switch>

@@ -1061,10 +1061,8 @@ fn validate_conversation_type(value: &str) -> Result<(), String> {
 fn normalize_chat_mode(value: Option<&str>) -> Result<String, String> {
     match value.unwrap_or("classic") {
         "classic" => Ok("classic".to_string()),
-        "director_actor" | "director_agents" => Ok("director_actor".to_string()),
-        "scriptwriter" => Ok("scriptwriter".to_string()),
-        "director_scriptwriter" => Ok("director_scriptwriter".to_string()),
-        _ => Err("chatMode 必须是 'classic', 'director_actor', 'scriptwriter' 或 'director_scriptwriter'".to_string()),
+        "director_agents" => Ok("director_agents".to_string()),
+        _ => Err("chatMode 只支持 classic 或 director_agents".to_string()),
     }
 }
 

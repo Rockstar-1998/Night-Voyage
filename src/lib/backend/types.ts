@@ -1,7 +1,7 @@
 // ─── Common type aliases ───
 
 export type ConversationType = 'single' | 'online';
-export type ChatMode = 'classic' | 'director_actor' | 'director_agents' | 'scriptwriter' | 'director_scriptwriter';
+export type ChatMode = 'classic' | 'director_agents';
 export type AgentProviderPolicy = 'shared_host_provider' | 'mixed_cost_optimized';
 export type CharacterCardType = 'npc' | 'player';
 export type CharacterBaseSectionKey = 'identity' | 'persona' | 'background' | 'rules' | 'custom';
@@ -1055,3 +1055,116 @@ export interface RoomCompatibilityModeEvent {
   messageId: number;
   reason: string;
 }
+
+// ─── Preset Schema Asset ───
+
+export type DisplayTarget = 'PersistentHUD' | 'InlineMessage';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object';
+
+export interface SchemaFieldDefinition {
+  name: string;
+  fieldType: SchemaFieldType;
+  required: boolean;
+  displayTarget: DisplayTarget;
+  dbMapping?: string | null;
+  description: string;
+}
+
+export interface SchemaDefinition {
+  id: string;
+  presetId: number;
+  name: string;
+  description: string;
+  retentionDepth?: number | null;
+  fields: SchemaFieldDefinition[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ─── Game State & Data Container ───
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  count: number;
+  unitWeight: number;
+  unitPrice: number;
+  icon?: string | null;
+  properties?: Record<string, string>;
+}
+
+export interface DataContainer {
+  stats: Record<string, number>;
+  inventory: InventoryItem[];
+  flags: Record<string, string>;
+  scratchpad: Record<string, string>;
+}
+
+export interface DataContainerPatch {
+  sessionId: number;
+  stats?: Record<string, number>;
+  inventory?: InventoryItem[];
+  flags?: Record<string, string>;
+  schemaPatches?: Record<string, any>;
+}
+
+export interface DiceRollResult {
+  skill: string;
+  d20Roll: number;
+  modifier: number;
+  total: number;
+  dc: number;
+  isSuccess: boolean;
+  isCriticalSuccess: boolean;
+  isCriticalFailure: boolean;
+  formula: string;
+  summary: string;
+}
+
+// ─── UI Layout Definition & Widgets ───
+
+export type LayoutMountType =
+  | 'RightDock'
+  | 'TopSticky'
+  | 'FloatingHUD'
+  | 'MobileDrawer'
+  | 'MobileBottomSticky';
+
+export type ContainerKind = 'rootCanvas' | 'panel' | 'tabs' | 'grid';
+export type WidgetType = 'statBar' | 'inventorySlotGrid' | 'dataLabel' | 'badge' | 'avatarFrame';
+
+export interface WidgetDefinition {
+  id: string;
+  widgetType: WidgetType;
+  label: string;
+  dataBinding: string;
+  config?: Record<string, any>;
+  style?: Record<string, string>;
+}
+
+export type LayoutNode =
+  | { nodeType: 'container'; container: LayoutContainer }
+  | { nodeType: 'widget'; widget: WidgetDefinition };
+
+export interface LayoutContainer {
+  id: string;
+  kind: ContainerKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  style?: Record<string, string>;
+  children?: LayoutNode[];
+}
+
+export interface UILayoutDefinition {
+  id: string;
+  presetId: number;
+  name: string;
+  mountType: LayoutMountType;
+  theme: string;
+  customCss: string;
+  rootContainer: LayoutContainer;
+}
+
+

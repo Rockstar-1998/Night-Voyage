@@ -115,6 +115,21 @@ pub fn run() {
             commands::presets::presets_delete,
             commands::presets::presets_rename,
             commands::presets::presets_duplicate,
+            commands::schema::preset_schemas_list,
+            commands::schema::preset_schema_get,
+            commands::schema::preset_schema_save,
+            commands::schema::preset_schema_delete,
+            commands::schema::preset_schema_reorder_fields,
+            commands::game_state::session_game_state_get,
+            commands::game_state::session_game_state_save,
+            commands::game_state::session_game_state_reset,
+            commands::game_state::session_tool_call_execute,
+            commands::game_state::agent_dice_roll,
+            commands::game_state::agent_validate_banned_words,
+            commands::ui_layout::preset_ui_layout_list,
+            commands::ui_layout::preset_ui_layout_get,
+            commands::ui_layout::preset_ui_layout_save,
+            commands::ui_layout::preset_ui_layout_delete,
             commands::chat::messages_list,
             commands::chat::send_message,
             commands::chat::chat_submit_input,
@@ -176,11 +191,7 @@ pub fn run() {
             commands::mem0_snapshot::mem0_snapshot_window_set,
             commands::mem0::mem0_init_status,
             commands::utils::format_timestamp,
-            commands::utils::format_timestamps,
-            commands::agent::agent_dice_roll,
-            commands::agent::agent_validate_banned_words,
-            commands::agent::agent_sandbox_status,
-            commands::agent::agent_read_sandbox_file
+            commands::utils::format_timestamps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

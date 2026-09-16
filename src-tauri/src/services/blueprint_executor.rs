@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
     AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
-    NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
+    InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -279,6 +279,9 @@ pub async fn execute_blueprint(
         db_mappings: HashMap::new(),
         context_included_keys: HashMap::new(),
         display_config: HashMap::new(),
+        active_schemas: Vec::new(),
+        active_tools: Vec::new(),
+        active_ui_layout: None,
         schema_field_order: Vec::new(),
     };
 
@@ -424,6 +427,44 @@ fn traverse(
             apply_schema_field(cfg, result)?;
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::InvokeSchema(cfg) => {
+            apply_invoke_schema(cfg, context, result)?;
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::ToolDefinition(cfg) => {
+            result.active_tools.push(cfg.clone());
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::UiLayoutConfig(cfg) => {
+            result.active_ui_layout = Some(cfg.clone());
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::Calculator(_) => {
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::ConditionGate(cfg) => {
+            let port = if let Some(ref gs) = context.game_state {
+                let cost_val = cfg.expression.parse::<f64>().unwrap_or(0.0);
+                if gs.evaluate_condition(&cfg.gate_type, cost_val).unwrap_or(true) {
+                    "pass"
+                } else {
+                    "blocked"
+                }
+            } else {
+                "pass"
+            };
+            let branch_target = target_of(graph, node_id, port)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
+        }
+        NodeConfig::ToolReturn(_) => {
+            if let Ok(next) = next_node_id(graph, node_id, "out") {
+                traverse(graph, &next, context, result, visited, path, values)?;
+            }
         }
         NodeConfig::MutexGate(_) => {
             eprintln!(
@@ -785,6 +826,9 @@ fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usi
                 .map(String::from)
                 .collect()
         }
+        NodeConfig::ConditionGate(_) => {
+            vec!["pass".to_string(), "blocked".to_string()]
+        }
         _ => return 0,
     };
     ordered_ports.iter().position(|p| p == port).unwrap_or(usize::MAX)
@@ -894,6 +938,41 @@ fn apply_schema_field(
         .schema_field_order
         .push((cfg.field_name.clone(), cfg.order));
 
+    Ok(())
+}
+
+/// Apply an InvokeSchema node to the execution result:
+/// activate the independent Schema asset by looking up schema_id in context.preset_schemas.
+fn apply_invoke_schema(
+    cfg: &InvokeSchemaConfig,
+    context: &BlueprintExecutionContext,
+    result: &mut BlueprintExecutionResult,
+) -> Result<(), BlueprintError> {
+    if let Some(schema_def) = context.preset_schemas.get(&cfg.schema_id) {
+        result.active_schemas.push(schema_def.clone());
+        result.structured_output_schema = schema_def.to_json_schema();
+        for field in &schema_def.fields {
+            if let Some(mapping) = &field.db_mapping {
+                if !mapping.is_empty() {
+                    result.db_mappings.insert(field.name.clone(), mapping.clone());
+                }
+            }
+            let is_inline = field.display_target == crate::models::schema::DisplayTarget::InlineMessage;
+            result.display_config.insert(
+                field.name.clone(),
+                crate::models::blueprint::FieldDisplayConfig {
+                    default_expanded: true,
+                    hide_label: is_inline,
+                    body: is_inline,
+                },
+            );
+        }
+    } else {
+        eprintln!(
+            "[blueprint-executor] InvokeSchema: schema_id '{}' not found in context.preset_schemas",
+            cfg.schema_id
+        );
+    }
     Ok(())
 }
 
@@ -1094,6 +1173,12 @@ fn evaluate_port(
         | NodeConfig::End
         | NodeConfig::Prompt(_)
         | NodeConfig::SchemaField(_)
+        | NodeConfig::InvokeSchema(_)
+        | NodeConfig::ToolDefinition(_)
+        | NodeConfig::Calculator(_)
+        | NodeConfig::ConditionGate(_)
+        | NodeConfig::ToolReturn(_)
+        | NodeConfig::UiLayoutConfig(_)
         | NodeConfig::MutexGate(_)
         | NodeConfig::GroupGate(_)
         | NodeConfig::ModeSwitch(_)
@@ -1477,6 +1562,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: HashMap::new(),
             protocol: "chat_completions".to_string(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
         }
     }
 
@@ -1486,6 +1573,8 @@ mod tests {
             conversation_type: conversation_type.to_string(),
             gate_selections: HashMap::new(),
             protocol: "chat_completions".to_string(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
         }
     }
 
@@ -1495,6 +1584,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: HashMap::new(),
             protocol: protocol.to_string(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
         }
     }
 
@@ -1506,6 +1597,8 @@ mod tests {
             memory_mode: memory_mode.to_string(),
             conversation_type: "single".to_string(),
             protocol: "chat_completions".to_string(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
             gate_selections: gates
                 .iter()
                 .map(|(node_id, keys)| {
@@ -2649,6 +2742,8 @@ mod tests {
             conversation_type: "single".to_string(),
             protocol: "anthropic".to_string(),
             gate_selections: HashMap::new(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
         };
         let res_anthropic = execute_blueprint(&graph, &ctx_anthropic)
             .await
@@ -2666,6 +2761,8 @@ mod tests {
             conversation_type: "single".to_string(),
             protocol: "chat_completions".to_string(),
             gate_selections: HashMap::new(),
+            preset_schemas: HashMap::new(),
+            game_state: None,
         };
         let res_chat = execute_blueprint(&graph, &ctx_chat)
             .await

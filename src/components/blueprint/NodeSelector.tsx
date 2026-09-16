@@ -45,6 +45,12 @@ export const NODE_LABELS: Record<NodeType, string> = {
   sampling_params_anthropic: 'Sampling Params（Anthropic 版）',
   constant: 'Constant（常量，读取会话属性）',
   branch: 'Branch（分支，按值走出口）',
+  invoke_schema: 'Invoke Schema（按需调用独立 Schema）',
+  tool_definition: 'Tool Definition（自定义 ToolCall 契约）',
+  calculator: 'Calculator（确定性数值与背包运算器）',
+  condition_gate: 'Condition Gate（金币/负重/槽位拦截门禁）',
+  tool_return: 'Tool Return（ToolCall 回执返回）',
+  ui_layout_config: 'UI Layout Config（常驻 HUD 模板绑定）',
 };
 
 const NODE_DESCRIPTIONS: Record<NodeType, string> = {
@@ -61,6 +67,12 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   sampling_params_anthropic: 'Anthropic 专用：temperature / top_p / stop / thinking_enabled / thinking_budget_tokens',
   constant: '读取会话属性（如 conversation_type / memory_mode / protocol）输出值',
   branch: '接收上游常量值，按 cases 匹配走对应出口',
+  invoke_schema: '按需激活预设下的独立 Schema 资产，流式解析后原地刷新常驻 HUD 并倒序滑动裁剪',
+  tool_definition: '定义 Function Calling 契约接口（名称、描述与参数模型），供大模型调阅与修改',
+  calculator: '由 Rust 确定性执行数值增减、clamp、道具添加扣减与自动重量重算，拒绝大模型算错',
+  condition_gate: '确定性门禁判定（金币不足、背包超重、槽位已满），提供放行 pass 与拦截 blocked 双出口',
+  tool_return: '封装 ToolCall 执行成功或拦截信息回传大模型，引导后续推进与正文 Schema 规范输出',
+  ui_layout_config: '绑定预设常驻 HUD 布局模板，指定视口挂载锚点（RightDock/TopSticky/FloatingHUD）',
 };
 
 /// 选择器中展示的节点类型列表：移除已废弃的 role_switch 与 legacy

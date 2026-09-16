@@ -1,4 +1,3 @@
-pub mod agent;
 pub mod assets;
 pub mod blueprint;
 pub mod characters;
@@ -11,6 +10,10 @@ pub mod plot_summaries;
 pub mod presets;
 pub mod providers;
 pub mod rooms;
+pub mod schema;
 pub mod settings;
 pub mod utils;
 pub mod world_books;
+pub mod game_state;
+pub mod ui_layout;
+

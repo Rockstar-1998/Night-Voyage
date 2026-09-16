@@ -29,6 +29,7 @@ import {
   clearPresetGateSelection,
 } from '../lib/backend';
 import { showToast } from './Toast';
+import { SchemaEditorModal } from './schema/SchemaEditorModal';
 
 // ─── Props ───
 
@@ -178,6 +179,7 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
   const [selections, setSelections] = createSignal<PresetGateSelection[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [schemaModalOpen, setSchemaModalOpen] = createSignal(false);
 
   const refreshAll = async () => {
     setLoading(true);
@@ -245,6 +247,15 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
           </Show>
           <button
             type="button"
+            class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-accent/15 hover:bg-accent/25 text-accent border border-accent/30 transition-colors flex items-center gap-1.5 shadow-sm"
+            onClick={() => setSchemaModalOpen(true)}
+            title="管理独立结构化 Schema 资产与保留层数"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+            Schema 管理
+          </button>
+          <button
+            type="button"
             class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
             onClick={props.onEditBlueprint}
             title="打开蓝图编辑器（幕后）"
@@ -309,6 +320,12 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
           </div>
         </Show>
       </div>
+
+      <SchemaEditorModal
+        presetId={props.preset.id}
+        isOpen={schemaModalOpen()}
+        onClose={() => setSchemaModalOpen(false)}
+      />
     </div>
   );
 };

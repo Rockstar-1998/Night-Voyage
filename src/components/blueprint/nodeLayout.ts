@@ -109,6 +109,12 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   sampling_params_anthropic: '#d97757',
   constant: '#14b8a6',
   branch: '#d946ef',
+  invoke_schema: '#8b5cf6',
+  tool_definition: '#38bdf8',
+  calculator: '#f59e0b',
+  condition_gate: '#ef4444',
+  tool_return: '#10b981',
+  ui_layout_config: '#ec4899',
 };
 
 /**
@@ -124,10 +130,21 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
       return [];
     case 'prompt':
     case 'schema_field':
+    case 'invoke_schema':
     case 'sampling_params':
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
+    case 'tool_definition':
+    case 'calculator':
+    case 'ui_layout_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
+    case 'condition_gate':
+      return [
+        { port: 'pass', label: node.config.pass_label || '放行', kind: 'bool', direction: 'output' },
+        { port: 'blocked', label: node.config.blocked_label || '拦截', kind: 'bool', direction: 'output' },
+      ];
+    case 'tool_return':
+      return [];
     // 判定节点：每个选项/分支一个 bool 出口
     case 'mutex_gate':
     case 'group_gate':
@@ -192,6 +209,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'end':
     case 'prompt':
     case 'schema_field':
+    case 'invoke_schema':
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
@@ -199,6 +217,11 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'sampling_params':
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
+    case 'tool_definition':
+    case 'calculator':
+    case 'condition_gate':
+    case 'tool_return':
+    case 'ui_layout_config':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
 }
@@ -216,9 +239,15 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'sampling_params':
     case 'sampling_params_openai':
     case 'sampling_params_anthropic':
+    case 'tool_definition':
+    case 'calculator':
+    case 'condition_gate':
+    case 'tool_return':
+    case 'ui_layout_config':
       return node.config.is_locked;
     case 'start':
     case 'end':
+    case 'invoke_schema':
     case 'mutex_gate':
     case 'group_gate':
     case 'mode_switch':
@@ -239,6 +268,8 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.identifier || 'Prompt';
     case 'schema_field':
       return node.config.field_name || 'Schema Field';
+    case 'invoke_schema':
+      return 'Invoke Schema';
     case 'mutex_gate':
       return node.config.label || 'Mutex Gate';
     case 'group_gate':
@@ -257,6 +288,16 @@ function computeNodeTitle(node: BlueprintNode): string {
       return 'Sampling (OpenAI)';
     case 'sampling_params_anthropic':
       return 'Sampling (Anthropic)';
+    case 'tool_definition':
+      return node.config.tool_name ? `Tool: ${node.config.tool_name}` : 'Tool Definition';
+    case 'calculator':
+      return node.config.target ? `Calc: ${node.config.target}` : 'Calculator';
+    case 'condition_gate':
+      return node.config.gate_type ? `Gate: ${node.config.gate_type}` : 'Condition Gate';
+    case 'tool_return':
+      return 'Tool Return';
+    case 'ui_layout_config':
+      return node.config.mount_type ? `HUD: ${node.config.mount_type}` : 'UI Layout';
   }
 }
 
@@ -266,6 +307,8 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return node.config.block_type;
     case 'schema_field':
       return node.config.field_type;
+    case 'invoke_schema':
+      return node.config.schema_id ? `ID: ${node.config.schema_id}` : '未指定 Schema';
     case 'mutex_gate':
     case 'group_gate':
       return `${node.config.options.length} options`;
@@ -285,6 +328,16 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return 'chat_completions';
     case 'sampling_params_anthropic':
       return 'anthropic';
+    case 'tool_definition':
+      return node.config.description || 'Function Calling';
+    case 'calculator':
+      return `${node.config.op} ${node.config.operand_a}`;
+    case 'condition_gate':
+      return `${node.config.expression}`;
+    case 'tool_return':
+      return node.config.is_blocked ? '拦截阻断' : '成功回执';
+    case 'ui_layout_config':
+      return node.config.layout_id || '未绑定模板';
   }
 }
 

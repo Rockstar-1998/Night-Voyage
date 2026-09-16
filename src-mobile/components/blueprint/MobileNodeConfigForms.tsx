@@ -31,6 +31,12 @@ import type {
   OpenAiSamplingParamsConfig,
   SchemaFieldConfig,
   StartConfig,
+  InvokeSchemaConfig,
+  ToolDefinitionConfig,
+  CalculatorConfig,
+  ConditionGateConfig,
+  ToolReturnConfig,
+  UiLayoutConfig,
 } from '../../../src/lib/blueprint/types';
 
 // ─── 公共 Props ───
@@ -926,6 +932,279 @@ const AnthropicSamplingParamsForm: Component<{
   );
 };
 
+const InvokeSchemaForm: Component<{
+  config: InvokeSchemaConfig;
+  onChange: (c: InvokeSchemaConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="Schema ID" hint="调用的预设 Schema 标识" />
+        <input
+          type="text"
+          value={props.config.schema_id || ''}
+          onInput={(e) => props.onChange({ schema_id: e.currentTarget.value.trim() })}
+          placeholder="例如：character_status"
+          class="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder-mist-solid/30 focus:border-cyan-500/50 focus:outline-none"
+        />
+      </div>
+      <div class="rounded-lg bg-black/30 p-3 text-xs leading-relaxed text-mist-solid/60">
+        蓝图执行到此节点时，将激活对应的预设独立 Schema，并根据其配置挂载常驻 HUD 或注入结构化输出规范与历史修剪策略。
+      </div>
+    </div>
+  );
+};
+
+const ToolDefinitionForm: Component<{
+  config: ToolDefinitionConfig;
+  onChange: (c: ToolDefinitionConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="工具名称" hint="例如 buy_item, check_inventory" />
+        <TextInput
+          value={props.config.tool_name || ''}
+          onInput={(v) => props.onChange({ ...props.config, tool_name: v.trim() })}
+          placeholder="buy_item"
+        />
+      </div>
+      <div>
+        <FieldLabel label="功能描述" hint="供模型决策是否调用的说明" />
+        <TextInput
+          value={props.config.description || ''}
+          onInput={(v) => props.onChange({ ...props.config, description: v })}
+          placeholder="购买道具，扣减金币并放入背包"
+        />
+      </div>
+      <div>
+        <FieldLabel label="参数定义 (JSON Schema)" />
+        <TextArea
+          value={props.config.parameters_schema || ''}
+          onInput={(v) => props.onChange({ ...props.config, parameters_schema: v })}
+          rows={5}
+          placeholder={'{\n  "type": "object",\n  "properties": {\n    "item_id": { "type": "string" }\n  }\n}'}
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+const CalculatorForm: Component<{
+  config: CalculatorConfig;
+  onChange: (c: CalculatorConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="运算模式" />
+        <select
+          value={props.config.calc_mode || 'math'}
+          onChange={(e) => props.onChange({ ...props.config, calc_mode: e.currentTarget.value as 'math' | 'collection' })}
+          class="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+        >
+          <option value="math">数值算术 (Math)</option>
+          <option value="collection">容器集合操作 (Collection)</option>
+        </select>
+      </div>
+      <div>
+        <FieldLabel label="目标变量" hint="如 stats.gold, inventory" />
+        <TextInput
+          value={props.config.target || ''}
+          onInput={(v) => props.onChange({ ...props.config, target: v.trim() })}
+          placeholder="stats.gold"
+        />
+      </div>
+      <div>
+        <FieldLabel label="操作符" />
+        <select
+          value={props.config.op || '+'}
+          onChange={(e) => props.onChange({ ...props.config, op: e.currentTarget.value })}
+          class="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+        >
+          <option value="+">加 (+) / 累加</option>
+          <option value="-">减 (-) / 扣除</option>
+          <option value="*">乘 (*)</option>
+          <option value="/">除 (/)</option>
+          <option value="set">设值 (set)</option>
+          <option value="clamp">区间截断 (clamp)</option>
+          <option value="min">取最小值 (min)</option>
+          <option value="max">取最大值 (max)</option>
+          <option value="add_item">增加道具 (add_item)</option>
+          <option value="remove_item">移除道具 (remove_item)</option>
+          <option value="recompute_weight">重算负重 (recompute_weight)</option>
+        </select>
+      </div>
+      <div>
+        <FieldLabel label="操作数 A" hint="数值或参数名 (args.count, 50)" />
+        <TextInput
+          value={props.config.operand_a || ''}
+          onInput={(v) => props.onChange({ ...props.config, operand_a: v })}
+          placeholder="50"
+        />
+      </div>
+      <div>
+        <FieldLabel label="操作数 B" hint="可选上限值等" />
+        <TextInput
+          value={props.config.operand_b || ''}
+          onInput={(v) => props.onChange({ ...props.config, operand_b: v ? v : null })}
+          placeholder="100"
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+const ConditionGateForm: Component<{
+  config: ConditionGateConfig;
+  onChange: (c: ConditionGateConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="门禁类型" />
+        <select
+          value={props.config.gate_type || 'gold'}
+          onChange={(e) => props.onChange({ ...props.config, gate_type: e.currentTarget.value as ConditionGateConfig['gate_type'] })}
+          class="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+        >
+          <option value="gold">金币校验 (gold &gt;= cost)</option>
+          <option value="weight">负重校验 (weight + add_w &lt;= max_w)</option>
+          <option value="slots">槽位校验 (slots &lt; max_slots)</option>
+          <option value="custom">自定义表达式 (Custom)</option>
+        </select>
+      </div>
+      <div>
+        <FieldLabel label="判定值 / 表达式" hint="如 50, cost" />
+        <TextInput
+          value={props.config.expression || ''}
+          onInput={(v) => props.onChange({ ...props.config, expression: v })}
+          placeholder="50"
+        />
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <FieldLabel label="放行标签" />
+          <TextInput
+            value={props.config.pass_label || '放行'}
+            onInput={(v) => props.onChange({ ...props.config, pass_label: v })}
+            placeholder="放行"
+          />
+        </div>
+        <div>
+          <FieldLabel label="拦截标签" />
+          <TextInput
+            value={props.config.blocked_label || '拦截'}
+            onInput={(v) => props.onChange({ ...props.config, blocked_label: v })}
+            placeholder="拦截"
+          />
+        </div>
+      </div>
+      <div>
+        <FieldLabel label="拦截理由说明" hint="阻断时回执文本" />
+        <TextInput
+          value={props.config.block_reason || ''}
+          onInput={(v) => props.onChange({ ...props.config, block_reason: v })}
+          placeholder="金币不足，无法购买"
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+const ToolReturnForm: Component<{
+  config: ToolReturnConfig;
+  onChange: (c: ToolReturnConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="回执模板" hint="支持 {var} 变量替换" />
+        <TextArea
+          value={props.config.return_template || ''}
+          onInput={(v) => props.onChange({ ...props.config, return_template: v })}
+          rows={4}
+          placeholder="购买成功！扣除金币 {cost}，当前金币 {gold}"
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_blocked}
+          onChange={(v) => props.onChange({ ...props.config, is_blocked: v })}
+          label="阻断标志（标记为门禁拦截回执）"
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+const UiLayoutConfigForm: Component<{
+  config: UiLayoutConfig;
+  onChange: (c: UiLayoutConfig) => void;
+}> = (props) => {
+  return (
+    <div class="space-y-4">
+      <div>
+        <FieldLabel label="挂载锚点位置" />
+        <select
+          value={props.config.mount_type || 'MobileDrawer'}
+          onChange={(e) => props.onChange({ ...props.config, mount_type: e.currentTarget.value as UiLayoutConfig['mount_type'] })}
+          class="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+        >
+          <option value="MobileDrawer">Mobile: 顶部吸顶抽屉 (MobileDrawer)</option>
+          <option value="MobileBottomSticky">Mobile: 底部微型条 (MobileBottomSticky)</option>
+          <option value="RightDock">PC: 右侧固定仪表盘 (RightDock)</option>
+          <option value="TopSticky">PC: 顶部吸顶折叠栏 (TopSticky)</option>
+          <option value="FloatingHUD">PC: 自由浮动画中画 (FloatingHUD)</option>
+        </select>
+      </div>
+      <div>
+        <FieldLabel label="UI 布局模板 ID" hint="留空或 default_hud_layout 使用默认玄青色面板" />
+        <TextInput
+          value={props.config.layout_id || ''}
+          onInput={(v) => props.onChange({ ...props.config, layout_id: v.trim() })}
+          placeholder="default_hud_layout"
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
 // ─── 分发器 ───
 //
 // 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
@@ -1010,6 +1289,42 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
         <AnthropicSamplingParamsForm
           config={props.node.config as AnthropicSamplingParamsConfig}
           onChange={(c: AnthropicSamplingParamsConfig) => props.onConfigChange({ type: 'sampling_params_anthropic', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'invoke_schema'}>
+        <InvokeSchemaForm
+          config={props.node.config as InvokeSchemaConfig}
+          onChange={(c: InvokeSchemaConfig) => props.onConfigChange({ type: 'invoke_schema', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'tool_definition'}>
+        <ToolDefinitionForm
+          config={props.node.config as ToolDefinitionConfig}
+          onChange={(c: ToolDefinitionConfig) => props.onConfigChange({ type: 'tool_definition', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'calculator'}>
+        <CalculatorForm
+          config={props.node.config as CalculatorConfig}
+          onChange={(c: CalculatorConfig) => props.onConfigChange({ type: 'calculator', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'condition_gate'}>
+        <ConditionGateForm
+          config={props.node.config as ConditionGateConfig}
+          onChange={(c: ConditionGateConfig) => props.onConfigChange({ type: 'condition_gate', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'tool_return'}>
+        <ToolReturnForm
+          config={props.node.config as ToolReturnConfig}
+          onChange={(c: ToolReturnConfig) => props.onConfigChange({ type: 'tool_return', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'ui_layout_config'}>
+        <UiLayoutConfigForm
+          config={props.node.config as UiLayoutConfig}
+          onChange={(c: UiLayoutConfig) => props.onConfigChange({ type: 'ui_layout_config', config: c })}
         />
       </Match>
     </Switch>
@@ -1143,6 +1458,66 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           stop: null,
           thinking_enabled: null,
           thinking_budget_tokens: null,
+          is_locked: false,
+        },
+      };
+    case 'invoke_schema':
+      return {
+        type: 'invoke_schema',
+        config: {
+          schema_id: '',
+        },
+      };
+    case 'tool_definition':
+      return {
+        type: 'tool_definition',
+        config: {
+          tool_name: '',
+          description: '',
+          parameters_schema: '{\n  "type": "object",\n  "properties": {}\n}',
+          is_locked: false,
+        },
+      };
+    case 'calculator':
+      return {
+        type: 'calculator',
+        config: {
+          calc_mode: 'math',
+          target: 'stats.gold',
+          op: '+',
+          operand_a: '0',
+          operand_b: null,
+          item_def: null,
+          is_locked: false,
+        },
+      };
+    case 'condition_gate':
+      return {
+        type: 'condition_gate',
+        config: {
+          gate_type: 'gold',
+          expression: '0',
+          pass_label: '放行',
+          blocked_label: '拦截',
+          block_reason: '金币不足',
+          is_locked: false,
+        },
+      };
+    case 'tool_return':
+      return {
+        type: 'tool_return',
+        config: {
+          return_template: '',
+          is_blocked: false,
+          is_locked: false,
+        },
+      };
+    case 'ui_layout_config':
+      return {
+        type: 'ui_layout_config',
+        config: {
+          layout_id: 'default_hud_layout',
+          mount_type: 'MobileDrawer',
           is_locked: false,
         },
       };

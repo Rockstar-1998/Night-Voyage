@@ -1,4 +1,7 @@
 pub mod blueprint;
+pub mod schema;
+pub mod game_state;
+pub mod ui_layout;
 
 use serde::{Deserialize, Serialize};
 

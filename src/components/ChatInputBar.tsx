@@ -1,5 +1,5 @@
-import { Component, Show, createMemo, createSignal } from 'solid-js';
-import { SendHorizontal, Globe, Loader2, AlertTriangle } from '../lib/icons';
+import { Component, createMemo, createSignal } from 'solid-js';
+import { SendHorizontal, Globe, Loader2 } from '../lib/icons';
 import { IconButton } from './ui/IconButton';
 
 export type ReplyStatus = 'idle' | 'connecting' | 'processing' | 'responding';
@@ -12,7 +12,6 @@ interface ChatInputBarProps {
   disabled?: boolean;
   placeholder?: string;
   isRoomClient?: boolean;
-  highCostWarning?: boolean;
 }
 
 const BouncingDots = () => (
@@ -93,12 +92,6 @@ export const ChatInputBar: Component<ChatInputBarProps> = (props) => {
 
   return (
     <div class="w-full max-w-4xl mx-auto p-4">
-      <Show when={props.highCostWarning}>
-        <div class="mb-2 px-3 py-2 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-semibold text-rose-500 dark:text-rose-400 flex items-center gap-2 animate-pulse">
-          <AlertTriangle size={15} class="shrink-0 text-rose-500" />
-          <span>⚠️ 这会导致消耗的TOKEN激增，尤其是对于按次计费的API来说，而这仅仅只是为了一次回答，请仔细斟酌这是否值得！</span>
-        </div>
-      </Show>
       <div class="relative flex items-center bg-transparent border-b-2 border-white/10 shadow-none focus-within:border-accent transition-all rounded-none px-2 py-2 group">
         <textarea
           value={inputValue()}

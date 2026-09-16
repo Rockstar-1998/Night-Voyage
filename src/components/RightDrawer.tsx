@@ -2,7 +2,7 @@ import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-j
 import { Select } from './ui/Select';
 import { AlertTriangle, ChevronLeft, ChevronRight, Layers3, Radio, Save, Sparkles, UserRound, Lock } from '../lib/icons';
 import { animate } from '../lib/animate';
-import type { ApiProviderSummary, CharacterCard, ChatMode, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
+import type { ApiProviderSummary, CharacterCard, PlotSummaryRecord, PresetSummary, WorldBookSummary } from '../lib/backend';
 import { toAssetUrl } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 
@@ -33,7 +33,6 @@ interface RightDrawerProps {
   roomPort?: number | null;
   roomIsOpen?: boolean;
   onUpdateRoomPort?: (port: number) => Promise<void> | void;
-  chatMode?: ChatMode;
 }
 
 const getSectionLabel = (sectionKey: string) => {
@@ -66,15 +65,6 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
   const [snapshotWindowSaving, setSnapshotWindowSaving] = createSignal(false);
   const [portInput, setPortInput] = createSignal('');
   const [portSaving, setPortSaving] = createSignal(false);
-
-  const isHighCost = createMemo(() => {
-    const directorActive = props.chatMode === 'director_actor' || props.chatMode === 'director_agents' || props.chatMode === 'director_scriptwriter';
-    const scriptwriterActive = props.chatMode === 'scriptwriter' || props.chatMode === 'director_scriptwriter';
-    const mem0Active = props.memoryMode === 'mem0';
-    const count = (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
-    return count >= 2;
-  });
-
   let drawerRef: HTMLDivElement | undefined;
 
   const toggleDrawer = () => {
@@ -258,15 +248,6 @@ export const RightDrawer: Component<RightDrawerProps> = (props) => {
         </div>
 
         <div class="flex-1 overflow-y-auto px-4 space-y-4 custom-scrollbar">
-          <Show when={isHighCost()}>
-            <div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-500 dark:text-rose-400 flex items-start gap-2.5 animate-pulse">
-              <AlertTriangle size={16} class="shrink-0 mt-0.5 text-rose-500" />
-              <div>
-                ⚠️ 这会导致消耗的TOKEN激增，尤其是对于按次计费的API来说，而这仅仅只是为了一次回答，请仔细斟酌这是否值得！
-              </div>
-            </div>
-          </Show>
-
           <Show when={localError()}>
             <div class="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200 whitespace-pre-wrap leading-6 flex gap-3">
               <AlertTriangle size={18} class="shrink-0 mt-0.5" />

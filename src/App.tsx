@@ -22,6 +22,8 @@ import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { NotificationContainer, showToast, showConfirm } from './components/Toast';
+import { PersistentHudContainer } from './components/hud/PersistentHudContainer';
+import { AgentDebugDrawer } from './components/debug/AgentDebugDrawer';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
@@ -376,6 +378,7 @@ type DesktopViewProps = {
   roomIsOpen?: boolean;
   /** 房主主动更改房间端口的回调。 */
   onUpdateRoomPort?: (port: number) => Promise<void> | void;
+  onOpenAgentDebug?: () => void;
 };
 
 const AnimatedDesktopView = (props: DesktopViewProps) => {
@@ -589,27 +592,31 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                               return prev;
                             });
 
-                            const currentSession = createMemo(() => props.sessions.find((s) => s.id === props.selectedConversationId));
-                            const isHighCost = createMemo(() => {
-                              const s = currentSession();
-                              if (!s) return false;
-                              const directorActive = s.chatMode === 'director_actor' || s.chatMode === 'director_agents' || s.chatMode === 'director_scriptwriter';
-                              const scriptwriterActive = s.chatMode === 'scriptwriter' || s.chatMode === 'director_scriptwriter';
-                              const mem0Active = s.memoryMode === 'mem0';
-                              const count = (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
-                              return count >= 2;
-                            });
-
                             return (
                               <div class="h-full w-full flex flex-col relative bg-transparent overflow-hidden">
                                 <div class="px-8 pt-12 pb-2 text-xs text-mist-solid/35 uppercase tracking-widest flex items-center justify-between" data-workspace-title>
                                   <span>{safeTitle()}</span>
-                                  <Show when={safeRoundState()}>
-                                    <span>
-                                      {safeRoundState()?.status} / waiting {safeRoundState()?.waitingMemberIds.length ?? 0}
-                                    </span>
-                                  </Show>
+                                  <div class="flex items-center gap-3">
+                                    <button
+                                      onClick={() => props.onOpenAgentDebug?.()}
+                                      class="text-[11px] text-accent/70 hover:text-accent font-mono transition-colors"
+                                      title="打开 Agent 运行态与时序调试泳道 (Ctrl+Shift+D)"
+                                    >
+                                      [时序调试]
+                                    </button>
+                                    <Show when={safeRoundState()}>
+                                      <span>
+                                        {safeRoundState()?.status} / waiting {safeRoundState()?.waitingMemberIds.length ?? 0}
+                                      </span>
+                                    </Show>
+                                  </div>
                                 </div>
+                                <Show when={props.selectedConversationId}>
+                                  <PersistentHudContainer
+                                    sessionId={props.selectedConversationId ?? undefined}
+                                    onOpenDebug={() => props.onOpenAgentDebug?.()}
+                                  />
+                                </Show>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
                                   <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={effectiveStructuredOutputDisplay()} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
                                 </div>
@@ -623,7 +630,6 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                       disabled={props.sending || !props.selectedConversationId}
                                       placeholder={props.selectedConversationId ? 'Type a message. Leave empty in room chats to skip this turn.' : 'Select or create a conversation first.'}
                                       isRoomClient={props.isRoomClient}
-                                      highCostWarning={isHighCost()}
                                     />
                                   </div>
                                 </div>
@@ -671,7 +677,6 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                           roomPort={props.roomPort}
                           roomIsOpen={props.roomIsOpen}
                           onUpdateRoomPort={props.onUpdateRoomPort}
-                          chatMode={props.sessions.find((s) => s.id === props.selectedConversationId)?.chatMode}
                         />
                       </div>
                     </>
@@ -1031,6 +1036,7 @@ function App() {
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'processing' | 'responding'>('idle');
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
   const [mem0InitError, setMem0InitError] = createSignal<string | null>(null);
+  const [isAgentDebugOpen, setIsAgentDebugOpen] = createSignal(false);
   const [memoryBackendErrors, setMemoryBackendErrors] = createStore<MemoryBackendErrorEvent[]>([]);
   const [conversationMode, setConversationMode] = createSignal<ConversationMode | null>(null);
   // Auto-retry toast: shown whenever the backend emits llm-stream-retry.
@@ -2842,6 +2848,7 @@ function App() {
         )}
       </Show>
       <AnimatedDesktopView
+        onOpenAgentDebug={() => setIsAgentDebugOpen(true)}
         messages={visibleMessages()}
         activeWorkspace={activeWorkspace()}
         onWorkspaceChange={setActiveWorkspace}
@@ -2970,6 +2977,11 @@ function App() {
         onCancel={() => setRewindTarget(null)}
       />
       <NotificationContainer />
+      <AgentDebugDrawer
+        isOpen={isAgentDebugOpen()}
+        onClose={() => setIsAgentDebugOpen(false)}
+        sessionId={selectedConversationId() ?? undefined}
+      />
     </>
   );
 }

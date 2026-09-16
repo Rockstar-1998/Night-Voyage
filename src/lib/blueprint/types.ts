@@ -30,6 +30,12 @@ export const NODE_TYPES = [
   'branch',
   'sampling_params_openai',
   'sampling_params_anthropic',
+  'invoke_schema',
+  'tool_definition',
+  'calculator',
+  'condition_gate',
+  'tool_return',
+  'ui_layout_config',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -200,6 +206,48 @@ export interface AnthropicSamplingParamsConfig {
   is_locked: boolean;
 }
 
+export interface InvokeSchemaConfig {
+  schema_id: string;
+}
+
+export interface ToolDefinitionConfig {
+  tool_name: string;
+  description: string;
+  parameters_schema: string;
+  is_locked: boolean;
+}
+
+export interface CalculatorConfig {
+  calc_mode: 'math' | 'collection';
+  target: string;
+  op: string;
+  operand_a: string;
+  operand_b: string | null;
+  item_def: any | null;
+  is_locked: boolean;
+}
+
+export interface ConditionGateConfig {
+  gate_type: 'gold' | 'weight' | 'slots' | 'custom';
+  expression: string;
+  pass_label: string;
+  blocked_label: string;
+  block_reason: string;
+  is_locked: boolean;
+}
+
+export interface ToolReturnConfig {
+  return_template: string;
+  is_blocked: boolean;
+  is_locked: boolean;
+}
+
+export interface UiLayoutConfig {
+  layout_id: string;
+  mount_type: 'RightDock' | 'TopSticky' | 'FloatingHUD' | 'MobileDrawer' | 'MobileBottomSticky';
+  is_locked: boolean;
+}
+
 // ─── Discriminated union: NodeType + Config strong binding ───
 
 export type NodeConfig =
@@ -215,7 +263,13 @@ export type NodeConfig =
   | { type: 'branch'; config: BranchConfig }
   | { type: 'sampling_params'; config: SamplingParamsConfig }
   | { type: 'sampling_params_openai'; config: OpenAiSamplingParamsConfig }
-  | { type: 'sampling_params_anthropic'; config: AnthropicSamplingParamsConfig };
+  | { type: 'sampling_params_anthropic'; config: AnthropicSamplingParamsConfig }
+  | { type: 'invoke_schema'; config: InvokeSchemaConfig }
+  | { type: 'tool_definition'; config: ToolDefinitionConfig }
+  | { type: 'calculator'; config: CalculatorConfig }
+  | { type: 'condition_gate'; config: ConditionGateConfig }
+  | { type: 'tool_return'; config: ToolReturnConfig }
+  | { type: 'ui_layout_config'; config: UiLayoutConfig };
 
 export type BlueprintNode = NodeConfig & {
   id: string;

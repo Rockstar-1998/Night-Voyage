@@ -1067,6 +1067,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
             protocol: "chat_completions".to_string(),
+            preset_schemas: std::collections::HashMap::new(),
+            game_state: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1153,6 +1155,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: std::collections::HashMap::new(),
             protocol: "chat_completions".to_string(),
+            preset_schemas: std::collections::HashMap::new(),
+            game_state: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1298,6 +1302,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: gates,
             protocol: "chat_completions".to_string(),
+            preset_schemas: std::collections::HashMap::new(),
+            game_state: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1437,6 +1443,8 @@ mod tests {
             conversation_type: "single".to_string(),
             gate_selections: gates,
             protocol: "chat_completions".to_string(),
+            preset_schemas: std::collections::HashMap::new(),
+            game_state: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)

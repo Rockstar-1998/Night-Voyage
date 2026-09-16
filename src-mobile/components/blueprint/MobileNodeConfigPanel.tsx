@@ -134,6 +134,12 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
       case 'role_switch': return 'RoleSwitch（已废弃）';
       case 'constant': return 'Constant（常量）';
       case 'branch': return 'Branch（分支）';
+      case 'invoke_schema': return 'InvokeSchema（调用 Schema）';
+      case 'tool_definition': return 'ToolDefinition（工具定义）';
+      case 'calculator': return 'Calculator（数值/道具运算）';
+      case 'condition_gate': return 'ConditionGate（条件门禁）';
+      case 'tool_return': return 'ToolReturn（工具回执）';
+      case 'ui_layout_config': return 'UiLayoutConfig（UI 布局绑定）';
       case 'sampling_params': return 'SamplingParams（legacy 采样参数）';
       case 'sampling_params_openai': return 'SamplingParams（OpenAI 版）';
       case 'sampling_params_anthropic': return 'SamplingParams（Anthropic 版）';

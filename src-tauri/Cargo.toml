@@ -30,8 +30,6 @@ tokio = { version = "1", features = ["time", "net", "rt", "sync", "io-util", "ma
 minijinja = "2"
 regex = "1"
 async-trait = "0.1"
-rand = "0.8"
-aho-corasick = "1.1"
 # chrono is used for timestamp formatting in commands::utils::format_timestamp.
 chrono = "0.4"
 # mem0-rs memory backend (library mode). Pinned by path to the vendored upstream

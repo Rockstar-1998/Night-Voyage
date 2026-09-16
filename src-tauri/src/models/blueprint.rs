@@ -34,6 +34,19 @@ pub enum NodeType {
     SamplingParamsOpenAi,
     /// Anthropic 协议专用采样参数节点。
     SamplingParamsAnthropic,
+    /// 独立 Schema 调用节点：按需激活指定 schema_id 的结构化输出规范
+    InvokeSchema,
+    /// 自定义 ToolCall 契约定义节点
+    ToolDefinition,
+    /// 确定性数值运算与物品增删运算器节点
+    Calculator,
+    /// 确定性门禁拦截节点（金币/负重/槽位校验）
+    ConditionGate,
+    /// ToolCall 结果返回节点
+    ToolReturn,
+    /// 常驻 UI 布局绑定节点
+    #[serde(rename = "ui_layout_config")]
+    UiLayoutConfig,
 }
 
 /// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
@@ -67,6 +80,19 @@ pub enum NodeConfig {
     SamplingParamsOpenAi(OpenAiSamplingParamsConfig),
     /// Anthropic 协议专用采样参数。
     SamplingParamsAnthropic(AnthropicSamplingParamsConfig),
+    /// 独立 Schema 调用节点
+    InvokeSchema(InvokeSchemaConfig),
+    /// 自定义 ToolCall 契约定义节点
+    ToolDefinition(ToolDefinitionConfig),
+    /// 确定性数值运算与物品增删运算器节点
+    Calculator(CalculatorConfig),
+    /// 确定性门禁拦截节点（金币/负重/槽位校验）
+    ConditionGate(ConditionGateConfig),
+    /// ToolCall 结果返回节点
+    ToolReturn(ToolReturnConfig),
+    /// 常驻 UI 布局绑定节点
+    #[serde(rename = "ui_layout_config")]
+    UiLayoutConfig(UiLayoutConfig),
 }
 
 impl NodeConfig {
@@ -86,9 +112,15 @@ impl NodeConfig {
             Self::Branch(_) => NodeType::Branch,
             Self::SamplingParamsOpenAi(_) => NodeType::SamplingParamsOpenAi,
             Self::SamplingParamsAnthropic(_) => NodeType::SamplingParamsAnthropic,
-            }
-            }
-            }
+            Self::InvokeSchema(_) => NodeType::InvokeSchema,
+            Self::ToolDefinition(_) => NodeType::ToolDefinition,
+            Self::Calculator(_) => NodeType::Calculator,
+            Self::ConditionGate(_) => NodeType::ConditionGate,
+            Self::ToolReturn(_) => NodeType::ToolReturn,
+            Self::UiLayoutConfig(_) => NodeType::UiLayoutConfig,
+        }
+    }
+}
 
 /// 蓝图节点画布坐标。仅编辑器使用，执行器忽略。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -356,6 +388,94 @@ pub struct FieldDisplayConfig {
 
 fn default_true() -> bool { true }
 
+/// 独立 Schema 调用节点配置，用于按需激活指定 schema_id 的结构化输出规范
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvokeSchemaConfig {
+    pub schema_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinitionConfig {
+    pub tool_name: String,
+    pub description: String,
+    #[serde(default)]
+    pub parameters_schema: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalculatorConfig {
+    /// 运算类型: "math" | "collection"
+    #[serde(default = "default_calc_mode")]
+    pub calc_mode: String,
+    /// 目标变量名，如 "stats.gold", "stats.hp"
+    pub target: String,
+    /// 操作符: "+", "-", "*", "/", "clamp", "min", "max", "set", "add_item", "remove_item", "recompute_weight"
+    pub op: String,
+    /// 操作数 A (支持数值或变量名)
+    pub operand_a: String,
+    /// 操作数 B (用于 clamp 上限等)
+    pub operand_b: Option<String>,
+    /// 物品定义 (用于 add_item)
+    pub item_def: Option<crate::models::game_state::InventoryItem>,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_calc_mode() -> String {
+    "math".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConditionGateConfig {
+    /// 门禁类型: "gold", "weight", "slots", "custom"
+    pub gate_type: String,
+    /// 判定对比值或表达式
+    pub expression: String,
+    #[serde(default = "default_pass_label")]
+    pub pass_label: String,
+    #[serde(default = "default_blocked_label")]
+    pub blocked_label: String,
+    /// 阻断时给大模型的提示理由
+    #[serde(default)]
+    pub block_reason: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_pass_label() -> String {
+    "放行".to_string()
+}
+
+fn default_blocked_label() -> String {
+    "拦截".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolReturnConfig {
+    /// 回执模版字符串
+    pub return_template: String,
+    #[serde(default)]
+    pub is_blocked: bool,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiLayoutConfig {
+    pub layout_id: String,
+    #[serde(default = "default_layout_mount")]
+    pub mount_type: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_layout_mount() -> String {
+    "RightDock".to_string()
+}
+
 /// Gate 选项，[`MutexGateConfig`] 与 [`GroupGateConfig`] 共用。
 ///
 /// `description` 为选项核心字段（选择 UI 中显示的选项说明），旧 JSON 缺失时
@@ -508,12 +628,18 @@ pub struct GateSelection {
 /// `conversation_type` 取值：`"single"` / `"online"`（未来扩展 `"agent"`），驱动 RoleSwitch 节点。
 /// `protocol` 取值：`"anthropic"` / `"chat_completions"`，驱动 `protocol` 分支（Constant + Branch）。
 /// `gate_selections` 键为 [`BlueprintNode::id`]（节点 ID 已唯一，gate_id 已移除）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlueprintExecutionContext {
     pub memory_mode: String,
     pub conversation_type: String,
     pub protocol: String,
     pub gate_selections: HashMap<String, GateSelection>,
+    /// 预设关联的独立 Schema 映射表 (schema_id -> SchemaDefinition)
+    #[serde(default)]
+    pub preset_schemas: HashMap<String, crate::models::schema::SchemaDefinition>,
+    /// 当前会话的数据容器 (如果有)
+    #[serde(default)]
+    pub game_state: Option<crate::models::game_state::DataContainer>,
 }
 
 /// 图执行器产出的 prompt block，供 compile_prompt 注入。
@@ -601,6 +727,15 @@ pub struct BlueprintExecutionResult {
     pub context_included_keys: HashMap<String, bool>,
     #[serde(default)]
     pub display_config: HashMap<String, FieldDisplayConfig>,
+    /// 当前执行流激活的独立 Schema 资产列表
+    #[serde(default)]
+    pub active_schemas: Vec<crate::models::schema::SchemaDefinition>,
+    /// 当前执行流激活的 ToolCall 契约列表
+    #[serde(default)]
+    pub active_tools: Vec<ToolDefinitionConfig>,
+    /// 当前执行流激活的 UI 布局配置 (若有)
+    #[serde(default)]
+    pub active_ui_layout: Option<UiLayoutConfig>,
     /// 字段顺序追踪：记录每个 schema 字段的 `(field_name, order)` 与遍历插入序。
     /// 执行器据此把 `properties` / `required` 重排为「(order, 遍历序)」稳定序。
     /// 仅内部使用，不进入对外序列化合约。

@@ -209,6 +209,12 @@ pub async fn load_blueprint_gates(
             NodeConfig::SamplingParamsAnthropic(_) => None,
             NodeConfig::Constant(_) => None,
             NodeConfig::Branch(_) => None,
+            NodeConfig::InvokeSchema(_) => None,
+            NodeConfig::ToolDefinition(_) => None,
+            NodeConfig::Calculator(_) => None,
+            NodeConfig::ConditionGate(_) => None,
+            NodeConfig::ToolReturn(_) => None,
+            NodeConfig::UiLayoutConfig(_) => None,
         })
         .collect();
 
@@ -344,11 +350,20 @@ pub async fn preview_blueprint_with_session(
         }
     }
 
+    let mut preset_schemas = HashMap::new();
+    if let Ok(schemas) = crate::commands::schema::preset_schemas_list(state.clone(), preset_id).await {
+        for s in schemas {
+            preset_schemas.insert(s.id.clone(), s);
+        }
+    }
+
     let exec_context = BlueprintExecutionContext {
         memory_mode,
         conversation_type,
         protocol,
         gate_selections,
+        preset_schemas,
+        game_state: None,
     };
 
     let blueprint_result = execute_blueprint(&graph, &exec_context)

@@ -222,8 +222,6 @@ function App() {
                                     conversationId={selectedConversationId()!}
                                     providerId={sessions.find((s) => s.id === selectedConversationId())?.providerId}
                                     presetId={sessions.find((s) => s.id === selectedConversationId())?.presetId}
-                                    chatMode={sessions.find((s) => s.id === selectedConversationId())?.chatMode}
-                                    memoryMode={sessions.find((s) => s.id === selectedConversationId())?.memoryMode}
                                     onBack={() => setActiveView('sessions')}
                                 />
                             </Show>
