@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "format": "night-voyage-preset",
-  "exportedAt": 1788157500,
+  "exportedAt": 1789546512,
   "preset": {
-    "name": "Night Voyage 全能进阶核心预设 V2.2",
-    "description": "V2.2 机床式重构：思维链与正文改为工位制——总纲定纪律，清点/状态/TODO/推演/代理/阻力等工位由暴露的互斥或分组选项装配。三铁律下放到对应工位，核心引擎瘦身为纯定位。新增：清点/推演深度档（含范文）、输出前自检、合规强化组（去欧化/反套话/禁AI腔/内心戏配额）、镜头结构三选、视角让渡站、字数档按预算重算。status/todo/options 写指令并入 schema description。采样参数 freq 0.3 / pres 0.15。",
+    "name": "Night Voyage 全能进阶核心预设 V2.2 (双Agent与全功能HUD适配版)",
+    "description": "V2.2 深度适配版：全面集成双 Agent 模式（单智能体/导演-演员/剧本流水线接力）、常驻响应式 HUD 三大视口（角色状态窗口 stats、背包窗口 inventory、世界状态窗口 flags/world_variables）、ToolCall 规则引擎（check_inventory, buy_item, use_item, inspect_item, read_text, write_text）、确定性数值与物品运算器（Calculator）、金币与超重规则门禁（ConditionGate）及独立 Schema 调用（InvokeSchema）。",
     "category": "官方核心",
     "temperature": 0.9,
     "maxOutputTokens": 16384,
@@ -17,7 +17,7 @@
     "thinkingBudgetTokens": null,
     "betaFeatures": null,
     "structuredOutputSchema": null,
-    "structuredOutputDisplay": null,
+    "structuredOutputDisplay": "{\"thinking\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":1},\"world_variables\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":6},\"text\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":true,\"order\":2},\"status_bar\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":3},\"todo_list\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":false,\"order\":4},\"plot_summary\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":7},\"options\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":false,\"order\":5}}",
     "contextIncludedKeys": null,
     "blueprintGraph": {
       "version": 2,
@@ -25,7 +25,10 @@
         {
           "type": "start",
           "id": "n_start",
-          "position": { "x": 20, "y": 20 }
+          "position": {
+            "x": 20,
+            "y": 20
+          }
         },
         {
           "id": "n_core",
@@ -43,7 +46,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 240, "y": 20 }
+          "position": {
+            "x": 260,
+            "y": 20
+          }
         },
         {
           "id": "n_const",
@@ -52,7 +58,10 @@
             "label": "会话模式",
             "source": "conversation_type"
           },
-          "position": { "x": 240, "y": 220 }
+          "position": {
+            "x": 252.84048035254492,
+            "y": 217.1377751804542
+          }
         },
         {
           "id": "n_branch",
@@ -60,12 +69,21 @@
           "config": {
             "label": "单人/多人分支",
             "cases": [
-              { "match_value": "single", "port": "out_single" },
-              { "match_value": "online", "port": "out_online" }
+              {
+                "match_value": "single",
+                "port": "out_single"
+              },
+              {
+                "match_value": "online",
+                "port": "out_online"
+              }
             ],
             "default_port": "out_single"
           },
-          "position": { "x": 480, "y": 20 }
+          "position": {
+            "x": 500,
+            "y": 20
+          }
         },
         {
           "id": "n_channel_gate",
@@ -73,11 +91,22 @@
           "config": {
             "label": "思考通道",
             "options": [
-              { "key": "native", "label": "原生思维链", "description": "模型自主思考（推理模型），thinking仅写一行结论" },
-              { "key": "schema", "label": "指令思维链", "description": "按工位步骤思考（通用回退）" }
+              {
+                "key": "native",
+                "label": "原生思维链",
+                "description": "模型自主思考（推理模型），thinking仅写一行结论"
+              },
+              {
+                "key": "schema",
+                "label": "指令思维链",
+                "description": "按工位步骤思考（通用回退）"
+              }
             ]
           },
-          "position": { "x": 610, "y": 20 }
+          "position": {
+            "x": 952.7653697408974,
+            "y": 2.2039469746857776
+          }
         },
         {
           "id": "n_multi",
@@ -96,7 +125,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 700, "y": 140 }
+          "position": {
+            "x": 735.4973000989983,
+            "y": 99.83619269414312
+          }
         },
         {
           "id": "n_cot_head",
@@ -116,7 +148,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 920, "y": 20 }
+          "position": {
+            "x": 1083.1033492336107,
+            "y": 290.8387951535241
+          }
         },
         {
           "id": "n_census_gate",
@@ -124,12 +159,27 @@
           "config": {
             "label": "清点深度",
             "options": [
-              { "key": "lite", "label": "精简清点", "description": "只列在场角色与上轮落点，快速进入推演" },
-              { "key": "standard", "label": "标准清点", "description": "在场角色+性格档案回顾+上轮落点" },
-              { "key": "deep", "label": "深度清点", "description": "全档案+视线外存在+范文结构，推理最扎实" }
+              {
+                "key": "lite",
+                "label": "精简清点",
+                "description": "只列在场角色与上轮落点，快速进入推演"
+              },
+              {
+                "key": "standard",
+                "label": "标准清点",
+                "description": "在场角色+性格档案回顾+上轮落点"
+              },
+              {
+                "key": "deep",
+                "label": "深度清点",
+                "description": "全档案+视线外存在+范文结构，推理最扎实"
+              }
             ]
           },
-          "position": { "x": 1140, "y": 20 }
+          "position": {
+            "x": 1460,
+            "y": 20
+          }
         },
         {
           "id": "n_census_lite",
@@ -147,7 +197,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1360, "y": -140 }
+          "position": {
+            "x": 1709.9307354670063,
+            "y": -69.37644873100949
+          }
         },
         {
           "id": "n_census_standard",
@@ -166,7 +219,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1360, "y": 0 }
+          "position": {
+            "x": 1699.3793680998228,
+            "y": 59.86725284762375
+          }
         },
         {
           "id": "n_census_deep",
@@ -197,7 +253,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1360, "y": 140 }
+          "position": {
+            "x": 1698.1379906514371,
+            "y": 172.35269981714544
+          }
         },
         {
           "id": "n_census_extra_gate",
@@ -205,12 +264,27 @@
           "config": {
             "label": "清点增强 (可选)",
             "options": [
-              { "key": "subtext", "label": "潜文本识别", "description": "解析输入的言外之意与暗示" },
-              { "key": "noclub", "label": "防全知", "description": "NPC不得知晓设定集外的真相" },
-              { "key": "depth_plot", "label": "情节纵深", "description": "把当前轮放入长线剧情坐标" }
+              {
+                "key": "subtext",
+                "label": "潜文本识别",
+                "description": "解析输入的言外之意与暗示"
+              },
+              {
+                "key": "noclub",
+                "label": "防全知",
+                "description": "NPC不得知晓设定集外的真相"
+              },
+              {
+                "key": "depth_plot",
+                "label": "情节纵深",
+                "description": "把当前轮放入长线剧情坐标"
+              }
             ]
           },
-          "position": { "x": 1580, "y": 20 }
+          "position": {
+            "x": 1940,
+            "y": 20
+          }
         },
         {
           "id": "n_subtext",
@@ -228,7 +302,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1800, "y": -100 }
+          "position": {
+            "x": 2188.689301194605,
+            "y": -148.82216199501266
+          }
         },
         {
           "id": "n_noclub",
@@ -245,7 +322,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1800, "y": 20 }
+          "position": {
+            "x": 2177.5173587512604,
+            "y": 40.62641381378819
+          }
         },
         {
           "id": "n_depth_plot",
@@ -262,7 +342,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 1800, "y": 140 }
+          "position": {
+            "x": 2175.6553494026975,
+            "y": 166.7667285954731
+          }
         },
         {
           "id": "n_driver_gate",
@@ -270,12 +353,27 @@
           "config": {
             "label": "剧情驱动者",
             "options": [
-              { "key": "user", "label": "玩家主导", "description": "NPC被动反应，等待玩家指令" },
-              { "key": "npc", "label": "环境/NPC主导", "description": "NPC主动推进，抛出事件" },
-              { "key": "balanced", "label": "均衡推演", "description": "双方互相作用" }
+              {
+                "key": "user",
+                "label": "玩家主导",
+                "description": "NPC被动反应，等待玩家指令"
+              },
+              {
+                "key": "npc",
+                "label": "环境/NPC主导",
+                "description": "NPC主动推进，抛出事件"
+              },
+              {
+                "key": "balanced",
+                "label": "均衡推演",
+                "description": "双方互相作用"
+              }
             ]
           },
-          "position": { "x": 2020, "y": 20 }
+          "position": {
+            "x": 2420,
+            "y": 20
+          }
         },
         {
           "id": "n_driver_user",
@@ -292,7 +390,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 2240, "y": -140 }
+          "position": {
+            "x": 2660,
+            "y": 20
+          }
         },
         {
           "id": "n_driver_npc",
@@ -309,7 +410,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 2240, "y": 0 }
+          "position": {
+            "x": 2660,
+            "y": 220
+          }
         },
         {
           "id": "n_driver_balanced",
@@ -326,7 +430,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 2240, "y": 140 }
+          "position": {
+            "x": 2660,
+            "y": 420
+          }
         },
         {
           "id": "n_status_gate",
@@ -334,11 +441,22 @@
           "config": {
             "label": "状态系统 (可选)",
             "options": [
-              { "key": "status_bar", "label": "角色状态栏", "description": "读取上一轮状态并约束反应档位" },
-              { "key": "todo_list", "label": "待办事项", "description": "读取上一轮待办并逐轮推进" }
+              {
+                "key": "status_bar",
+                "label": "角色状态栏",
+                "description": "读取上一轮状态并约束反应档位"
+              },
+              {
+                "key": "todo_list",
+                "label": "待办事项",
+                "description": "读取上一轮待办并逐轮推进"
+              }
             ]
           },
-          "position": { "x": 2460, "y": 20 }
+          "position": {
+            "x": 5300,
+            "y": 20
+          }
         },
         {
           "id": "n_status_read",
@@ -356,25 +474,39 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 2680, "y": -60 }
+          "position": {
+            "x": 5540,
+            "y": 20
+          }
         },
         {
           "id": "n_schema_status",
+          "position": {
+            "x": 5780,
+            "y": 20
+          },
           "type": "schema_field",
           "config": {
             "field_name": "status_bar",
             "field_type": "object",
             "description": "角色状态栏（object，键为角色名，值为状态摘要字符串）。格式：「情绪…｜体力…｜理智…」，可附关系/事件进度。每名在场角色一条，无变化的条目沿用上一轮原文；更新值必须与本轮思考中的预判一致，禁止凭空跳变。仅包含本轮在场（或本轮入/离场）的角色，不新增未出场角色。",
-            "sub_schema": { "additionalProperties": { "type": "string" } },
+            "sub_schema": {
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
             "db_mapping": null,
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": false, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": false,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": 2
-          },
-          "position": { "x": 2900, "y": -60 }
+            "order": 3
+          }
         },
         {
           "id": "n_todo_read",
@@ -390,25 +522,39 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 2680, "y": 60 }
+          "position": {
+            "x": 5540,
+            "y": 219.18946837234185
+          }
         },
         {
           "id": "n_schema_todo",
+          "position": {
+            "x": 5780,
+            "y": 220
+          },
           "type": "schema_field",
           "config": {
             "field_name": "todo_list",
             "field_type": "array",
             "description": "待办事项更新（字符串数组）。规则：①新增——本轮剧情产生的悬而未决之事，写成具体可执行的一条（如「查明柜台后那个上锁的抽屉」）；②推进——更新已推进事项的表述，反映最新进度；③移除——已完成事项直接删除，不再输出；④每条必须具体可执行，禁止空泛条目（如「继续调查」）；⑤未完成的顺延。",
-            "sub_schema": { "items": { "type": "string" } },
+            "sub_schema": {
+              "items": {
+                "type": "string"
+              }
+            },
             "db_mapping": null,
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": true, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": true,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": 3
-          },
-          "position": { "x": 2900, "y": 60 }
+            "order": 4
+          }
         },
         {
           "id": "n_infer_gate",
@@ -416,12 +562,27 @@
           "config": {
             "label": "推演深度",
             "options": [
-              { "key": "quick", "label": "快速推演", "description": "只排主反应，快速成文" },
-              { "key": "standard", "label": "标准推演", "description": "逐角色反应+清单排序" },
-              { "key": "deep", "label": "深度推演", "description": "逐角色全维度+身体细节+依据标注" }
+              {
+                "key": "quick",
+                "label": "快速推演",
+                "description": "只排主反应，快速成文"
+              },
+              {
+                "key": "standard",
+                "label": "标准推演",
+                "description": "逐角色反应+清单排序"
+              },
+              {
+                "key": "deep",
+                "label": "深度推演",
+                "description": "逐角色全维度+身体细节+依据标注"
+              }
             ]
           },
-          "position": { "x": 3120, "y": 20 }
+          "position": {
+            "x": 2900,
+            "y": 20
+          }
         },
         {
           "id": "n_infer_quick",
@@ -440,7 +601,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3340, "y": -140 }
+          "position": {
+            "x": 3140,
+            "y": 20
+          }
         },
         {
           "id": "n_infer_standard",
@@ -460,7 +624,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3340, "y": 0 }
+          "position": {
+            "x": 3140,
+            "y": 220
+          }
         },
         {
           "id": "n_infer_deep",
@@ -485,7 +652,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3340, "y": 140 }
+          "position": {
+            "x": 3140,
+            "y": 420
+          }
         },
         {
           "id": "n_proxy_gate",
@@ -493,13 +663,32 @@
           "config": {
             "label": "代理模式 (玩家主权)",
             "options": [
-              { "key": "none", "label": "全禁言 (不代)", "description": "严禁替玩家说任何话做任何动作" },
-              { "key": "action", "label": "可代行动 (不代话)", "description": "延续玩家的动作，但不生造对白" },
-              { "key": "restate", "label": "扩写推演", "description": "将玩家简单的动作扩写为丰满的细节" },
-              { "key": "full", "label": "全代言 (双向推演)", "description": "自动推演玩家的话，形成完整一来一回" }
+              {
+                "key": "none",
+                "label": "全禁言 (不代)",
+                "description": "严禁替玩家说任何话做任何动作"
+              },
+              {
+                "key": "action",
+                "label": "可代行动 (不代话)",
+                "description": "延续玩家的动作，但不生造对白"
+              },
+              {
+                "key": "restate",
+                "label": "扩写推演",
+                "description": "将玩家简单的动作扩写为丰满的细节"
+              },
+              {
+                "key": "full",
+                "label": "全代言 (双向推演)",
+                "description": "自动推演玩家的话，形成完整一来一回"
+              }
             ]
           },
-          "position": { "x": 3560, "y": 20 }
+          "position": {
+            "x": 3380,
+            "y": 20
+          }
         },
         {
           "id": "n_proxy_none",
@@ -516,7 +705,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3780, "y": -180 }
+          "position": {
+            "x": 3620,
+            "y": 20
+          }
         },
         {
           "id": "n_proxy_action",
@@ -533,7 +725,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3780, "y": -60 }
+          "position": {
+            "x": 3620,
+            "y": 220
+          }
         },
         {
           "id": "n_proxy_restate",
@@ -550,7 +745,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3780, "y": 60 }
+          "position": {
+            "x": 3620,
+            "y": 420
+          }
         },
         {
           "id": "n_proxy_full",
@@ -567,7 +765,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 3780, "y": 180 }
+          "position": {
+            "x": 3620,
+            "y": 620
+          }
         },
         {
           "id": "n_res_gate",
@@ -575,12 +776,27 @@
           "config": {
             "label": "世界阻力与随机事件",
             "options": [
-              { "key": "low", "label": "岁月静好", "description": "无恶性事件，万事顺利" },
-              { "key": "medium", "label": "暗流涌动", "description": "偶尔波折，小概率意外" },
-              { "key": "high", "label": "命运无常 (高难)", "description": "极高不可控事件，NPC常有异议" }
+              {
+                "key": "low",
+                "label": "岁月静好",
+                "description": "无恶性事件，万事顺利"
+              },
+              {
+                "key": "medium",
+                "label": "暗流涌动",
+                "description": "偶尔波折，小概率意外"
+              },
+              {
+                "key": "high",
+                "label": "命运无常 (高难)",
+                "description": "极高不可控事件，NPC常有异议"
+              }
             ]
           },
-          "position": { "x": 4000, "y": 20 }
+          "position": {
+            "x": 3860,
+            "y": 20
+          }
         },
         {
           "id": "n_res_low",
@@ -597,7 +813,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 4220, "y": -80 }
+          "position": {
+            "x": 4159.584299154006,
+            "y": -72.47980711594994
+          }
         },
         {
           "id": "n_res_medium",
@@ -614,7 +833,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 4220, "y": 60 }
+          "position": {
+            "x": 4163.3083178511315,
+            "y": 56.76386605067543
+          }
         },
         {
           "id": "n_res_high",
@@ -631,7 +853,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 4220, "y": 200 }
+          "position": {
+            "x": 4168.273600348612,
+            "y": 190.97290695080395
+          }
         },
         {
           "id": "n_cot_check",
@@ -652,7 +877,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 4440, "y": 20 }
+          "position": {
+            "x": 4416.299267895794,
+            "y": 41.1538947481636
+          }
         },
         {
           "id": "n_native_total",
@@ -662,8 +890,8 @@
             "block_type": "system",
             "content": [
               "【原生思维链 · 模式总纲】",
-              "思考由模型在原生思考通道中自主完成，不按工位步骤书写思考过程。",
-              "thinking 字段：仅写一行核心判断结论——本轮关键决策要点与反应清单摘要；思考全过程不写入该字段。",
+              "思考由模型在原生思考通道中自主完成，按后续要求步骤进行思考。",
+              "",
               "正文：完全按正文各工位指令执行（视角/文风/镜头/让渡/字数/边界/合规），工位间冲突取更靠后的指令为准。",
               "反思：若正文落笔时发现思考结论不足以支撑当前段落，先回到思考修正结论，再继续正文；禁止带着已知问题输出。"
             ],
@@ -671,27 +899,21 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6200, "y": -220 }
-        },
-        {
-          "id": "n_sampler_native",
-          "type": "sampling_params_anthropic",
-          "config": {
-            "temperature": null,
-            "max_tokens": null,
-            "top_p": null,
-            "stop": null,
-            "thinking_enabled": true,
-            "thinking_budget_tokens": 8192,
-            "is_locked": false
-          },
-          "position": { "x": 6440, "y": -220 }
+          "position": {
+            "x": 1221.0527808818465,
+            "y": -48.47726672099979
+          }
         },
         {
           "id": "n_mode_switch",
           "type": "mode_switch",
-          "config": { "label": "记忆模式分支" },
-          "position": { "x": 4660, "y": 20 }
+          "config": {
+            "label": "记忆模式分支"
+          },
+          "position": {
+            "x": 4612.575085275854,
+            "y": 189.50029600384735
+          }
         },
         {
           "id": "n_legacy_group",
@@ -699,32 +921,58 @@
           "config": {
             "label": "Legacy 特权 (动态 Schema)",
             "options": [
-              { "key": "world_var", "label": "更新世界变量", "description": "输出 Schema 记录重大状态" },
-              { "key": "summary", "label": "更新剧情总结", "description": "输出 Schema 记录本轮进展" }
+              {
+                "key": "world_var",
+                "label": "更新世界变量",
+                "description": "输出 Schema 记录重大状态"
+              },
+              {
+                "key": "summary",
+                "label": "更新剧情总结",
+                "description": "输出 Schema 记录本轮进展"
+              }
             ]
           },
-          "position": { "x": 4880, "y": -120 }
+          "position": {
+            "x": 4828.915625291873,
+            "y": 45.12573841617947
+          }
         },
         {
           "id": "n_schema_world_vars",
+          "position": {
+            "x": 5063.779286681922,
+            "y": -75.9122455121441
+          },
           "type": "schema_field",
           "config": {
             "field_name": "world_variables",
             "field_type": "object",
             "description": "全局世界变量更新（JSON字典：键为变量名，值为本轮新状态）。只记录发生变化的变量；无变化输出空对象。",
-            "sub_schema": { "additionalProperties": { "type": "string" } },
+            "sub_schema": {
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
             "db_mapping": "world_variables",
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": false, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": false,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": 5
-          },
-          "position": { "x": 5100, "y": -200 }
+            "order": 6
+          }
         },
         {
           "id": "n_schema_summary",
+          "position": {
+            "x": 5060.810605831781,
+            "y": 220
+          },
           "type": "schema_field",
           "config": {
             "field_name": "plot_summary",
@@ -734,12 +982,15 @@
             "db_mapping": "plot_summary",
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": false, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": false,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": 6
-          },
-          "position": { "x": 5100, "y": -80 }
+            "order": 7
+          }
         },
         {
           "id": "n_persp_gate",
@@ -747,12 +998,27 @@
           "config": {
             "label": "叙事视角",
             "options": [
-              { "key": "first", "label": "第一人称 (主观)", "description": "以主观视角体验，带有局限性" },
-              { "key": "third_close", "label": "第三人称 (贴背)", "description": "以角色为中心，近距离跟随" },
-              { "key": "third_god", "label": "第三人称 (全知)", "description": "上帝视角，知晓一切角落" }
+              {
+                "key": "first",
+                "label": "第一人称 (主观)",
+                "description": "以主观视角体验，带有局限性"
+              },
+              {
+                "key": "third_close",
+                "label": "第三人称 (贴背)",
+                "description": "以角色为中心，近距离跟随"
+              },
+              {
+                "key": "third_god",
+                "label": "第三人称 (全知)",
+                "description": "上帝视角，知晓一切角落"
+              }
             ]
           },
-          "position": { "x": 5320, "y": 20 }
+          "position": {
+            "x": 6020,
+            "y": 20
+          }
         },
         {
           "id": "n_persp_first",
@@ -769,7 +1035,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5540, "y": -80 }
+          "position": {
+            "x": 6260,
+            "y": 20
+          }
         },
         {
           "id": "n_persp_third",
@@ -786,7 +1055,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5540, "y": 60 }
+          "position": {
+            "x": 6260,
+            "y": 220
+          }
         },
         {
           "id": "n_persp_god",
@@ -803,7 +1075,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5540, "y": 200 }
+          "position": {
+            "x": 6260,
+            "y": 420
+          }
         },
         {
           "id": "n_prose_gate",
@@ -811,12 +1086,27 @@
           "config": {
             "label": "修辞与文风",
             "options": [
-              { "key": "plain", "label": "平实白描", "description": "不加修饰，所见即所得" },
-              { "key": "literary", "label": "文学质感", "description": "运用隐喻，注重情绪共鸣" },
-              { "key": "cinematic", "label": "电影镜头", "description": "注重画面感，蒙太奇剪辑" }
+              {
+                "key": "plain",
+                "label": "平实白描",
+                "description": "不加修饰，所见即所得"
+              },
+              {
+                "key": "literary",
+                "label": "文学质感",
+                "description": "运用隐喻，注重情绪共鸣"
+              },
+              {
+                "key": "cinematic",
+                "label": "电影镜头",
+                "description": "注重画面感，蒙太奇剪辑"
+              }
             ]
           },
-          "position": { "x": 5760, "y": 20 }
+          "position": {
+            "x": 6500,
+            "y": 20
+          }
         },
         {
           "id": "n_prose_plain",
@@ -833,7 +1123,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5980, "y": -80 }
+          "position": {
+            "x": 6740,
+            "y": 20
+          }
         },
         {
           "id": "n_prose_literary",
@@ -850,7 +1143,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5980, "y": 60 }
+          "position": {
+            "x": 6740,
+            "y": 220
+          }
         },
         {
           "id": "n_prose_cinematic",
@@ -867,7 +1163,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 5980, "y": 200 }
+          "position": {
+            "x": 6740,
+            "y": 420
+          }
         },
         {
           "id": "n_compliance_gate",
@@ -875,13 +1174,32 @@
           "config": {
             "label": "合规强化 (可选)",
             "options": [
-              { "key": "deeu", "label": "去欧化", "description": "清除翻译腔与欧化句式" },
-              { "key": "anticli", "label": "反套话", "description": "禁用高频AI八股短语" },
-              { "key": "noai", "label": "禁AI腔", "description": "杜绝模型惯用表述模式" },
-              { "key": "osquota", "label": "内心戏配额", "description": "内心描写配额化，*包裹*" }
+              {
+                "key": "deeu",
+                "label": "去欧化",
+                "description": "清除翻译腔与欧化句式"
+              },
+              {
+                "key": "anticli",
+                "label": "反套话",
+                "description": "禁用高频AI八股短语"
+              },
+              {
+                "key": "noai",
+                "label": "禁AI腔",
+                "description": "杜绝模型惯用表述模式"
+              },
+              {
+                "key": "osquota",
+                "label": "内心戏配额",
+                "description": "内心描写配额化，*包裹*"
+              }
             ]
           },
-          "position": { "x": 6200, "y": 20 }
+          "position": {
+            "x": 6980,
+            "y": 20
+          }
         },
         {
           "id": "n_deeu",
@@ -902,7 +1220,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6420, "y": -180 }
+          "position": {
+            "x": 7220,
+            "y": 20
+          }
         },
         {
           "id": "n_anticli",
@@ -921,7 +1242,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6420, "y": -60 }
+          "position": {
+            "x": 7220,
+            "y": 220
+          }
         },
         {
           "id": "n_noai",
@@ -942,7 +1266,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6420, "y": 60 }
+          "position": {
+            "x": 7220,
+            "y": 420
+          }
         },
         {
           "id": "n_osquota",
@@ -960,7 +1287,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6420, "y": 180 }
+          "position": {
+            "x": 7220,
+            "y": 620
+          }
         },
         {
           "id": "n_shot_gate",
@@ -968,12 +1298,27 @@
           "config": {
             "label": "镜头结构",
             "options": [
-              { "key": "three_beat", "label": "三拍焦点式", "description": "玩家言行→角色反应→条件性场景" },
-              { "key": "flow", "label": "顺叙流", "description": "去镜头约束，自然时间序" },
-              { "key": "module", "label": "模块化剧情", "description": "3+1模块轮转，禁与上次同构" }
+              {
+                "key": "three_beat",
+                "label": "三拍焦点式",
+                "description": "玩家言行→角色反应→条件性场景"
+              },
+              {
+                "key": "flow",
+                "label": "顺叙流",
+                "description": "去镜头约束，自然时间序"
+              },
+              {
+                "key": "module",
+                "label": "模块化剧情",
+                "description": "3+1模块轮转，禁与上次同构"
+              }
             ]
           },
-          "position": { "x": 6640, "y": 20 }
+          "position": {
+            "x": 7460,
+            "y": 20
+          }
         },
         {
           "id": "n_shot_three",
@@ -992,7 +1337,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6860, "y": -100 }
+          "position": {
+            "x": 7700,
+            "y": 20
+          }
         },
         {
           "id": "n_shot_flow",
@@ -1010,7 +1358,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6860, "y": 20 }
+          "position": {
+            "x": 7698.722866339379,
+            "y": 220
+          }
         },
         {
           "id": "n_shot_module",
@@ -1032,7 +1383,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 6860, "y": 140 }
+          "position": {
+            "x": 7700,
+            "y": 420
+          }
         },
         {
           "id": "n_yoke_gate",
@@ -1040,12 +1394,27 @@
           "config": {
             "label": "视角让渡",
             "options": [
-              { "key": "lock", "label": "锁定焦点", "description": "镜头只给反应清单内的角色" },
-              { "key": "scene", "label": "在场让渡", "description": "非焦点在场角色可短暂抢镜" },
-              { "key": "world", "label": "全域让渡", "description": "含世界书场外角色主动入场" }
+              {
+                "key": "lock",
+                "label": "锁定焦点",
+                "description": "镜头只给反应清单内的角色"
+              },
+              {
+                "key": "scene",
+                "label": "在场让渡",
+                "description": "非焦点在场角色可短暂抢镜"
+              },
+              {
+                "key": "world",
+                "label": "全域让渡",
+                "description": "含世界书场外角色主动入场"
+              }
             ]
           },
-          "position": { "x": 7080, "y": 20 }
+          "position": {
+            "x": 7940,
+            "y": 20
+          }
         },
         {
           "id": "n_yoke_lock",
@@ -1062,7 +1431,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7300, "y": -80 }
+          "position": {
+            "x": 8180,
+            "y": 20
+          }
         },
         {
           "id": "n_yoke_scene",
@@ -1083,7 +1455,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7300, "y": 60 }
+          "position": {
+            "x": 8180,
+            "y": 220
+          }
         },
         {
           "id": "n_yoke_world",
@@ -1103,7 +1478,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7300, "y": 200 }
+          "position": {
+            "x": 8180,
+            "y": 420
+          }
         },
         {
           "id": "n_word_gate",
@@ -1111,13 +1489,32 @@
           "config": {
             "label": "字数限制",
             "options": [
-              { "key": "short", "label": "短打 (400-800)", "description": "精简交互，快节奏" },
-              { "key": "medium", "label": "适中 (800-1500)", "description": "默认交互篇幅" },
-              { "key": "long", "label": "长篇 (1500-3000)", "description": "充分展开感官与情绪" },
-              { "key": "auto", "label": "自判 (400-3000)", "description": "先判场景档位再动笔" }
+              {
+                "key": "short",
+                "label": "短打 (400-800)",
+                "description": "精简交互，快节奏"
+              },
+              {
+                "key": "medium",
+                "label": "适中 (800-1500)",
+                "description": "默认交互篇幅"
+              },
+              {
+                "key": "long",
+                "label": "长篇 (1500-3000)",
+                "description": "充分展开感官与情绪"
+              },
+              {
+                "key": "auto",
+                "label": "自判 (400-3000)",
+                "description": "先判场景档位再动笔"
+              }
             ]
           },
-          "position": { "x": 7520, "y": 20 }
+          "position": {
+            "x": 8420,
+            "y": 20
+          }
         },
         {
           "id": "n_word_short",
@@ -1134,7 +1531,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7740, "y": -140 }
+          "position": {
+            "x": 8660,
+            "y": 20
+          }
         },
         {
           "id": "n_word_medium",
@@ -1151,7 +1551,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7740, "y": -20 }
+          "position": {
+            "x": 8660,
+            "y": 220
+          }
         },
         {
           "id": "n_word_long",
@@ -1168,7 +1571,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7740, "y": 100 }
+          "position": {
+            "x": 8660,
+            "y": 420
+          }
         },
         {
           "id": "n_word_auto",
@@ -1187,7 +1593,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 7740, "y": 220 }
+          "position": {
+            "x": 8660,
+            "y": 620
+          }
         },
         {
           "id": "n_bound_gate",
@@ -1195,12 +1604,27 @@
           "config": {
             "label": "亲密边界",
             "options": [
-              { "key": "avoid", "label": "日常边界 (回避)", "description": "专注日常，回避越界接触" },
-              { "key": "natural", "label": "情之所至 (自然)", "description": "由感情深度推动，随时可停" },
-              { "key": "direct", "label": "毫无保留 (直接)", "description": "直面生理真实与欲望" }
+              {
+                "key": "avoid",
+                "label": "日常边界 (回避)",
+                "description": "专注日常，回避越界接触"
+              },
+              {
+                "key": "natural",
+                "label": "情之所至 (自然)",
+                "description": "由感情深度推动，随时可停"
+              },
+              {
+                "key": "direct",
+                "label": "毫无保留 (直接)",
+                "description": "直面生理真实与欲望"
+              }
             ]
           },
-          "position": { "x": 7960, "y": 20 }
+          "position": {
+            "x": 8900,
+            "y": 20
+          }
         },
         {
           "id": "n_bdry_avoid",
@@ -1217,7 +1641,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 8180, "y": -80 }
+          "position": {
+            "x": 9140,
+            "y": 20
+          }
         },
         {
           "id": "n_bdry_natural",
@@ -1234,7 +1661,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 8180, "y": 60 }
+          "position": {
+            "x": 9140,
+            "y": 220
+          }
         },
         {
           "id": "n_bdry_direct",
@@ -1251,7 +1681,10 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 8180, "y": 200 }
+          "position": {
+            "x": 9140,
+            "y": 420
+          }
         },
         {
           "id": "n_extra_gate",
@@ -1259,11 +1692,22 @@
           "config": {
             "label": "可选产物 (可选)",
             "options": [
-              { "key": "parallel", "label": "平行线", "description": "末尾独立段落描述另一端" },
-              { "key": "options", "label": "推演路标", "description": "提供玩家下一步可点击选项" }
+              {
+                "key": "parallel",
+                "label": "平行线",
+                "description": "末尾独立段落描述另一端"
+              },
+              {
+                "key": "options",
+                "label": "推演路标",
+                "description": "提供玩家下一步可点击选项"
+              }
             ]
           },
-          "position": { "x": 8400, "y": 20 }
+          "position": {
+            "x": 9374.322077345112,
+            "y": 105.16883982332544
+          }
         },
         {
           "id": "n_mod_parallel",
@@ -1281,25 +1725,39 @@
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 8620, "y": -60 }
+          "position": {
+            "x": 9620,
+            "y": 20
+          }
         },
         {
           "id": "n_options_schema",
+          "position": {
+            "x": 9620,
+            "y": 220
+          },
           "type": "schema_field",
           "config": {
             "field_name": "options",
             "field_type": "array",
             "description": "推演路标（字符串数组，4条）：为玩家提供下一步行动选项。规则：①风格多样——推进、转折、风险、日常各占其一为宜，最多1个负面选项；②只写玩家角色的行动，禁止写其他角色的行动；③每条具体可执行、作为玩家的行动参考，禁止空泛（如「继续对话」不合格，「向林掌柜追问断货原因」合格）；④选项不得替玩家预设结果，只给行动起点。",
-            "sub_schema": { "items": { "type": "string" } },
+            "sub_schema": {
+              "items": {
+                "type": "string"
+              }
+            },
             "db_mapping": null,
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": true, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": true,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": 4
-          },
-          "position": { "x": 8620, "y": 60 }
+            "order": 5
+          }
         },
         {
           "id": "n_output_rules",
@@ -1309,19 +1767,26 @@
             "block_type": "system",
             "content": [
               "【通用纪律 · 收口】",
-              "1. 对白用「」或 “” 包裹；段落1-3句，每段一个完整节拍（动作、对白、感官观察三选一）。",
+              "1. 对白用「」或 “” 包裹；段落1-3句，每段一个完整节拍（动作、对白、感官观察三选一），保持良好的人类可读结构，有必要时使用\"\\n\\n\"或\"\\n\"分段以保持人类可读性。",
               "2. 气口留白：正文结尾必须留有余地，给玩家反应的空间；禁止以总结句、抒情句或预告句收尾。",
               "3. 严禁破壳：绝不以AI口吻说话，不解释自己的写作选择，不跳出叙事。",
-              "4. 输出契约：正文写入 text 字段，思考写入 thinking 字段，其余字段按各自描述执行；整个回复是一个JSON对象，不输出任何JSON以外的文本。"
+              ""
             ],
             "priority": 58,
             "is_locked": false,
             "lock_reason": null
           },
-          "position": { "x": 8840, "y": 20 }
+          "position": {
+            "x": 9903.931725452125,
+            "y": 22.978446328700404
+          }
         },
         {
           "id": "n_thinking_schema",
+          "position": {
+            "x": 1303.093359383573,
+            "y": 280.75975870570306
+          },
           "type": "schema_field",
           "config": {
             "field_name": "thinking",
@@ -1331,15 +1796,22 @@
             "db_mapping": null,
             "required": true,
             "context_included": false,
-            "display": { "default_expanded": true, "hide_label": false, "body": false },
+            "display": {
+              "default_expanded": true,
+              "hide_label": false,
+              "body": false
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": -2
-          },
-          "position": { "x": 9060, "y": 20 }
+            "order": 1
+          }
         },
         {
           "id": "n_schema_text",
+          "position": {
+            "x": 10340,
+            "y": 20
+          },
           "type": "schema_field",
           "config": {
             "field_name": "text",
@@ -1349,154 +1821,1718 @@
             "db_mapping": null,
             "required": true,
             "context_included": true,
-            "display": { "default_expanded": true, "hide_label": true, "body": true },
+            "display": {
+              "default_expanded": true,
+              "hide_label": true,
+              "body": true
+            },
             "is_locked": false,
             "lock_reason": null,
-            "order": -1
-          },
-          "position": { "x": 9280, "y": 20 }
-        },
-        {
-          "id": "n_params",
-          "type": "sampling_params",
-          "config": {
-            "temperature": 0.9,
-            "max_tokens": 16384,
-            "top_p": 0.95,
-            "frequency_penalty": 0.3,
-            "presence_penalty": 0.15,
-            "stop": null,
-            "thinking_enabled": null,
-            "thinking_budget_tokens": null,
-            "is_locked": false
-          },
-          "position": { "x": 9500, "y": 20 }
+            "order": 2
+          }
         },
         {
           "type": "end",
           "id": "n_end",
-          "position": { "x": 9720, "y": 20 }
+          "position": {
+            "x": 11565.89452420448,
+            "y": 21.85782665128676
+          }
+        },
+        {
+          "id": "n_branch_1_z382",
+          "type": "branch",
+          "config": {
+            "label": "角色分支",
+            "cases": [
+              {
+                "match_value": "chat_completions",
+                "port": "chat_completions"
+              },
+              {
+                "match_value": "anthropic",
+                "port": "anthropic"
+              }
+            ],
+            "default_port": "chat_completions"
+          },
+          "position": {
+            "x": 10816.153478427264,
+            "y": 18.745466615221577
+          }
+        },
+        {
+          "id": "n_constant_2_z7u2",
+          "type": "constant",
+          "config": {
+            "label": "会话角色",
+            "source": "protocol"
+          },
+          "position": {
+            "x": 10504.560615630708,
+            "y": 156.50069453424751
+          }
+        },
+        {
+          "id": "n_sampling_params_openai_1_n2eq",
+          "type": "sampling_params_openai",
+          "config": {
+            "temperature": 1,
+            "max_tokens": null,
+            "top_p": 0.95,
+            "frequency_penalty": 0.15,
+            "presence_penalty": 0.15,
+            "stop": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 11187.556472827786,
+            "y": -84.83655068910357
+          }
+        },
+        {
+          "id": "n_sampling_params_anthropic_2_n4i5",
+          "type": "sampling_params_anthropic",
+          "config": {
+            "temperature": 1,
+            "max_tokens": 32678,
+            "top_p": 0.95,
+            "stop": null,
+            "thinking_enabled": true,
+            "thinking_budget_tokens": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 11179.328558303578,
+            "y": 89.84799375186691
+          }
+        },
+        {
+          "id": "n_ui_layout_hud",
+          "type": "ui_layout_config",
+          "config": {
+            "layout_id": "xuanqing_persistent_hud",
+            "mount_type": "RightDock",
+            "is_locked": false
+          },
+          "position": {
+            "x": 380,
+            "y": 20
+          }
+        },
+        {
+          "id": "n_agent_gate",
+          "type": "mutex_gate",
+          "config": {
+            "label": "智能体架构与协同模式",
+            "options": [
+              {
+                "key": "single",
+                "label": "单智能体直出 (标准)",
+                "description": "单一叙事引擎宏微观一体推进，平衡兼顾场景与人物"
+              },
+              {
+                "key": "director_actor",
+                "label": "导演-演员双 Agent (分工演出)",
+                "description": "导演负责场景裁剪与槽位拼装，演员聚焦局部沉浸演出无上帝视角"
+              },
+              {
+                "key": "scriptwriter",
+                "label": "剧本流水线双 Agent (接力精修)",
+                "description": "初稿起笔(Drafter) -> 审阅批注(Critic) -> 终稿润色(Refiner) + 锚点涂黑"
+              }
+            ]
+          },
+          "position": {
+            "x": 3860,
+            "y": 20
+          }
+        },
+        {
+          "id": "n_agent_single",
+          "type": "prompt",
+          "config": {
+            "identifier": "agent_single",
+            "block_type": "system",
+            "content": [
+              "【Agent 架构 · 单智能体直出】",
+              "单一模型作为核心叙事引擎，统一推进剧情演进与角色反应。",
+              "兼顾宏观环境调度与微观角色心理，在单次生成中直接贯彻清点、推演与镜头纪律，平稳输出叙事正文与槽位内容。"
+            ],
+            "priority": 83,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": {
+            "x": 4100,
+            "y": -60
+          }
+        },
+        {
+          "id": "n_agent_director_actor",
+          "type": "prompt",
+          "config": {
+            "identifier": "agent_director_actor",
+            "block_type": "system",
+            "content": [
+              "【Agent 架构 · 导演-演员双智能体模式】",
+              "1. 角色职责与视界物理隔离：",
+              "   - 导演 Agent（Director）：全局俯瞰场景物理状态、掌控剧情张力与节奏、裁定本轮登场角色，并执行视界裁剪（Context Pruning）向演员下发即时情境纸条；",
+              "   - 演员 Agent（Actor）：仅获取局部视界与该角色专属人设卡。严禁上帝视角（No God View），不许知晓剧本场外秘密或他人内心，以第一人称/近景演出提交该角色的本能反应与台词（task_return）。",
+              "2. 结构化槽位合成（Slot Assembly）：",
+              "   - 终稿严格按照三层槽位装配：【开场空间锚点与环境异动】+【各演员独立演出对白与肢体微反应】+【剧情局势推进与交还玩家行动权】；",
+              "   - 禁止把多位演员的反应含糊合并，确保每个角色拥有独立的人物呼吸感与因果逻辑。"
+            ],
+            "priority": 83,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": {
+            "x": 4100,
+            "y": 140
+          }
+        },
+        {
+          "id": "n_agent_scriptwriter",
+          "type": "prompt",
+          "config": {
+            "identifier": "agent_scriptwriter",
+            "block_type": "system",
+            "content": [
+              "【Agent 架构 · 剧本流水线接力模式】",
+              "1. 初稿起笔（Drafter）：承接上轮落点，迅速铺开情节冲突与动态交互，快速生成故事主干与粗胚对白，通过 write_text 工具将初稿存入工作区变量 draft。",
+              "2. 审阅批注（Critic）：针对 draft 执行严格质检——挑出 AI 八股套话（「一丝」「一抹」「空气凝固」）、逻辑脱节、破壳出戏与人设崩塌点，通过 write_text 工具将改写要求写入 critique。",
+              "3. 终稿润色（Refiner）：调用 read_text 提取 draft 与 critique；激活 Layer 1 锚点涂黑防复读机制（锁定前文稳定背景，仅保留末尾 50 字作为续写尾锚），综合批注意见重塑文学质感，产出最终正文。"
+            ],
+            "priority": 83,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": {
+            "x": 4100,
+            "y": 340
+          }
+        },
+        {
+          "id": "n_rpg_engine_gate",
+          "type": "group_gate",
+          "config": {
+            "label": "跑团规则与工具链引擎 (可选)",
+            "options": [
+              {
+                "key": "inventory_trade",
+                "label": "背包与交易契约 (Inventory & Trade)",
+                "description": "启用 check_inventory, buy_item, use_item, inspect_item 及金币/超重原子门禁"
+              },
+              {
+                "key": "stats_calc",
+                "label": "角色状态与检定 (Stats & Condition)",
+                "description": "启用 get_player_stats 及确定性属性恢复与算术运算器"
+              },
+              {
+                "key": "workspace_agent",
+                "label": "双Agent文本工作区 (Text Workspace)",
+                "description": "启用 read_text 与 write_text 工具供多智能体草稿接力与批注"
+              },
+              {
+                "key": "schema_invoke",
+                "label": "独立Schema规范调用 (InvokeSchema)",
+                "description": "调用独立 Schema 资产规范正文与三窗口数据结构化输出"
+              }
+            ]
+          },
+          "position": {
+            "x": 4550,
+            "y": 20
+          }
+        },
+        {
+          "id": "n_inv_rules",
+          "type": "prompt",
+          "config": {
+            "identifier": "inventory_rules",
+            "block_type": "system",
+            "content": [
+              "【背包窗口 · 道具交互与负重物理法则】",
+              "玩家当前所持道具与背包负重受物理法则严格约束。",
+              "道具消耗必须真实扣减并清理空槽位；拾取与购买物品严格受最大负重限制，超重时行动受阻。",
+              "交易时严禁凭空生造道具，必须经过后端原子门禁检定通过方可生效。"
+            ],
+            "priority": 85,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": {
+            "x": 4800,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_tool_check_inv",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "check_inventory",
+            "description": "查看玩家当前背包中的物品清单、道具数量、单件重量以及当前总负重与金币余额。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{}}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5040,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_tool_buy_item",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "buy_item",
+            "description": "购买道具交易契约。由后端原子判定金币充足与负重上限门禁，校验通过后自动扣除金币、追加道具并原地刷新常驻 HUD。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"item_id\":{\"type\":\"string\",\"description\":\"道具唯一标识\"},\"name\":{\"type\":\"string\",\"description\":\"道具名称\"},\"count\":{\"type\":\"integer\",\"description\":\"购买数量\"},\"unit_price\":{\"type\":\"number\",\"description\":\"单价(金币)\"},\"unit_weight\":{\"type\":\"number\",\"description\":\"单重(kg)\"}},\"required\":[\"item_id\",\"unit_price\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5280,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_tool_use_item",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "use_item",
+            "description": "使用/消耗背包中的物品。若为药剂类道具自动触发生命值恢复，并扣减数量与清理空槽位。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"item_id\":{\"type\":\"string\",\"description\":\"要使用的道具ID\"},\"count\":{\"type\":\"integer\",\"description\":\"使用数量\"}},\"required\":[\"item_id\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5520,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_tool_inspect_item",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "inspect_item",
+            "description": "查看背包中指定物品的详细属性、单重与单价信息。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"item_id\":{\"type\":\"string\",\"description\":\"物品ID\"}},\"required\":[\"item_id\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5760,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_gate_gold",
+          "type": "condition_gate",
+          "config": {
+            "gate_type": "gold",
+            "expression": "50",
+            "pass_label": "金币充足",
+            "blocked_label": "金币不足",
+            "block_reason": "【门禁拦截】：玩家当前金币不足以支付交易款项，购买已被阻断！",
+            "is_locked": false
+          },
+          "position": {
+            "x": 6000,
+            "y": -160
+          }
+        },
+        {
+          "id": "n_calc_gold_deduct",
+          "type": "calculator",
+          "config": {
+            "calc_mode": "math",
+            "target": "stats.gold",
+            "op": "-",
+            "operand_a": "50",
+            "operand_b": null,
+            "item_def": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 6240,
+            "y": -220
+          }
+        },
+        {
+          "id": "n_calc_add_potion",
+          "type": "calculator",
+          "config": {
+            "calc_mode": "collection",
+            "target": "inventory",
+            "op": "add_item",
+            "operand_a": "1",
+            "operand_b": null,
+            "item_def": {
+              "id": "healing_potion",
+              "name": "微光治疗药剂",
+              "count": 1,
+              "unit_weight": 0.5,
+              "unit_price": 25.0,
+              "icon": "🧪",
+              "properties": {
+                "effect": "restore_hp_30"
+              }
+            },
+            "is_locked": false
+          },
+          "position": {
+            "x": 6480,
+            "y": -220
+          }
+        },
+        {
+          "id": "n_ret_trade_ok",
+          "type": "tool_return",
+          "config": {
+            "return_template": "【交易结算成功】：已原子扣除金币，获得物品 [微光治疗药剂] x1，负重已更新并实时广播常驻 HUD。",
+            "is_blocked": false,
+            "is_locked": false
+          },
+          "position": {
+            "x": 6720,
+            "y": -220
+          }
+        },
+        {
+          "id": "n_ret_trade_fail",
+          "type": "tool_return",
+          "config": {
+            "return_template": "【门禁阻断回执】：金币不足，交易未执行。数据容器零篡改，请基于客观事实推进剧情。",
+            "is_blocked": true,
+            "is_locked": false
+          },
+          "position": {
+            "x": 6240,
+            "y": -100
+          }
+        },
+        {
+          "id": "n_tool_get_stats",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "get_player_stats",
+            "description": "读取玩家即时基础数值属性（生命值 hp/max_hp、法力值 mp/max_mp、理智值 san/max_san、金币 gold、当前负重 weight/max_weight）。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{}}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 4800,
+            "y": 0
+          }
+        },
+        {
+          "id": "n_gate_weight",
+          "type": "condition_gate",
+          "config": {
+            "gate_type": "weight",
+            "expression": "30",
+            "pass_label": "负重合规",
+            "blocked_label": "超重拦截",
+            "block_reason": "【门禁拦截】：新增物品后总负重超出承载上限，已强制拦截！",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5040,
+            "y": 0
+          }
+        },
+        {
+          "id": "n_calc_hp_restore",
+          "type": "calculator",
+          "config": {
+            "calc_mode": "math",
+            "target": "stats.hp",
+            "op": "clamp",
+            "operand_a": "30",
+            "operand_b": "100",
+            "item_def": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 5280,
+            "y": -40
+          }
+        },
+        {
+          "id": "n_ret_weight_ok",
+          "type": "tool_return",
+          "config": {
+            "return_template": "【状态检定通过】：负重处于安全范围，角色生命值与属性校验完成。",
+            "is_blocked": false,
+            "is_locked": false
+          },
+          "position": {
+            "x": 5520,
+            "y": -40
+          }
+        },
+        {
+          "id": "n_ret_weight_fail",
+          "type": "tool_return",
+          "config": {
+            "return_template": "【负重超限拦截】：角色无法携带超重物品，数据已保持原样。",
+            "is_blocked": true,
+            "is_locked": false
+          },
+          "position": {
+            "x": 5280,
+            "y": 60
+          }
+        },
+        {
+          "id": "n_tool_read_text",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "read_text",
+            "description": "读取多智能体纯内存工作区中的共享文本变量（如 draft 初稿、critique 审阅批注、final 定稿）。回合结束自动 Drop，零磁盘 I/O。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"变量名称，如 draft 或 critique\"}},\"required\":[\"key\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 4800,
+            "y": 140
+          }
+        },
+        {
+          "id": "n_tool_write_text",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "write_text",
+            "description": "写入多智能体纯内存工作区中的共享文本变量。供 Drafter 存储初稿或 Critic 写入批注。",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"变量名称\"},\"content\":{\"type\":\"string\",\"description\":\"要存储的文本内容\"}},\"required\":[\"key\",\"content\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 5040,
+            "y": 140
+          }
+        },
+        {
+          "id": "n_invoke_schema_narrative",
+          "type": "invoke_schema",
+          "config": {
+            "schemaId": "rpg_turn_summary"
+          },
+          "position": {
+            "x": 4800,
+            "y": 240
+          }
         }
       ],
       "edges": [
-        { "id": "e_1", "source": "n_start", "source_port": "out", "target": "n_core", "target_port": "in", "order": 0 },
-        { "id": "e_2", "source": "n_core", "source_port": "out", "target": "n_branch", "target_port": "in", "order": 0 },
-        { "id": "e_3", "source": "n_const", "source_port": "out", "target": "n_branch", "target_port": "value", "order": 0 },
-        { "id": "e_4", "source": "n_branch", "source_port": "out_online", "target": "n_multi", "target_port": "in", "order": 0 },
-        { "id": "e_5", "source": "n_branch", "source_port": "out_single", "target": "n_channel_gate", "target_port": "in", "order": 0 },
-        { "id": "e_6", "source": "n_multi", "source_port": "out", "target": "n_channel_gate", "target_port": "in", "order": 0 },
-        { "id": "e_6a", "source": "n_channel_gate", "source_port": "out_schema", "target": "n_cot_head", "target_port": "in", "order": 0 },
-        { "id": "e_6b", "source": "n_channel_gate", "source_port": "out_native", "target": "n_native_total", "target_port": "in", "order": 0 },
-        { "id": "e_6c", "source": "n_native_total", "source_port": "out", "target": "n_sampler_native", "target_port": "in", "order": 0 },
-        { "id": "e_6d", "source": "n_sampler_native", "source_port": "out", "target": "n_mode_switch", "target_port": "in", "order": 0 },
-        { "id": "e_7", "source": "n_cot_head", "source_port": "out", "target": "n_census_gate", "target_port": "in", "order": 0 },
-        { "id": "e_8", "source": "n_census_gate", "source_port": "out_lite", "target": "n_census_lite", "target_port": "in", "order": 0 },
-        { "id": "e_9", "source": "n_census_gate", "source_port": "out_standard", "target": "n_census_standard", "target_port": "in", "order": 0 },
-        { "id": "e_10", "source": "n_census_gate", "source_port": "out_deep", "target": "n_census_deep", "target_port": "in", "order": 0 },
-        { "id": "e_11", "source": "n_census_lite", "source_port": "out", "target": "n_census_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_12", "source": "n_census_standard", "source_port": "out", "target": "n_census_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_13", "source": "n_census_deep", "source_port": "out", "target": "n_census_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_14", "source": "n_census_extra_gate", "source_port": "out_subtext", "target": "n_subtext", "target_port": "in", "order": 0 },
-        { "id": "e_15", "source": "n_census_extra_gate", "source_port": "out_noclub", "target": "n_noclub", "target_port": "in", "order": 0 },
-        { "id": "e_16", "source": "n_census_extra_gate", "source_port": "out_depth_plot", "target": "n_depth_plot", "target_port": "in", "order": 0 },
-        { "id": "e_17", "source": "n_subtext", "source_port": "out", "target": "n_driver_gate", "target_port": "in", "order": 0 },
-        { "id": "e_18", "source": "n_noclub", "source_port": "out", "target": "n_driver_gate", "target_port": "in", "order": 0 },
-        { "id": "e_19", "source": "n_depth_plot", "source_port": "out", "target": "n_driver_gate", "target_port": "in", "order": 0 },
-        { "id": "e_21", "source": "n_driver_gate", "source_port": "out_user", "target": "n_driver_user", "target_port": "in", "order": 0 },
-        { "id": "e_22", "source": "n_driver_gate", "source_port": "out_npc", "target": "n_driver_npc", "target_port": "in", "order": 0 },
-        { "id": "e_23", "source": "n_driver_gate", "source_port": "out_balanced", "target": "n_driver_balanced", "target_port": "in", "order": 0 },
-        { "id": "e_24", "source": "n_driver_user", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
-        { "id": "e_25", "source": "n_driver_npc", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
-        { "id": "e_26", "source": "n_driver_balanced", "source_port": "out", "target": "n_infer_gate", "target_port": "in", "order": 0 },
-        { "id": "e_34", "source": "n_infer_gate", "source_port": "out_quick", "target": "n_infer_quick", "target_port": "in", "order": 0 },
-        { "id": "e_35", "source": "n_infer_gate", "source_port": "out_standard", "target": "n_infer_standard", "target_port": "in", "order": 0 },
-        { "id": "e_36", "source": "n_infer_gate", "source_port": "out_deep", "target": "n_infer_deep", "target_port": "in", "order": 0 },
-        { "id": "e_37", "source": "n_infer_quick", "source_port": "out", "target": "n_proxy_gate", "target_port": "in", "order": 0 },
-        { "id": "e_38", "source": "n_infer_standard", "source_port": "out", "target": "n_proxy_gate", "target_port": "in", "order": 0 },
-        { "id": "e_39", "source": "n_infer_deep", "source_port": "out", "target": "n_proxy_gate", "target_port": "in", "order": 0 },
-        { "id": "e_40", "source": "n_proxy_gate", "source_port": "out_none", "target": "n_proxy_none", "target_port": "in", "order": 0 },
-        { "id": "e_41", "source": "n_proxy_gate", "source_port": "out_action", "target": "n_proxy_action", "target_port": "in", "order": 0 },
-        { "id": "e_42", "source": "n_proxy_gate", "source_port": "out_restate", "target": "n_proxy_restate", "target_port": "in", "order": 0 },
-        { "id": "e_43", "source": "n_proxy_gate", "source_port": "out_full", "target": "n_proxy_full", "target_port": "in", "order": 0 },
-        { "id": "e_44", "source": "n_proxy_none", "source_port": "out", "target": "n_res_gate", "target_port": "in", "order": 0 },
-        { "id": "e_45", "source": "n_proxy_action", "source_port": "out", "target": "n_res_gate", "target_port": "in", "order": 0 },
-        { "id": "e_46", "source": "n_proxy_restate", "source_port": "out", "target": "n_res_gate", "target_port": "in", "order": 0 },
-        { "id": "e_47", "source": "n_proxy_full", "source_port": "out", "target": "n_res_gate", "target_port": "in", "order": 0 },
-        { "id": "e_48", "source": "n_res_gate", "source_port": "out_low", "target": "n_res_low", "target_port": "in", "order": 0 },
-        { "id": "e_49", "source": "n_res_gate", "source_port": "out_medium", "target": "n_res_medium", "target_port": "in", "order": 0 },
-        { "id": "e_50", "source": "n_res_gate", "source_port": "out_high", "target": "n_res_high", "target_port": "in", "order": 0 },
-        { "id": "e_51", "source": "n_res_low", "source_port": "out", "target": "n_cot_check", "target_port": "in", "order": 0 },
-        { "id": "e_52", "source": "n_res_medium", "source_port": "out", "target": "n_cot_check", "target_port": "in", "order": 0 },
-        { "id": "e_53", "source": "n_res_high", "source_port": "out", "target": "n_cot_check", "target_port": "in", "order": 0 },
-        { "id": "e_54", "source": "n_cot_check", "source_port": "out", "target": "n_mode_switch", "target_port": "in", "order": 0 },
-        { "id": "e_55", "source": "n_mode_switch", "source_port": "out_legacy", "target": "n_legacy_group", "target_port": "in", "order": 0 },
-        { "id": "e_56", "source": "n_mode_switch", "source_port": "out_mem0", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_57", "source": "n_mode_switch", "source_port": "out_stateless", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_58", "source": "n_legacy_group", "source_port": "out_world_var", "target": "n_schema_world_vars", "target_port": "in", "order": 0 },
-        { "id": "e_59", "source": "n_legacy_group", "source_port": "out_summary", "target": "n_schema_summary", "target_port": "in", "order": 0 },
-        { "id": "e_60", "source": "n_schema_world_vars", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_61", "source": "n_schema_summary", "source_port": "out", "target": "n_status_gate", "target_port": "in", "order": 0 },
-        { "id": "e_61a", "source": "n_status_gate", "source_port": "out_status_bar", "target": "n_status_read", "target_port": "in", "order": 0 },
-        { "id": "e_61b", "source": "n_status_gate", "source_port": "out_todo_list", "target": "n_todo_read", "target_port": "in", "order": 0 },
-        { "id": "e_61c", "source": "n_status_read", "source_port": "out", "target": "n_schema_status", "target_port": "in", "order": 0 },
-        { "id": "e_61d", "source": "n_todo_read", "source_port": "out", "target": "n_schema_todo", "target_port": "in", "order": 0 },
-        { "id": "e_61e", "source": "n_schema_status", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
-        { "id": "e_61f", "source": "n_schema_todo", "source_port": "out", "target": "n_persp_gate", "target_port": "in", "order": 0 },
-        { "id": "e_63", "source": "n_persp_gate", "source_port": "out_first", "target": "n_persp_first", "target_port": "in", "order": 0 },
-        { "id": "e_64", "source": "n_persp_gate", "source_port": "out_third_close", "target": "n_persp_third", "target_port": "in", "order": 0 },
-        { "id": "e_65", "source": "n_persp_gate", "source_port": "out_third_god", "target": "n_persp_god", "target_port": "in", "order": 0 },
-        { "id": "e_66", "source": "n_persp_first", "source_port": "out", "target": "n_prose_gate", "target_port": "in", "order": 0 },
-        { "id": "e_67", "source": "n_persp_third", "source_port": "out", "target": "n_prose_gate", "target_port": "in", "order": 0 },
-        { "id": "e_68", "source": "n_persp_god", "source_port": "out", "target": "n_prose_gate", "target_port": "in", "order": 0 },
-        { "id": "e_69", "source": "n_prose_gate", "source_port": "out_plain", "target": "n_prose_plain", "target_port": "in", "order": 0 },
-        { "id": "e_70", "source": "n_prose_gate", "source_port": "out_literary", "target": "n_prose_literary", "target_port": "in", "order": 0 },
-        { "id": "e_71", "source": "n_prose_gate", "source_port": "out_cinematic", "target": "n_prose_cinematic", "target_port": "in", "order": 0 },
-        { "id": "e_72", "source": "n_prose_plain", "source_port": "out", "target": "n_compliance_gate", "target_port": "in", "order": 0 },
-        { "id": "e_73", "source": "n_prose_literary", "source_port": "out", "target": "n_compliance_gate", "target_port": "in", "order": 0 },
-        { "id": "e_74", "source": "n_prose_cinematic", "source_port": "out", "target": "n_compliance_gate", "target_port": "in", "order": 0 },
-        { "id": "e_75", "source": "n_compliance_gate", "source_port": "out_deeu", "target": "n_deeu", "target_port": "in", "order": 0 },
-        { "id": "e_76", "source": "n_compliance_gate", "source_port": "out_anticli", "target": "n_anticli", "target_port": "in", "order": 0 },
-        { "id": "e_77", "source": "n_compliance_gate", "source_port": "out_noai", "target": "n_noai", "target_port": "in", "order": 0 },
-        { "id": "e_78", "source": "n_compliance_gate", "source_port": "out_osquota", "target": "n_osquota", "target_port": "in", "order": 0 },
-        { "id": "e_79", "source": "n_deeu", "source_port": "out", "target": "n_shot_gate", "target_port": "in", "order": 0 },
-        { "id": "e_80", "source": "n_anticli", "source_port": "out", "target": "n_shot_gate", "target_port": "in", "order": 0 },
-        { "id": "e_81", "source": "n_noai", "source_port": "out", "target": "n_shot_gate", "target_port": "in", "order": 0 },
-        { "id": "e_82", "source": "n_osquota", "source_port": "out", "target": "n_shot_gate", "target_port": "in", "order": 0 },
-        { "id": "e_84", "source": "n_shot_gate", "source_port": "out_three_beat", "target": "n_shot_three", "target_port": "in", "order": 0 },
-        { "id": "e_85", "source": "n_shot_gate", "source_port": "out_flow", "target": "n_shot_flow", "target_port": "in", "order": 0 },
-        { "id": "e_86", "source": "n_shot_gate", "source_port": "out_module", "target": "n_shot_module", "target_port": "in", "order": 0 },
-        { "id": "e_87", "source": "n_shot_three", "source_port": "out", "target": "n_yoke_gate", "target_port": "in", "order": 0 },
-        { "id": "e_88", "source": "n_shot_flow", "source_port": "out", "target": "n_yoke_gate", "target_port": "in", "order": 0 },
-        { "id": "e_89", "source": "n_shot_module", "source_port": "out", "target": "n_yoke_gate", "target_port": "in", "order": 0 },
-        { "id": "e_90", "source": "n_yoke_gate", "source_port": "out_lock", "target": "n_yoke_lock", "target_port": "in", "order": 0 },
-        { "id": "e_91", "source": "n_yoke_gate", "source_port": "out_scene", "target": "n_yoke_scene", "target_port": "in", "order": 0 },
-        { "id": "e_92", "source": "n_yoke_gate", "source_port": "out_world", "target": "n_yoke_world", "target_port": "in", "order": 0 },
-        { "id": "e_93", "source": "n_yoke_lock", "source_port": "out", "target": "n_word_gate", "target_port": "in", "order": 0 },
-        { "id": "e_94", "source": "n_yoke_scene", "source_port": "out", "target": "n_word_gate", "target_port": "in", "order": 0 },
-        { "id": "e_95", "source": "n_yoke_world", "source_port": "out", "target": "n_word_gate", "target_port": "in", "order": 0 },
-        { "id": "e_96", "source": "n_word_gate", "source_port": "out_short", "target": "n_word_short", "target_port": "in", "order": 0 },
-        { "id": "e_97", "source": "n_word_gate", "source_port": "out_medium", "target": "n_word_medium", "target_port": "in", "order": 0 },
-        { "id": "e_98", "source": "n_word_gate", "source_port": "out_long", "target": "n_word_long", "target_port": "in", "order": 0 },
-        { "id": "e_99", "source": "n_word_gate", "source_port": "out_auto", "target": "n_word_auto", "target_port": "in", "order": 0 },
-        { "id": "e_100", "source": "n_word_short", "source_port": "out", "target": "n_bound_gate", "target_port": "in", "order": 0 },
-        { "id": "e_101", "source": "n_word_medium", "source_port": "out", "target": "n_bound_gate", "target_port": "in", "order": 0 },
-        { "id": "e_102", "source": "n_word_long", "source_port": "out", "target": "n_bound_gate", "target_port": "in", "order": 0 },
-        { "id": "e_103", "source": "n_word_auto", "source_port": "out", "target": "n_bound_gate", "target_port": "in", "order": 0 },
-        { "id": "e_104", "source": "n_bound_gate", "source_port": "out_avoid", "target": "n_bdry_avoid", "target_port": "in", "order": 0 },
-        { "id": "e_105", "source": "n_bound_gate", "source_port": "out_natural", "target": "n_bdry_natural", "target_port": "in", "order": 0 },
-        { "id": "e_106", "source": "n_bound_gate", "source_port": "out_direct", "target": "n_bdry_direct", "target_port": "in", "order": 0 },
-        { "id": "e_107", "source": "n_bdry_avoid", "source_port": "out", "target": "n_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_108", "source": "n_bdry_natural", "source_port": "out", "target": "n_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_109", "source": "n_bdry_direct", "source_port": "out", "target": "n_extra_gate", "target_port": "in", "order": 0 },
-        { "id": "e_110", "source": "n_extra_gate", "source_port": "out_parallel", "target": "n_mod_parallel", "target_port": "in", "order": 0 },
-        { "id": "e_111", "source": "n_extra_gate", "source_port": "out_options", "target": "n_options_schema", "target_port": "in", "order": 0 },
-        { "id": "e_112", "source": "n_mod_parallel", "source_port": "out", "target": "n_output_rules", "target_port": "in", "order": 0 },
-        { "id": "e_113", "source": "n_options_schema", "source_port": "out", "target": "n_output_rules", "target_port": "in", "order": 0 },
-        { "id": "e_115", "source": "n_output_rules", "source_port": "out", "target": "n_thinking_schema", "target_port": "in", "order": 0 },
-        { "id": "e_116", "source": "n_thinking_schema", "source_port": "out", "target": "n_schema_text", "target_port": "in", "order": 0 },
-        { "id": "e_117", "source": "n_schema_text", "source_port": "out", "target": "n_params", "target_port": "in", "order": 0 },
-        { "id": "e_118", "source": "n_params", "source_port": "out", "target": "n_end", "target_port": "in", "order": 0 }
-      ]
+        {
+          "id": "e_1",
+          "source": "n_start",
+          "source_port": "out",
+          "target": "n_core",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_2",
+          "source": "n_core",
+          "source_port": "out",
+          "target": "n_ui_layout_hud",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_3",
+          "source": "n_const",
+          "source_port": "out",
+          "target": "n_branch",
+          "target_port": "value",
+          "order": 0
+        },
+        {
+          "id": "e_4",
+          "source": "n_branch",
+          "source_port": "out_online",
+          "target": "n_multi",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_8",
+          "source": "n_census_gate",
+          "source_port": "out_lite",
+          "target": "n_census_lite",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_9",
+          "source": "n_census_gate",
+          "source_port": "out_standard",
+          "target": "n_census_standard",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_10",
+          "source": "n_census_gate",
+          "source_port": "out_deep",
+          "target": "n_census_deep",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_11",
+          "source": "n_census_lite",
+          "source_port": "out",
+          "target": "n_census_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_12",
+          "source": "n_census_standard",
+          "source_port": "out",
+          "target": "n_census_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_13",
+          "source": "n_census_deep",
+          "source_port": "out",
+          "target": "n_census_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_14",
+          "source": "n_census_extra_gate",
+          "source_port": "out_subtext",
+          "target": "n_subtext",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_15",
+          "source": "n_census_extra_gate",
+          "source_port": "out_noclub",
+          "target": "n_noclub",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_16",
+          "source": "n_census_extra_gate",
+          "source_port": "out_depth_plot",
+          "target": "n_depth_plot",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_17",
+          "source": "n_subtext",
+          "source_port": "out",
+          "target": "n_driver_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_18",
+          "source": "n_noclub",
+          "source_port": "out",
+          "target": "n_driver_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_19",
+          "source": "n_depth_plot",
+          "source_port": "out",
+          "target": "n_driver_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_21",
+          "source": "n_driver_gate",
+          "source_port": "out_user",
+          "target": "n_driver_user",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_22",
+          "source": "n_driver_gate",
+          "source_port": "out_npc",
+          "target": "n_driver_npc",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_23",
+          "source": "n_driver_gate",
+          "source_port": "out_balanced",
+          "target": "n_driver_balanced",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_24",
+          "source": "n_driver_user",
+          "source_port": "out",
+          "target": "n_infer_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_25",
+          "source": "n_driver_npc",
+          "source_port": "out",
+          "target": "n_infer_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_26",
+          "source": "n_driver_balanced",
+          "source_port": "out",
+          "target": "n_infer_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_34",
+          "source": "n_infer_gate",
+          "source_port": "out_quick",
+          "target": "n_infer_quick",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_35",
+          "source": "n_infer_gate",
+          "source_port": "out_standard",
+          "target": "n_infer_standard",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_36",
+          "source": "n_infer_gate",
+          "source_port": "out_deep",
+          "target": "n_infer_deep",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_37",
+          "source": "n_infer_quick",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_38",
+          "source": "n_infer_standard",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_39",
+          "source": "n_infer_deep",
+          "source_port": "out",
+          "target": "n_proxy_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_40",
+          "source": "n_proxy_gate",
+          "source_port": "out_none",
+          "target": "n_proxy_none",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_41",
+          "source": "n_proxy_gate",
+          "source_port": "out_action",
+          "target": "n_proxy_action",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_42",
+          "source": "n_proxy_gate",
+          "source_port": "out_restate",
+          "target": "n_proxy_restate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_43",
+          "source": "n_proxy_gate",
+          "source_port": "out_full",
+          "target": "n_proxy_full",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_44",
+          "source": "n_proxy_none",
+          "source_port": "out",
+          "target": "n_agent_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_45",
+          "source": "n_proxy_action",
+          "source_port": "out",
+          "target": "n_agent_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_46",
+          "source": "n_proxy_restate",
+          "source_port": "out",
+          "target": "n_agent_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_47",
+          "source": "n_proxy_full",
+          "source_port": "out",
+          "target": "n_agent_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_48",
+          "source": "n_res_gate",
+          "source_port": "out_low",
+          "target": "n_res_low",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_49",
+          "source": "n_res_gate",
+          "source_port": "out_medium",
+          "target": "n_res_medium",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_50",
+          "source": "n_res_gate",
+          "source_port": "out_high",
+          "target": "n_res_high",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_51",
+          "source": "n_res_low",
+          "source_port": "out",
+          "target": "n_cot_check",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_52",
+          "source": "n_res_medium",
+          "source_port": "out",
+          "target": "n_cot_check",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_53",
+          "source": "n_res_high",
+          "source_port": "out",
+          "target": "n_cot_check",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_54",
+          "source": "n_cot_check",
+          "source_port": "out",
+          "target": "n_rpg_engine_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_55",
+          "source": "n_mode_switch",
+          "source_port": "out_legacy",
+          "target": "n_legacy_group",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_56",
+          "source": "n_mode_switch",
+          "source_port": "out_mem0",
+          "target": "n_status_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_57",
+          "source": "n_mode_switch",
+          "source_port": "out_stateless",
+          "target": "n_status_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_58",
+          "source": "n_legacy_group",
+          "source_port": "out_world_var",
+          "target": "n_schema_world_vars",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_59",
+          "source": "n_legacy_group",
+          "source_port": "out_summary",
+          "target": "n_schema_summary",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_60",
+          "source": "n_schema_world_vars",
+          "source_port": "out",
+          "target": "n_status_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61",
+          "source": "n_schema_summary",
+          "source_port": "out",
+          "target": "n_status_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61a",
+          "source": "n_status_gate",
+          "source_port": "out_status_bar",
+          "target": "n_status_read",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61b",
+          "source": "n_status_gate",
+          "source_port": "out_todo_list",
+          "target": "n_todo_read",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61c",
+          "source": "n_status_read",
+          "source_port": "out",
+          "target": "n_schema_status",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61d",
+          "source": "n_todo_read",
+          "source_port": "out",
+          "target": "n_schema_todo",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61e",
+          "source": "n_schema_status",
+          "source_port": "out",
+          "target": "n_persp_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_61f",
+          "source": "n_schema_todo",
+          "source_port": "out",
+          "target": "n_persp_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_63",
+          "source": "n_persp_gate",
+          "source_port": "out_first",
+          "target": "n_persp_first",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_64",
+          "source": "n_persp_gate",
+          "source_port": "out_third_close",
+          "target": "n_persp_third",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_65",
+          "source": "n_persp_gate",
+          "source_port": "out_third_god",
+          "target": "n_persp_god",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_66",
+          "source": "n_persp_first",
+          "source_port": "out",
+          "target": "n_prose_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_67",
+          "source": "n_persp_third",
+          "source_port": "out",
+          "target": "n_prose_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_68",
+          "source": "n_persp_god",
+          "source_port": "out",
+          "target": "n_prose_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_69",
+          "source": "n_prose_gate",
+          "source_port": "out_plain",
+          "target": "n_prose_plain",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_70",
+          "source": "n_prose_gate",
+          "source_port": "out_literary",
+          "target": "n_prose_literary",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_71",
+          "source": "n_prose_gate",
+          "source_port": "out_cinematic",
+          "target": "n_prose_cinematic",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_72",
+          "source": "n_prose_plain",
+          "source_port": "out",
+          "target": "n_compliance_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_73",
+          "source": "n_prose_literary",
+          "source_port": "out",
+          "target": "n_compliance_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_74",
+          "source": "n_prose_cinematic",
+          "source_port": "out",
+          "target": "n_compliance_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_75",
+          "source": "n_compliance_gate",
+          "source_port": "out_deeu",
+          "target": "n_deeu",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_76",
+          "source": "n_compliance_gate",
+          "source_port": "out_anticli",
+          "target": "n_anticli",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_77",
+          "source": "n_compliance_gate",
+          "source_port": "out_noai",
+          "target": "n_noai",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_78",
+          "source": "n_compliance_gate",
+          "source_port": "out_osquota",
+          "target": "n_osquota",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_79",
+          "source": "n_deeu",
+          "source_port": "out",
+          "target": "n_shot_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_80",
+          "source": "n_anticli",
+          "source_port": "out",
+          "target": "n_shot_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_81",
+          "source": "n_noai",
+          "source_port": "out",
+          "target": "n_shot_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_82",
+          "source": "n_osquota",
+          "source_port": "out",
+          "target": "n_shot_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_84",
+          "source": "n_shot_gate",
+          "source_port": "out_three_beat",
+          "target": "n_shot_three",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_85",
+          "source": "n_shot_gate",
+          "source_port": "out_flow",
+          "target": "n_shot_flow",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_86",
+          "source": "n_shot_gate",
+          "source_port": "out_module",
+          "target": "n_shot_module",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_87",
+          "source": "n_shot_three",
+          "source_port": "out",
+          "target": "n_yoke_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_88",
+          "source": "n_shot_flow",
+          "source_port": "out",
+          "target": "n_yoke_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_89",
+          "source": "n_shot_module",
+          "source_port": "out",
+          "target": "n_yoke_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_90",
+          "source": "n_yoke_gate",
+          "source_port": "out_lock",
+          "target": "n_yoke_lock",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_91",
+          "source": "n_yoke_gate",
+          "source_port": "out_scene",
+          "target": "n_yoke_scene",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_92",
+          "source": "n_yoke_gate",
+          "source_port": "out_world",
+          "target": "n_yoke_world",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_93",
+          "source": "n_yoke_lock",
+          "source_port": "out",
+          "target": "n_word_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_94",
+          "source": "n_yoke_scene",
+          "source_port": "out",
+          "target": "n_word_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_95",
+          "source": "n_yoke_world",
+          "source_port": "out",
+          "target": "n_word_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_96",
+          "source": "n_word_gate",
+          "source_port": "out_short",
+          "target": "n_word_short",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_97",
+          "source": "n_word_gate",
+          "source_port": "out_medium",
+          "target": "n_word_medium",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_98",
+          "source": "n_word_gate",
+          "source_port": "out_long",
+          "target": "n_word_long",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_99",
+          "source": "n_word_gate",
+          "source_port": "out_auto",
+          "target": "n_word_auto",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_100",
+          "source": "n_word_short",
+          "source_port": "out",
+          "target": "n_bound_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_101",
+          "source": "n_word_medium",
+          "source_port": "out",
+          "target": "n_bound_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_102",
+          "source": "n_word_long",
+          "source_port": "out",
+          "target": "n_bound_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_103",
+          "source": "n_word_auto",
+          "source_port": "out",
+          "target": "n_bound_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_104",
+          "source": "n_bound_gate",
+          "source_port": "out_avoid",
+          "target": "n_bdry_avoid",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_105",
+          "source": "n_bound_gate",
+          "source_port": "out_natural",
+          "target": "n_bdry_natural",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_106",
+          "source": "n_bound_gate",
+          "source_port": "out_direct",
+          "target": "n_bdry_direct",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_107",
+          "source": "n_bdry_avoid",
+          "source_port": "out",
+          "target": "n_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_108",
+          "source": "n_bdry_natural",
+          "source_port": "out",
+          "target": "n_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_109",
+          "source": "n_bdry_direct",
+          "source_port": "out",
+          "target": "n_extra_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_110",
+          "source": "n_extra_gate",
+          "source_port": "out_parallel",
+          "target": "n_mod_parallel",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_111",
+          "source": "n_extra_gate",
+          "source_port": "out_options",
+          "target": "n_options_schema",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_112",
+          "source": "n_mod_parallel",
+          "source_port": "out",
+          "target": "n_output_rules",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_113",
+          "source": "n_options_schema",
+          "source_port": "out",
+          "target": "n_output_rules",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_3_zi53",
+          "source": "n_schema_text",
+          "source_port": "out",
+          "target": "n_branch_1_z382",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_4_zju7",
+          "source": "n_constant_2_z7u2",
+          "source_port": "out",
+          "target": "n_branch_1_z382",
+          "target_port": "value",
+          "order": 0
+        },
+        {
+          "id": "e_9_2dhu",
+          "source": "n_output_rules",
+          "source_port": "out",
+          "target": "n_schema_text",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_16_9ms8",
+          "source": "n_branch",
+          "source_port": "out_single",
+          "target": "n_channel_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_17_9o5s",
+          "source": "n_multi",
+          "source_port": "out",
+          "target": "n_channel_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_19_9uqn",
+          "source": "n_channel_gate",
+          "source_port": "out_native",
+          "target": "n_native_total",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_22_b0d7",
+          "source": "n_channel_gate",
+          "source_port": "out_schema",
+          "target": "n_cot_head",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_23_b1kw",
+          "source": "n_cot_head",
+          "source_port": "out",
+          "target": "n_thinking_schema",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_24_b3qo",
+          "source": "n_thinking_schema",
+          "source_port": "out",
+          "target": "n_census_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_25_b4va",
+          "source": "n_native_total",
+          "source_port": "out",
+          "target": "n_census_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_1_n9ge",
+          "source": "n_branch_1_z382",
+          "source_port": "chat_completions",
+          "target": "n_sampling_params_openai_1_n2eq",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_2_nauq",
+          "source": "n_branch_1_z382",
+          "source_port": "anthropic",
+          "target": "n_sampling_params_anthropic_2_n4i5",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_3_ncrr",
+          "source": "n_sampling_params_openai_1_n2eq",
+          "source_port": "out",
+          "target": "n_end",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_4_nf2g",
+          "source": "n_sampling_params_anthropic_2_n4i5",
+          "source_port": "out",
+          "target": "n_end",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ui_to_branch",
+          "source": "n_ui_layout_hud",
+          "source_port": "out",
+          "target": "n_branch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_single",
+          "source": "n_agent_gate",
+          "source_port": "out_single",
+          "target": "n_agent_single",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_director",
+          "source": "n_agent_gate",
+          "source_port": "out_director_actor",
+          "target": "n_agent_director_actor",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_script",
+          "source": "n_agent_gate",
+          "source_port": "out_scriptwriter",
+          "target": "n_agent_scriptwriter",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_s_out",
+          "source": "n_agent_single",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_d_out",
+          "source": "n_agent_director_actor",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ag_w_out",
+          "source": "n_agent_scriptwriter",
+          "source_port": "out",
+          "target": "n_res_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_rpg_inv",
+          "source": "n_rpg_engine_gate",
+          "source_port": "out_inventory_trade",
+          "target": "n_inv_rules",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_inv_to_chk",
+          "source": "n_inv_rules",
+          "source_port": "out",
+          "target": "n_tool_check_inv",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_chk_to_buy",
+          "source": "n_tool_check_inv",
+          "source_port": "out",
+          "target": "n_tool_buy_item",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_buy_to_use",
+          "source": "n_tool_buy_item",
+          "source_port": "out",
+          "target": "n_tool_use_item",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_use_to_insp",
+          "source": "n_tool_use_item",
+          "source_port": "out",
+          "target": "n_tool_inspect_item",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_insp_to_gate",
+          "source": "n_tool_inspect_item",
+          "source_port": "out",
+          "target": "n_gate_gold",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_gold_pass",
+          "source": "n_gate_gold",
+          "source_port": "pass",
+          "target": "n_calc_gold_deduct",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_gold_block",
+          "source": "n_gate_gold",
+          "source_port": "blocked",
+          "target": "n_ret_trade_fail",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_gold_dec_to_add",
+          "source": "n_calc_gold_deduct",
+          "source_port": "out",
+          "target": "n_calc_add_potion",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_add_to_ret_ok",
+          "source": "n_calc_add_potion",
+          "source_port": "out",
+          "target": "n_ret_trade_ok",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ret_ok_to_mode",
+          "source": "n_ret_trade_ok",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ret_fail_to_mode",
+          "source": "n_ret_trade_fail",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_rpg_stats",
+          "source": "n_rpg_engine_gate",
+          "source_port": "out_stats_calc",
+          "target": "n_tool_get_stats",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_stats_to_gate",
+          "source": "n_tool_get_stats",
+          "source_port": "out",
+          "target": "n_gate_weight",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_weight_pass",
+          "source": "n_gate_weight",
+          "source_port": "pass",
+          "target": "n_calc_hp_restore",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_weight_block",
+          "source": "n_gate_weight",
+          "source_port": "blocked",
+          "target": "n_ret_weight_fail",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_hp_to_ret_ok",
+          "source": "n_calc_hp_restore",
+          "source_port": "out",
+          "target": "n_ret_weight_ok",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_weight_ok_to_mode",
+          "source": "n_ret_weight_ok",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_weight_fail_to_mode",
+          "source": "n_ret_weight_fail",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_rpg_work",
+          "source": "n_rpg_engine_gate",
+          "source_port": "out_workspace_agent",
+          "target": "n_tool_read_text",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_read_to_write",
+          "source": "n_tool_read_text",
+          "source_port": "out",
+          "target": "n_tool_write_text",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_write_to_mode",
+          "source": "n_tool_write_text",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_rpg_schema",
+          "source": "n_rpg_engine_gate",
+          "source_port": "out_schema_invoke",
+          "target": "n_invoke_schema_narrative",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_invoke_to_mode",
+          "source": "n_invoke_schema_narrative",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        }
+      ],
+      "comments": []
     }
   },
   "semanticGroups": [],
