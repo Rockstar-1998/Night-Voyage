@@ -1,7 +1,7 @@
 import { Component, For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import { Select } from './ui/Select';
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X } from '../lib/icons';
-import { CharacterCard, ApiProviderSummary, ConversationType, ChatMode, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose } from '../lib/backend';
+import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Check, Link as LinkIcon, Loader2, Radio, User, Users, X, MessageSquare, BrainCircuit } from '../lib/icons';
+import { CharacterCard, ApiProviderSummary, ConversationType, CreateConversationPayload, WorldBookSummary, PresetSummary, resolveImageSrc, roomCreate, roomClose, ChatMode, updatePresetGateSelection } from '../lib/backend';
 import { IconButton } from './ui/IconButton';
 import { showToast } from './Toast';
 
@@ -27,15 +27,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedProviderId, setSelectedProviderId] = createSignal<number | undefined>();
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
-  const [memoryMode, setMemoryMode] = createSignal<'stateless' | 'legacy' | 'mem0'>('stateless');
-  const [chatMode, setChatMode] = createSignal<ChatMode>('classic');
 
-  const highCostCount = createMemo(() => {
-    const directorActive = chatMode() === 'director_actor' || chatMode() === 'director_agents' || chatMode() === 'director_scriptwriter';
-    const scriptwriterActive = chatMode() === 'scriptwriter' || chatMode() === 'director_scriptwriter';
-    const mem0Active = memoryMode() === 'mem0';
-    return (directorActive ? 1 : 0) + (scriptwriterActive ? 1 : 0) + (mem0Active ? 1 : 0);
-  });
+  // 运行模式分类架构：传统对话（stateless / legacy）与 Agent 智能体（director_actor / scriptwriter）
+  const [dialogueCategory, setDialogueCategory] = createSignal<'classic' | 'agent'>('classic');
+  const [classicSubMode, setClassicSubMode] = createSignal<'stateless' | 'legacy'>('stateless');
+  const [agentSubMode, setAgentSubMode] = createSignal<'director_actor' | 'scriptwriter'>('director_actor');
+  // MEM0 长期记忆系统：作为独立二元开关（开启 vs 关闭）
+  const [mem0Enabled, setMem0Enabled] = createSignal<boolean>(false);
 
   const [roomPort, setRoomPort] = createSignal('');
   const [roomPassphrase, setRoomPassphrase] = createSignal('');
@@ -59,6 +57,21 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     }
   });
 
+  const handleCategoryChange = (category: 'classic' | 'agent') => {
+    setDialogueCategory(category);
+    if (category === 'agent') {
+      // 切换到 Agent 模式时，若尚未选定预设，自动推荐适配 Agent 蓝图的 V2.2 核心预设
+      if (!selectedPresetId()) {
+        const v2Preset = props.presetSummaries.find(
+          (p) => p.name.includes('2.2') || p.name.includes('Agent') || p.name.includes('全能'),
+        );
+        if (v2Preset) {
+          setSelectedPresetId(v2Preset.id);
+        }
+      }
+    }
+  };
+
   const reset = () => {
     setStep(1);
     setConversationType(null);
@@ -74,8 +87,10 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setCopied(false);
     setSelectedOpeningIndex(0);
     setSelectedPresetId(undefined);
-    setMemoryMode('stateless');
-    setChatMode('classic');
+    setDialogueCategory('classic');
+    setClassicSubMode('stateless');
+    setAgentSubMode('director_actor');
+    setMem0Enabled(false);
   };
 
   const canGoNext = createMemo(() => Boolean(selectedCharacterId()));
@@ -99,6 +114,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       return;
     }
     if (!canSubmit() || !conversationType() || !selectedCharacterId() || !selectedPlayerCharacterId()) return;
+
+    const isAgent = dialogueCategory() === 'agent';
+    const effectiveChatMode: ChatMode = isAgent ? 'director_agents' : 'classic';
+    const effectiveMemoryMode: 'stateless' | 'legacy' | 'mem0' = mem0Enabled()
+      ? 'mem0'
+      : (isAgent ? 'stateless' : classicSubMode());
+
     const payload: CreateConversationPayload = {
       conversationType: conversationType()!,
       title: title().trim() || selectedCharacter()?.name || undefined,
@@ -107,14 +129,25 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       providerId: selectedProviderId(),
       presetId: selectedPresetId(),
       hostPlayerCharacterId: selectedPlayerCharacterId()!,
-      chatMode: chatMode(),
+      chatMode: effectiveChatMode,
       agentProviderPolicy: 'shared_host_provider',
       openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
-      memoryMode: memoryMode(),
+      memoryMode: effectiveMemoryMode,
     };
     try {
       const conversationId = await props.onCreateConversation(payload);
       console.debug('[NewChatModal] handleSubmit: conversation created, id=', conversationId);
+
+      // 若为 Agent 模式且选定了预设，将所选子模式同步到预设 Gate 选择
+      if (isAgent && selectedPresetId()) {
+        const gateKey = agentSubMode() === 'scriptwriter' ? 'pipeline_agent' : 'dual_agent_drafter_critic';
+        try {
+          await updatePresetGateSelection(selectedPresetId()!, 'n_agent_gate', [gateKey]);
+        } catch (gateErr) {
+          console.warn('[NewChatModal] Failed to sync n_agent_gate selection', gateErr);
+        }
+      }
+
       if (conversationType() === 'online') {
         if (typeof conversationId === 'number') {
           setCreatedConversationId(conversationId);
@@ -140,6 +173,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       }
       setRoomCreating(true);
       setRoomError('');
+
+      const isAgent = dialogueCategory() === 'agent';
+      const effectiveChatMode: ChatMode = isAgent ? 'director_agents' : 'classic';
+      const effectiveMemoryMode: 'stateless' | 'legacy' | 'mem0' = mem0Enabled()
+        ? 'mem0'
+        : (isAgent ? 'stateless' : classicSubMode());
+
       const payload: CreateConversationPayload = {
         conversationType: conversationType()!,
         title: title().trim() || selectedCharacter()?.name || undefined,
@@ -148,16 +188,25 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
         providerId: selectedProviderId(),
         presetId: selectedPresetId(),
         hostPlayerCharacterId: selectedPlayerCharacterId()!,
-        chatMode: chatMode(),
+        chatMode: effectiveChatMode,
         agentProviderPolicy: 'shared_host_provider',
         openingMessageIndex: selectedOpeningIndex() >= 0 ? selectedOpeningIndex() : undefined,
-        memoryMode: memoryMode(),
+        memoryMode: effectiveMemoryMode,
       };
       try {
         const result = await props.onCreateConversation(payload);
         if (typeof result === 'number') {
           conversationId = result;
           setCreatedConversationId(conversationId);
+
+          if (isAgent && selectedPresetId()) {
+            const gateKey = agentSubMode() === 'scriptwriter' ? 'pipeline_agent' : 'dual_agent_drafter_critic';
+            try {
+              await updatePresetGateSelection(selectedPresetId()!, 'n_agent_gate', [gateKey]);
+            } catch (gateErr) {
+              console.warn('[NewChatModal] Failed to sync n_agent_gate selection in room creation', gateErr);
+            }
+          }
         } else {
           setRoomCreating(false);
           return;
@@ -427,109 +476,162 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                     </div>
                   </div>
 
-                  <div class="space-y-2">
-                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">记忆模式</label>
-                    <p class="text-[11px] text-mist-solid/40">记忆模式在创建后锁定，不可切换。</p>
-                    <div class="grid grid-cols-3 gap-3">
+                  <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                      <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">对话与运行模式</label>
+                      <span class="text-[11px] text-mist-solid/40">驱动引擎与多智能体架构</span>
+                    </div>
+
+                    {/* 大类选择卡片：传统对话 vs Agent 智能体 */}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <button
-                        onClick={() => setMemoryMode('stateless')}
-                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
-                          memoryMode() === 'stateless'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        type="button"
+                        onClick={() => handleCategoryChange('classic')}
+                        class={`p-4 rounded-xl border text-left transition-all relative ${
+                          dialogueCategory() === 'classic'
+                            ? 'border-accent bg-accent/10 shadow-[0_0_15px_rgba(58,109,140,0.15)]'
+                            : 'border-white/10 bg-black/10 hover:border-white/20'
                         }`}
                       >
-                        <div class="font-bold">无状态</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">纯多轮对话</div>
+                        <div class="flex items-center justify-between">
+                          <div class="flex items-center gap-2.5">
+                            <MessageSquare size={18} class={dialogueCategory() === 'classic' ? 'text-accent' : 'text-mist-solid/40'} />
+                            <span class={`font-bold text-sm ${dialogueCategory() === 'classic' ? 'text-white' : 'text-mist-solid/80'}`}>传统对话</span>
+                          </div>
+                          <Show when={dialogueCategory() === 'classic'}>
+                            <span class="w-2 h-2 rounded-full bg-accent animate-pulse" />
+                          </Show>
+                        </div>
+                        <p class="text-xs text-mist-solid/50 mt-2 leading-relaxed">
+                          经典单模型直接交互，支持轻量无状态或剧情滑动总结
+                        </p>
                       </button>
+
                       <button
-                        onClick={() => setMemoryMode('legacy')}
-                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
-                          memoryMode() === 'legacy'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        type="button"
+                        onClick={() => handleCategoryChange('agent')}
+                        class={`p-4 rounded-xl border text-left transition-all relative ${
+                          dialogueCategory() === 'agent'
+                            ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]'
+                            : 'border-white/10 bg-black/10 hover:border-white/20'
                         }`}
                       >
-                        <div class="font-bold">传统</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">剧情总结+世界变量</div>
+                        <div class="flex items-center justify-between">
+                          <div class="flex items-center gap-2.5">
+                            <BrainCircuit size={18} class={dialogueCategory() === 'agent' ? 'text-purple-400' : 'text-mist-solid/40'} />
+                            <span class={`font-bold text-sm ${dialogueCategory() === 'agent' ? 'text-white' : 'text-mist-solid/80'}`}>Agent 智能体</span>
+                          </div>
+                          <Show when={dialogueCategory() === 'agent'}>
+                            <span class="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                          </Show>
+                        </div>
+                        <p class="text-xs text-mist-solid/50 mt-2 leading-relaxed">
+                          多角色分工协作、局部视界演出与跑团规则/状态容器引擎
+                        </p>
                       </button>
-                      <button
-                        onClick={() => setMemoryMode('mem0')}
-                        class={`rounded-xl border px-3 py-3 text-sm font-medium transition-all ${
-                          memoryMode() === 'mem0'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
-                        }`}
-                      >
-                        <div class="font-bold">Mem0</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">AI 记忆托管</div>
-                      </button>
+                    </div>
+
+                    {/* 子模式选择区 */}
+                    <div class="bg-black/20 border border-white/5 rounded-xl p-3.5 space-y-2">
+                      <div class="text-[11px] font-bold uppercase tracking-wider text-mist-solid/40">
+                        {dialogueCategory() === 'classic' ? '传统对话子模式' : 'Agent 协作架构'}
+                      </div>
+
+                      <Show when={dialogueCategory() === 'classic'}>
+                        <div class="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setClassicSubMode('stateless')}
+                            class={`p-3 rounded-lg border text-left transition-all ${
+                              classicSubMode() === 'stateless'
+                                ? 'border-accent/50 bg-accent/15 text-white'
+                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
+                            }`}
+                          >
+                            <div class="text-xs font-bold">无状态 (Stateless)</div>
+                            <div class="text-[10px] text-mist-solid/40 mt-1">纯多轮对话上下文，轻量快捷</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setClassicSubMode('legacy')}
+                            class={`p-3 rounded-lg border text-left transition-all ${
+                              classicSubMode() === 'legacy'
+                                ? 'border-accent/50 bg-accent/15 text-white'
+                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
+                            }`}
+                          >
+                            <div class="text-xs font-bold">传统 (Legacy)</div>
+                            <div class="text-[10px] text-mist-solid/40 mt-1">滑动窗口总结 + 剧情摘要与世界变量</div>
+                          </button>
+                        </div>
+                      </Show>
+
+                      <Show when={dialogueCategory() === 'agent'}>
+                        <div class="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setAgentSubMode('director_actor')}
+                            class={`p-3 rounded-lg border text-left transition-all ${
+                              agentSubMode() === 'director_actor'
+                                ? 'border-purple-500/50 bg-purple-500/15 text-white'
+                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
+                            }`}
+                          >
+                            <div class="text-xs font-bold">导演-演员模式</div>
+                            <div class="text-[10px] text-mist-solid/40 mt-1">演员局部视界演出 + 导演全局掌控质检</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAgentSubMode('scriptwriter')}
+                            class={`p-3 rounded-lg border text-left transition-all ${
+                              agentSubMode() === 'scriptwriter'
+                                ? 'border-purple-500/50 bg-purple-500/15 text-white'
+                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
+                            }`}
+                          >
+                            <div class="text-xs font-bold">剧本流水线模式</div>
+                            <div class="text-[10px] text-mist-solid/40 mt-1">初稿生成、严格质检与文笔润色接力</div>
+                          </button>
+                        </div>
+                      </Show>
                     </div>
                   </div>
 
                   <div class="space-y-2">
-                    <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">智能体模式</label>
-                    <p class="text-[11px] text-mist-solid/40">选择 Agent 编排模式，支持导演心智隔离与多工种接力打磨。</p>
+                    <div class="flex items-center justify-between">
+                      <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">MEM0 长期记忆</label>
+                      <span class="text-[11px] text-mist-solid/40">跨轮次向量数据库增强</span>
+                    </div>
                     <div class="grid grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setChatMode('classic')}
-                        class={`rounded-xl border p-3 text-left transition-all ${
-                          chatMode() === 'classic'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        onClick={() => setMem0Enabled(false)}
+                        class={`rounded-xl border px-4 py-3 text-left transition-all ${
+                          !mem0Enabled()
+                            ? 'border-white/30 bg-white/10 text-white'
+                            : 'border-white/10 bg-black/10 text-mist-solid/50 hover:text-mist-solid/80'
                         }`}
                       >
-                        <div class="font-bold text-xs">经典模式</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">单次直接对话，无额外 Agent 介入</div>
+                        <div class="text-xs font-bold">关闭</div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">不启用向量记忆提取</div>
                       </button>
                       <button
                         type="button"
-                        onClick={() => setChatMode('director_actor')}
-                        class={`rounded-xl border p-3 text-left transition-all ${
-                          chatMode() === 'director_actor' || chatMode() === 'director_agents'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
+                        onClick={() => setMem0Enabled(true)}
+                        class={`rounded-xl border px-4 py-3 text-left transition-all ${
+                          mem0Enabled()
+                            ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                            : 'border-white/10 bg-black/10 text-mist-solid/50 hover:text-mist-solid/80'
                         }`}
                       >
-                        <div class="font-bold text-xs">导演-演员模式</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">Return-mode 心智隔离，严防全知污染</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setChatMode('scriptwriter')}
-                        class={`rounded-xl border p-3 text-left transition-all ${
-                          chatMode() === 'scriptwriter'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
-                        }`}
-                      >
-                        <div class="font-bold text-xs">剧本模式</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">Handoff 接力，初稿-审阅-终稿润色</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setChatMode('director_scriptwriter')}
-                        class={`rounded-xl border p-3 text-left transition-all ${
-                          chatMode() === 'director_scriptwriter'
-                            ? 'border-accent/40 bg-accent/15 text-accent'
-                            : 'border-white/10 bg-black/10 text-mist-solid/60 hover:text-mist-solid/90'
-                        }`}
-                      >
-                        <div class="font-bold text-xs">复合大剧场</div>
-                        <div class="text-[10px] text-mist-solid/40 mt-1">导演统筹 + 演员演绎 + 监制润色</div>
+                        <div class="text-xs font-bold flex items-center justify-between">
+                          <span>MEM0</span>
+                          <Show when={mem0Enabled()}><span class="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">已启用</span></Show>
+                        </div>
+                        <div class="text-[10px] text-mist-solid/40 mt-1">AI 记忆自动提取与语义召回</div>
                       </button>
                     </div>
                   </div>
-
-                  <Show when={highCostCount() >= 2}>
-                    <div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs font-semibold text-rose-500 dark:text-rose-400 flex items-start gap-3 animate-pulse">
-                      <AlertTriangle size={18} class="shrink-0 mt-0.5 text-rose-500" />
-                      <div>
-                        ⚠️ 这会导致消耗的TOKEN激增，尤其是对于按次计费的API来说，而这仅仅只是为了一次回答，请仔细斟酌这是否值得！
-                      </div>
-                    </div>
-                  </Show>
 
                   <div class="space-y-2">
                     <label class="text-xs font-bold uppercase tracking-wider text-mist-solid/30">世界书</label>
