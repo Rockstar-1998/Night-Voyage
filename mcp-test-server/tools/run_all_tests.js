@@ -17,6 +17,9 @@ const { createTestSchemaRetentionTool } = require('./test_schema_retention.js');
 const { createTestRpgEngineTool } = require('./test_rpg_engine.js');
 const { createTestGuardsTool } = require('./test_guards.js');
 const { createTestHudPatchTool } = require('./test_hud_patch.js');
+const { createCaptureScreenshotTool } = require('./capture_screenshot.js');
+const { createTestBlueprintExecutionTool } = require('./test_blueprint_execution.js');
+const { createTestAgentMultistepTool } = require('./test_agent_multistep.js');
 const { resolveConfig } = require('../config.js');
 
 function createRunAllTestsTool(config) {
@@ -45,7 +48,10 @@ function createRunAllTestsTool(config) {
         milestone2_rpg_datacontainer: { name: 'M2: 数据容器与确定性 ToolCall 门禁', passed: false },
         milestone3_universal_hud: { name: 'M3: 全模式常驻 HUD 与 Shadow DOM 沙箱', passed: false },
         milestone4_guards_orchestrator: { name: 'M4: 确定性 D20、禁词自纠与 Agent 编排', passed: false },
-        milestone5_appdata_and_blueprint: { name: 'M5: V2.2 核心预设拓扑与数据库留痕', passed: false }
+        milestone5_appdata_and_blueprint: { name: 'M5: V2.2 核心预设拓扑与数据库留痕', passed: false },
+        ground1_agent_multistep: { name: '依据 1: Agent 多步推理链路与工具调用回流', passed: false },
+        ground2_mcp_screenshots: { name: '依据 2: MCP 原生工具生成数据容器与蓝图执行快照', passed: false },
+        ground4_blueprint_execution: { name: '依据 4: V2.2 核心预设蓝图真实加载与动态激活', passed: false }
       };
 
       // 1. Run Blueprint Tests (M5)
@@ -182,6 +188,60 @@ function createRunAllTestsTool(config) {
         results.logs = { success: false, error: err.message };
       }
 
+      // 8. Ground 4: V2.2 Core Blueprint Execution & Node Traversal
+      try {
+        const bpExecTool = createTestBlueprintExecutionTool(activeConfig);
+        const bpExecRes = await bpExecTool.execute({ agentBranch: 'all' });
+        results.blueprint_execution = {
+          success: bpExecRes.success,
+          total_graph_nodes: bpExecRes.total_graph_nodes,
+          total_graph_edges: bpExecRes.total_graph_edges,
+          branches_tested: bpExecRes.executionReports?.map(r => r.branch_tested),
+          traversed_nodes_count: bpExecRes.executionReports?.[0]?.total_nodes_traversed,
+          tools_registered: bpExecRes.executionReports?.[0]?.new_nodes_activated?.rpg_engine_tools_registered
+        };
+        if (bpExecRes.success) {
+          milestoneAudit.ground4_blueprint_execution.passed = true;
+        }
+      } catch (err) {
+        results.blueprint_execution = { success: false, error: err.message };
+      }
+
+      // 9. Ground 1: Multi-Step Agent Reasoning & CoT Pipeline
+      try {
+        const multistepTool = createTestAgentMultistepTool(activeConfig);
+        const multistepRes = await multistepTool.execute();
+        results.agent_multistep = {
+          success: multistepRes.success,
+          stepsCount: multistepRes.traceSummary?.totalSteps || 0,
+          toolCallsExecuted: multistepRes.traceSummary?.toolCallsExecuted || 0,
+          conditionGatesPassed: multistepRes.traceSummary?.conditionGatesPassed || 0,
+          hudPatchesEmitted: multistepRes.traceSummary?.hudPatchesEmitted || 0,
+          savedTracePath: multistepRes.traceSummary?.savedTracePath || null
+        };
+        if (multistepRes.success) {
+          milestoneAudit.ground1_agent_multistep.passed = true;
+        }
+      } catch (err) {
+        results.agent_multistep = { success: false, error: err.message };
+      }
+
+      // 10. Ground 2: MCP Screenshot Rendering
+      try {
+        const screenshotTool = createCaptureScreenshotTool(activeConfig);
+        const shotRes = await screenshotTool.execute({ target: 'all' });
+        results.mcp_screenshots = {
+          success: shotRes.success,
+          filesCount: shotRes.generatedFiles?.length || 0,
+          generatedFiles: shotRes.generatedFiles
+        };
+        if (shotRes.success && shotRes.generatedFiles?.length >= 2) {
+          milestoneAudit.ground2_mcp_screenshots.passed = true;
+        }
+      } catch (err) {
+        results.mcp_screenshots = { success: false, error: err.message };
+      }
+
       const durationMs = Date.now() - startTime;
       const allMilestonesPassed = Object.values(milestoneAudit).every(m => m.passed);
 
@@ -196,10 +256,13 @@ function createRunAllTestsTool(config) {
         },
         detailedResults: verbose ? results : {
           blueprint: results.blueprint,
+          blueprint_execution: results.blueprint_execution,
           schema_retention: results.schema_retention,
           rpg_engine: results.rpg_engine,
+          agent_multistep: results.agent_multistep,
           universal_hud: results.universal_hud,
           guards_and_orchestrator: results.guards_and_orchestrator,
+          mcp_screenshots: results.mcp_screenshots,
           database: results.database,
           logs: results.logs
         }

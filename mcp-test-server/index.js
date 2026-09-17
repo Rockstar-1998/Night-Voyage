@@ -19,6 +19,9 @@ const { createTestSchemaRetentionTool } = require('./tools/test_schema_retention
 const { createTestRpgEngineTool } = require('./tools/test_rpg_engine.js');
 const { createTestGuardsTool } = require('./tools/test_guards.js');
 const { createTestHudPatchTool } = require('./tools/test_hud_patch.js');
+const { createCaptureScreenshotTool } = require('./tools/capture_screenshot.js');
+const { createTestBlueprintExecutionTool } = require('./tools/test_blueprint_execution.js');
+const { createTestAgentMultistepTool } = require('./tools/test_agent_multistep.js');
 const { createRunAllTestsTool } = require('./tools/run_all_tests.js');
 
 function setupServer() {
@@ -33,6 +36,9 @@ function setupServer() {
   registry.register(createTestRpgEngineTool(config));
   registry.register(createTestGuardsTool(config));
   registry.register(createTestHudPatchTool(config));
+  registry.register(createCaptureScreenshotTool(config));
+  registry.register(createTestBlueprintExecutionTool(config));
+  registry.register(createTestAgentMultistepTool(config));
   registry.register(createRunAllTestsTool(config));
 
   return { config, registry };
