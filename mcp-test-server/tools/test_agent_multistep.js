@@ -39,17 +39,48 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
       properties: {
         userPrompt: {
           type: 'string',
-          default: '我想在铁匠铺购买一把精钢长剑，先看看自己的状态和钱够不够',
+          default: '我想跟烂牙购买一件荒坂精工剥离钳，先检查我的状态和金币够不够',
           description: 'User input prompt initiating the agent round'
+        },
+        sessionId: {
+          type: 'string',
+          default: 'CP2077_TRPG',
+          description: 'Active session identifier'
         }
       }
     },
     async execute(args = {}) {
-      const userPrompt = args.userPrompt || '我想在铁匠铺购买一把精钢长剑，先看看自己的状态和钱够不够';
-      const sessionId = 'session_agent_verify_001';
+      const sessionId = args.sessionId || 'CP2077_TRPG';
+      const userPrompt =
+        args.userPrompt ||
+        (sessionId === 'CP2077_TRPG'
+          ? '我想跟烂牙购买一件荒坂精工剥离钳，先检查我的状态和金币够不够'
+          : '我想在铁匠铺购买一把精钢长剑，先看看自己的状态和钱够不够');
       const timestamp = Math.floor(Date.now() / 1000);
 
-      let container = createInitialDataContainer();
+      let container;
+      if (sessionId === 'CP2077_TRPG') {
+        container = {
+          stats: {
+            hp: 100,
+            max_hp: 100,
+            mp: 50,
+            max_mp: 50,
+            gold: 100,
+            weight: 0,
+            max_weight: 50
+          },
+          inventory: [],
+          flags: {
+            current_location: '夜之城 · 歌舞伎区',
+            contact: '烂牙 (Rot-tooth)',
+            main_quest_stage: '1',
+            current_mission: '推进第1幕_入局：前往车祸现场提取芯片'
+          }
+        };
+      } else {
+        container = createInitialDataContainer();
+      }
 
       // Top-level Blueprint Node Architecture Mapping
       const blueprintControlMapping = {
@@ -163,10 +194,13 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
       // =========================================================================
       // STEP 1: Agent Step 1 - Perception & State Inspection
       // =========================================================================
+      const isCp2077 = sessionId === 'CP2077_TRPG';
       const step1Thinking = [
         '【Agent 多步推理 · 阶段 1：感知与状态检视】',
         '• 编排总控：由蓝图节点 [n_agent_gate] 激活 [n_agent_director_actor] 导演-演员双 Agent 模式，物理屏蔽未命中的剧本接力与单Agent思维链；',
-        '• 用户意图分析：玩家明确表达在铁匠铺购买装备意愿（精钢长剑），并要求核实自身状态与金币；',
+        isCp2077
+          ? '• 用户意图分析：玩家在 CP2077_TRPG 会话中向烂牙购买任务装备（荒坂精工剥离钳），并要求核实自身状态与金币；'
+          : '• 用户意图分析：玩家明确表达在铁匠铺购买装备意愿（精钢长剑），并要求核实自身状态与金币；',
         '• 触发工具契约：大模型严禁凭空编造数值，必须调用蓝图预设定义的确定性查询工具：',
         '  1. 蓝图节点 [n_tool_check_inv] -> 触发工具 call: check_inventory()，查询行囊现有物品及初始负重；',
         '  2. 蓝图节点 [n_tool_get_stats] -> 触发工具 call: get_player_stats()，查询玩家持有金币 (gold)、生命 (hp) 与承重上限 (max_weight)。'
@@ -218,14 +252,18 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
       // =========================================================================
       // STEP 2: Agent Step 2 - Reasoning on Observation & Mutate Decision
       // =========================================================================
+      const targetItem = isCp2077
+        ? { id: 'arasaka_stripping_pliers', name: '荒坂精工剥离钳', price: 50, weight: 2 }
+        : { id: 'iron_sword', name: '精钢长剑', price: 50, weight: 10 };
+
       const step2Thinking = [
         '【Agent 多步推理 · 阶段 2：状态推演与门禁预估】',
-        '• 观察上一步工具反馈：玩家当前持有 150 G 金币，当前行囊负重 18.0 kg，最大负重 40.0 kg；',
-        '• 目标交易参数：精钢长剑 (iron_sword)，单价 50 G，单重 10 kg；',
+        `• 观察上一步工具反馈：玩家当前持有 ${container.stats.gold} G 金币，当前行囊负重 ${container.stats.weight} kg，最大负重 ${container.stats.max_weight} kg；`,
+        `• 目标交易参数：${targetItem.name} (${targetItem.id})，单价 ${targetItem.price} G，单重 ${targetItem.weight} kg；`,
         '• 蓝图逻辑门禁预判定：',
-        '  - 蓝图算术门禁 [n_gate_gold]：持有 150 G >= 50 G -> 判定通过 (PASS)，放行结算；',
-        '  - 蓝图负重门禁 [n_gate_weight]：当前 18 kg + 增重 10 kg = 28 kg <= 40 kg -> 判定通过 (PASS)；',
-        '• 决策派发：调用由蓝图节点 [n_tool_buy_item] 定义的原子交易契约：buy_item(item_id="iron_sword", unit_price=50, unit_weight=10)；',
+        `  - 蓝图算术门禁 [n_gate_gold]：持有 ${container.stats.gold} G >= ${targetItem.price} G -> 判定通过 (PASS)，放行结算；`,
+        `  - 蓝图负重门禁 [n_gate_weight]：当前 ${container.stats.weight} kg + 增重 ${targetItem.weight} kg <= ${container.stats.max_weight} kg -> 判定通过 (PASS)；`,
+        `• 决策派发：调用由蓝图节点 [n_tool_buy_item] 定义的原子交易契约：buy_item(item_id="${targetItem.id}", unit_price=${targetItem.price}, unit_weight=${targetItem.weight})；`,
         '• 底层流水线绑定：交易生效后，由计算器节点 [n_calc_gold_deduct] 执行扣费，由回执节点 [n_ret_trade_ok] 封装响应，并向 UI 布局节点 [n_ui_layout_hud] 发射 HUD Patch。'
       ].join('\n');
 
@@ -235,11 +273,11 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
           name: 'buy_item',
           definedByBlueprintNode: 'n_tool_buy_item',
           arguments: {
-            item_id: 'iron_sword',
-            name: '精钢长剑',
+            item_id: targetItem.id,
+            name: targetItem.name,
             count: 1,
-            unit_price: 50,
-            unit_weight: 10
+            unit_price: targetItem.price,
+            unit_weight: targetItem.weight
           }
         }
       ];
@@ -264,29 +302,29 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
         conditionGatesEvaluated: {
           gate_gold: {
             blueprintNode: 'n_gate_gold',
-            required: 50,
-            current: 150,
+            required: targetItem.price,
+            current: container.stats.gold + targetItem.price,
             passed: true,
-            statusText: 'PASS: 150 >= 50'
+            statusText: `PASS: ${container.stats.gold + targetItem.price} >= ${targetItem.price}`
           },
           gate_weight: {
             blueprintNode: 'n_gate_weight',
-            current: 18,
-            added: 10,
-            projected: 28,
-            max: 40,
+            current: container.stats.weight - targetItem.weight,
+            added: targetItem.weight,
+            projected: container.stats.weight,
+            max: container.stats.max_weight,
             passed: true,
-            statusText: 'PASS: 28 <= 40'
+            statusText: `PASS: ${container.stats.weight} <= ${container.stats.max_weight}`
           }
         },
         calculatorMutations: {
           goldDeduction: {
             blueprintNode: 'n_calc_gold_deduct',
-            formula: '150 - 50 = 100 G'
+            formula: `${container.stats.gold + targetItem.price} - ${targetItem.price} = ${container.stats.gold} G`
           },
           inventoryAdded: {
-            itemId: 'iron_sword',
-            name: '精钢长剑',
+            itemId: targetItem.id,
+            name: targetItem.name,
             count: 1
           },
           weightRecomputed: `${container.stats.weight} kg`
@@ -310,17 +348,26 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
         '【Agent 多步推理 · 阶段 3：终稿结构化装配与收口】',
         '• 输出 Schema 控制节点：由蓝图节点 [n_invoke_schema_narrative] (schemaId: "rpg_turn_summary") 强制约束输出格式；',
         '• 结构化契约装配：严格按 schema 要求输出四大顶级键：thinking, status_bar, options, narrative；',
-        '• 状态同步：status_bar 必须使用 [n_calc_gold_deduct] 运算后的最新值 (HP 90/100, Gold 100 G, Weight 23.5/40 kg)；',
+        `• 状态同步：status_bar 必须使用 [n_calc_gold_deduct] 运算后的最新值 (HP ${container.stats.hp}/${container.stats.max_hp}, Gold ${container.stats.gold} G, Weight ${container.stats.weight}/${container.stats.max_weight} kg)；`,
         '• 历史记忆安全：提示词编译流水线由 PromptCompiler 倒序滑动裁剪器（ReverseSlidingPruner）监控，若多轮对话超限则保留前3轮与首尾锚点，杜绝 Token 爆炸；',
-        '• 正文生成：导演 Agent 驱动环境异动、铁匠交付神态与长剑质感描写，并生成推演路标选项。'
+        isCp2077
+          ? '• 正文生成：导演 Agent 驱动歌舞伎区暗巷氛围、烂牙交付剥离钳神态与全息霓虹质感，沉淀 PLOT_SUMMARY 并生成推进第1幕的路标选项。'
+          : '• 正文生成：导演 Agent 驱动环境异动、铁匠交付神态与长剑质感描写，并生成推演路标选项。'
       ].join('\n');
 
-      const finalNarrative = [
-        '铁匠老赫尔曼从通红的淬火桶中抽出那柄精钢长剑，泛着幽蓝寒光的剑身在昏暗的锻炉火光下如镜般冷冽。',
-        '“五十枚金币，不多不少，算你识货。”赫尔曼粗粝的大手在粗布围裙上擦了擦，一把抓起木柜台上的金币袋。金币撞击发出清脆沉闷的叮当声，转眼被他塞进了腰间的皮兜里。',
-        '他将一条牛皮剑鞘推到你面前：“拿好了。这柄剑是用黑岩矿石掺了冷锻精钢打出来的，重十个罗磅，握在手里沉，但劈开哥布林的脑壳绝不会卷刃。”',
-        '你伸出右手握紧剑柄，冰凉坚实的缠革传来沉甸甸的分量。将长剑收进剑鞘挂在腰侧，行囊因新添的精钢略显下沉，但步伐依然稳健。'
-      ].join('\n\n');
+      const finalNarrative = isCp2077
+        ? [
+            '烂牙浑浊发黄的眼珠在破旧战术护目镜后骨碌转动，枯槁的手指从油腻的帆布工具包里掏出一柄泛着冷冽微光的剥离钳。',
+            '“五十枚金币，不多不少。荒坂九代精工剥离钳，带生物静电绝缘层，拆车祸现场那些冒烟的高危芯片最合适不过。”他将一把沉甸甸的工具推过锈迹斑斑的铁皮柜台。',
+            '他咧开缺牙的嘴笑了笑：“拿好了，小巷尽头莫克斯帮又在闹事，巡逻队半小时后换班，那是你唯一的潜入窗口。”',
+            '你伸出右手握紧剥离钳，冰凉坚实的复合碳纤维握把传来可靠的分量。别在战术腰带上，行囊微微沉了沉，步伐依然敏捷。'
+          ].join('\n\n')
+        : [
+            '铁匠老赫尔曼从通红的淬火桶中抽出那柄精钢长剑，泛着幽蓝寒光的剑身在昏暗的锻炉火光下如镜般冷冽。',
+            '“五十枚金币，不多不少，算你识货。”赫尔曼粗粝的大手在粗布围裙上擦了擦，一把抓起木柜台上的金币袋。金币撞击发出清脆沉闷的叮当声，转眼被他塞进了腰间的皮兜里。',
+            '他将一条牛皮剑鞘推到你面前：“拿好了。这柄剑是用黑岩矿石掺了冷锻精钢打出来的，重十个罗磅，握在手里沉，但劈开哥布林的脑壳绝不会卷刃。”',
+            '你伸出右手握紧剑柄，冰凉坚实的缠革传来沉甸甸的分量。将长剑收进剑鞘挂在腰侧，行囊因新添的精钢略显下沉，但步伐依然稳健。'
+          ].join('\n\n');
 
       const finalStructuredResponse = {
         thinking: step3Thinking,
@@ -329,11 +376,17 @@ function createTestAgentMultistepTool(config = resolveConfig()) {
           gold: `${container.stats.gold} G`,
           weight: `${container.stats.weight}/${container.stats.max_weight} kg`
         },
-        options: [
-          '拔出精钢长剑在铁匠铺外的稻草人上试招',
-          '向老赫尔曼打听关于黑岩矿脉的异动传闻',
-          '离开铁匠铺，前往迷雾镇集市采购干粮补给'
-        ],
+        options: isCp2077
+          ? [
+              '握紧荒坂剥离钳，趁夜色前往车祸现场提取军工芯片',
+              '向烂牙打听丽姿酒吧莫克斯帮与漩涡帮的最新风声',
+              '检查自身植入体状态，准备应对可能遭遇的潜入战斗'
+            ]
+          : [
+              '拔出精钢长剑在铁匠铺外的稻草人上试招',
+              '向老赫尔曼打听关于黑岩矿脉的异动传闻',
+              '离开铁匠铺，前往迷雾镇集市采购干粮补给'
+            ],
         narrative: finalNarrative
       };
 
