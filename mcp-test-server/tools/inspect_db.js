@@ -125,7 +125,7 @@ function createInspectDbTool(config) {
           }
           const states = db
             .prepare(
-              'SELECT id, conversation_id, state_json, updated_at FROM session_states ORDER BY id DESC LIMIT ?'
+              'SELECT session_id, state_json, updated_at FROM session_states ORDER BY session_id DESC LIMIT ?'
             )
             .all(limit);
           const parsed = states.map((s) => {
@@ -136,8 +136,7 @@ function createInspectDbTool(config) {
               dataContainer = s.state_json;
             }
             return {
-              id: s.id,
-              conversation_id: s.conversation_id,
+              session_id: s.session_id,
               updated_at: s.updated_at,
               dataContainer,
             };
