@@ -13,7 +13,9 @@ pub async fn load_session_state(db: &SqlitePool, session_id: i64) -> Result<Data
         .map_err(|e| format!("查询 session_states 失败: {}", e).replace('\\', "/"))?;
 
     if let Some(row) = row_opt {
-        let json_str: String = row.try_get("state_json").unwrap_or_default();
+        let json_str: String = row
+            .try_get("state_json")
+            .map_err(|e| format!("读取 session_state.state_json 失败: {}", e).replace('\\', "/"))?;
         let state: DataContainer = serde_json::from_str(&json_str)
             .map_err(|e| format!("解析 session_state 数据失败: {}", e).replace('\\', "/"))?;
         Ok(state)

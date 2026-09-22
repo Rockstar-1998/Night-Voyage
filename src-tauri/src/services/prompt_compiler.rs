@@ -634,19 +634,24 @@ pub async fn compile_prompt(
     }
 
     let game_state: Option<crate::models::game_state::DataContainer> = {
-        let row_opt = sqlx::query("SELECT state_json FROM session_states WHERE session_id = ?")
+        use sqlx::Row;
+        sqlx::query("SELECT state_json FROM session_states WHERE session_id = ?")
             .bind(input.conversation_id)
             .fetch_optional(db)
             .await
-            .ok()
-            .flatten();
-        if let Some(row) = row_opt {
-            use sqlx::Row;
-            let json_str: String = row.try_get("state_json").unwrap_or_default();
-            serde_json::from_str(&json_str).ok()
-        } else {
-            None
-        }
+            .map_err(|err| format!("查询 session_states 失败: {}", err).replace('\\', "/"))?
+            .map(|row| row.try_get::<String, _>("state_json"))
+            .transpose()
+            .map_err(|err| {
+                format!("读取 session_states.state_json 失败: {}", err).replace('\\', "/")
+            })?
+            .map(|json_str| {
+                serde_json::from_str::<crate::models::game_state::DataContainer>(&json_str)
+            })
+            .transpose()
+            .map_err(|err| {
+                format!("解析 session_state 数据失败: {}", err).replace('\\', "/")
+            })?
     };
 
     let exec_context = BlueprintExecutionContext {

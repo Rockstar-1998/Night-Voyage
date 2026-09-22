@@ -276,6 +276,33 @@ const XUANQING_HUD_CSS = `
   color: #f8fafc;
   font-family: monospace;
 }
+
+/* 加载失败显式报错条 */
+.hud-error {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+
+.hud-error-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #fb7185;
+}
+
+.hud-error-msg {
+  font-size: 11px;
+  font-family: monospace;
+  color: #fda4af;
+  word-break: break-all;
+}
 `;
 
 export const PersistentHudContainer: Component<PersistentHudContainerProps> = (props) => {
@@ -287,6 +314,7 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
   const [inventory, setInventory] = createSignal<InventoryItem[]>([]);
   const [flags, setFlags] = createSignal<Record<string, string>>({});
   const [schemaPatches, setSchemaPatches] = createSignal<Record<string, any>>({});
+  const [loadError, setLoadError] = createSignal<string | null>(null);
 
   onMount(() => {
     if (hostEl && !hostEl.shadowRoot) {
@@ -323,22 +351,26 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
   createEffect(() => {
     const sId = props.sessionId;
     if (sId) {
+      setLoadError(null);
       sessionGameStateGet(sId)
         .then((state) => {
-          if (state) {
-            setStats(state.stats || {});
-            setInventory(state.inventory || []);
-            setFlags(state.flags || {});
-          }
+          setStats(state?.stats || {});
+          setInventory(state?.inventory || []);
+          setFlags(state?.flags || {});
+          setLoadError(null);
         })
         .catch((err) => {
-          console.warn('[PersistentHUD] load initial state failed:', err);
+          setStats({});
+          setInventory([]);
+          setFlags({});
+          setLoadError(err instanceof Error ? err.message : String(err));
         });
     } else {
       setStats({});
       setInventory([]);
       setFlags({});
       setSchemaPatches({});
+      setLoadError(null);
     }
   });
 
@@ -397,6 +429,16 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
                   </button>
                 </div>
               </div>
+
+              {/* 加载失败显式报错：不静默呈现空面板 */}
+              <Show when={loadError()}>
+                {(msg) => (
+                  <div class="hud-error" role="alert">
+                    <span class="hud-error-title">状态加载失败</span>
+                    <span class="hud-error-msg">{msg()}</span>
+                  </div>
+                )}
+              </Show>
 
               {/* 折叠区 */}
               <Show when={!collapsed()}>
