@@ -7,6 +7,8 @@ use tokio::sync::Mutex;
 mod commands;
 mod db;
 mod llm;
+#[cfg(all(desktop, debug_assertions))]
+mod mcp;
 mod models;
 mod network;
 mod repositories;
@@ -61,6 +63,18 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 db::cleanup_stale_rooms(&cleanup_pool).await;
             });
+
+            // 开发期 MCP 端点：把真实后端能力暴露给代理进程现场驱动。
+            // 仅桌面 debug 构建存在；监听失败只记录日志，不阻断应用启动。
+            // 详见 src/mcp/mod.rs 与 .trae/specs/nv-mcp-dev-endpoint/spec.md。
+            #[cfg(all(desktop, debug_assertions))]
+            {
+                let mcp_app = app_handle.clone();
+                let mcp_db = pool.clone();
+                tauri::async_runtime::spawn(async move {
+                    mcp::start(mcp_app, mcp_db).await;
+                });
+            }
 
             Ok(())
         })
