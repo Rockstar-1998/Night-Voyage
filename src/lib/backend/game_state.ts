@@ -25,6 +25,6 @@ export async function agentDiceRoll(skill: string, dc: number, modifier: number)
   return invoke<DiceRollResult>('agent_dice_roll', { skill, dc, modifier });
 }
 
-export async function agentValidateBannedWords(text: string, customWords?: string[]): Promise<void> {
-  return invoke<void>('agent_validate_banned_words', { text, customWords: customWords || [] });
+export async function agentValidateBannedWords(sessionId: number, text: string): Promise<void> {
+  return invoke<void>('agent_validate_banned_words', { sessionId, text });
 }

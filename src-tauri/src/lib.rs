@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 mod commands;
 mod db;
 mod llm;
-#[cfg(all(desktop, debug_assertions))]
+#[cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))]
 mod mcp;
 mod models;
 mod network;
@@ -65,9 +65,12 @@ pub fn run() {
             });
 
             // 开发期 MCP 端点：把真实后端能力暴露给代理进程现场驱动。
-            // 仅桌面 debug 构建存在；监听失败只记录日志，不阻断应用启动。
+            // 存在条件 = 桌面 + (debug 构建 或 显式开启 `mcp-dev` feature)。
+            // 默认发行版（build_dual_release.bat）不含它；带端点的实例用
+            // `cargo build --release --features mcp-dev` 生成。
+            // 监听失败只记录日志，不阻断应用启动。
             // 详见 src/mcp/mod.rs 与 .trae/specs/nv-mcp-dev-endpoint/spec.md。
-            #[cfg(all(desktop, debug_assertions))]
+            #[cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))]
             {
                 let mcp_app = app_handle.clone();
                 let mcp_db = pool.clone();
@@ -140,10 +143,14 @@ pub fn run() {
             commands::game_state::session_tool_call_execute,
             commands::game_state::agent_dice_roll,
             commands::game_state::agent_validate_banned_words,
+            commands::action_bridge::action_bridge_whitelist_get,
+            commands::action_bridge::action_bridge_whitelist_set,
             commands::ui_layout::preset_ui_layout_list,
             commands::ui_layout::preset_ui_layout_get,
             commands::ui_layout::preset_ui_layout_save,
             commands::ui_layout::preset_ui_layout_delete,
+            commands::ui_layout::preset_ui_layout_activate,
+            commands::ui_layout::preset_ui_layout_for_conversation,
             commands::chat::messages_list,
             commands::chat::send_message,
             commands::chat::chat_submit_input,

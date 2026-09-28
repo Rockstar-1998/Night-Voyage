@@ -44,6 +44,14 @@ pub enum NodeType {
     ConditionGate,
     /// ToolCall 结果返回节点
     ToolReturn,
+    /// 容器读原语节点（工具链步骤）：按 inspect_kind 读取 DataContainer 片段
+    Inspector,
+    /// 跨域读原语节点（工具链步骤）：代理调用白名单内的既有命令
+    Querier,
+    /// 禁词词库与 Nudge 参数节点（编排资产，计划 §6.3）
+    BannedWordsConfig,
+    /// 剧本流水线参数节点（编排资产：阶段/工作区/锚点涂黑，计划 §6.2）
+    ScriptwriterPipeline,
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig,
@@ -90,6 +98,14 @@ pub enum NodeConfig {
     ConditionGate(ConditionGateConfig),
     /// ToolCall 结果返回节点
     ToolReturn(ToolReturnConfig),
+    /// 容器读原语节点（工具链步骤）
+    Inspector(InspectorConfig),
+    /// 跨域读原语节点（工具链步骤）
+    Querier(QuerierConfig),
+    /// 禁词词库与 Nudge 参数节点（编排资产）
+    BannedWordsConfig(BannedWordsConfig),
+    /// 剧本流水线参数节点（编排资产）
+    ScriptwriterPipeline(ScriptwriterPipelineConfig),
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig(UiLayoutConfig),
@@ -117,6 +133,10 @@ impl NodeConfig {
             Self::Calculator(_) => NodeType::Calculator,
             Self::ConditionGate(_) => NodeType::ConditionGate,
             Self::ToolReturn(_) => NodeType::ToolReturn,
+            Self::Inspector(_) => NodeType::Inspector,
+            Self::Querier(_) => NodeType::Querier,
+            Self::BannedWordsConfig(_) => NodeType::BannedWordsConfig,
+            Self::ScriptwriterPipeline(_) => NodeType::ScriptwriterPipeline,
             Self::UiLayoutConfig(_) => NodeType::UiLayoutConfig,
         }
     }
@@ -388,10 +408,17 @@ pub struct FieldDisplayConfig {
 
 fn default_true() -> bool { true }
 
-/// 独立 Schema 调用节点配置，用于按需激活指定 schema_id 的结构化输出规范
+/// 独立 Schema 调用节点配置，用于按需激活指定 schema_id 的结构化输出规范。
+///
+/// 命名遵循**蓝图图 JSON 的 snake_case 约定**（与 `ToolDefinitionConfig` 等同族配置一致，
+/// 前端 `src/lib/blueprint/types.ts` 也按 `schema_id` 读写）；此前误加的 `rename_all = "camelCase"`
+/// 会让反序列化去找 `schemaId`，导致该节点存取即失败。
+///
+/// `alias = "schemaId"` 只用于读取**改名之前落库的存量图**：两个名字都没有仍然按缺字段报错，
+/// 不做任何猜测性填充。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct InvokeSchemaConfig {
+    #[serde(alias = "schemaId")]
     pub schema_id: String,
 }
 
@@ -461,6 +488,113 @@ pub struct ToolReturnConfig {
     pub is_blocked: bool,
     #[serde(default)]
     pub is_locked: bool,
+}
+
+/// Inspector 节点配置（工具链步骤）：读取 DataContainer 的指定片段。
+///
+/// `inspect_kind`：`"inventory"`（背包清单+负重+金币）/ `"stats"`（全部数值属性）
+/// / `"item"`（单件详情，`key_expr` 解析出 item_id）/ `"scratchpad"`（工作区变量，
+/// `key_expr` 解析出变量名）。读取结果写入链上下文 `inspect`，供 ToolReturn 模板
+/// 以 `{inspect.<字段>}` 引用（数组/对象按通用 JSON 渲染，spec §2.0）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectorConfig {
+    pub inspect_kind: String,
+    /// item / scratchpad 的键表达式（点路径，如 `args.item_id`）
+    #[serde(default)]
+    pub key_expr: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+/// Querier 节点配置（工具链步骤）：跨域读原语。
+///
+/// 经 action_bridge 白名单代理调用**既有 Tauri 命令**（如世界书条目查询），
+/// JSON 结果写入链上下文 `query`。机制不知道目标域是什么——域语义全在
+/// `command` 与 `args_template`（命令名与参数模板，来自蓝图资产，spec §2A.5）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuerierConfig {
+    pub command: String,
+    /// 命令参数模板：字符串值支持 `{表达式}` 占位（上下文栈见 spec §2.0）
+    #[serde(default)]
+    pub args_template: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+/// 禁词词库与 Nudge 参数节点（编排资产，计划 §6.3）。
+///
+/// `words` 即过滤全集：代码不再携带内置默认词库（不可知化 I1）——未添加本节点
+/// 的预设禁词过滤为空。`max_nudge_retries` 与 `nudge_instruction_template` 缺省值
+/// 保持计划 §6.3 行为（最多 2 次；模板含 `{hits}` 与 `{remaining}` 占位符）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BannedWordsConfig {
+    #[serde(default)]
+    pub words: Vec<String>,
+    #[serde(default = "default_max_nudge_retries")]
+    pub max_nudge_retries: u8,
+    #[serde(default = "default_nudge_instruction_template")]
+    pub nudge_instruction_template: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_max_nudge_retries() -> u8 {
+    2
+}
+
+fn default_nudge_instruction_template() -> String {
+    "以下词语违反内容约束：{hits}。请只重写正文，保持剧情走向与已完成的事实不变；不要解释这条指令本身。剩余自纠机会 {remaining} 次。".to_string()
+}
+
+/// 剧本流水线的单阶段定义。
+///
+/// `stage`：`"drafter"` / `"critic"` / `"refiner"`（执行顺序按数组序）；
+/// `workspace_key`：该阶段产出写入的共享工作区变量；`prompt`：该阶段指令（与
+/// 主链 compile_prompt 装配的系统设定叠加）；`tools`：该阶段子代理可用的契约
+/// 引用数组（按 tool_name 指向图中 ToolDefinition，编译期校验存在）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptwriterStage {
+    pub stage: String,
+    pub workspace_key: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
+/// 剧本流水线参数节点（编排资产，计划 §6.2）。
+///
+/// `anchor_tail_chars` / `blackout_marker` 是 refiner 上下文装配的普通字段：
+/// 历史正文替换为标记文本、仅保留末尾 N 字尾锚（Layer 1 锚点涂黑）。缺省值
+/// 保持计划 §6.2 行为（50 字 + 计划标记文案）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptwriterPipelineConfig {
+    pub stages: Vec<ScriptwriterStage>,
+    #[serde(default = "default_anchor_tail_chars")]
+    pub anchor_tail_chars: u32,
+    #[serde(default = "default_blackout_marker")]
+    pub blackout_marker: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_anchor_tail_chars() -> u32 {
+    50
+}
+
+fn default_blackout_marker() -> String {
+    "【前文背景已锁定】\n…（此处为已发生的情节，润色时不得改写）…".to_string()
+}
+
+impl Default for BannedWordsConfig {
+    /// serde 缺省值之外的运行期缺省：未配置词库的预设以「空词库 + 计划 Nudge 参数」运行。
+    fn default() -> Self {
+        Self {
+            words: Vec::new(),
+            max_nudge_retries: default_max_nudge_retries(),
+            nudge_instruction_template: default_nudge_instruction_template(),
+            is_locked: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -680,6 +814,33 @@ pub struct BlueprintCompilePreviewDto {
     pub structured_output_schema: serde_json::Value,
     /// 完整拼接后的纯文本（便于一键复制）
     pub full_prompt_text: String,
+    /// 本次执行流激活的 ToolCall 契约（名称 + 描述），供创作者确认工具是否真的被激活。
+    #[serde(default)]
+    pub active_tools: Vec<BlueprintPreviewToolDto>,
+    /// 本次执行流激活的 UI 布局配置（layout_id + mount_type），未激活为 None。
+    #[serde(default)]
+    pub active_ui_layout: Option<UiLayoutConfig>,
+    /// 每个契约的执行计划摘要（步骤链 + 是否有回执模板）。
+    #[serde(default)]
+    pub tool_plans: Vec<BlueprintPreviewToolPlanDto>,
+}
+
+/// 预览用的 ToolCall 契约摘要
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlueprintPreviewToolDto {
+    pub tool_name: String,
+    pub description: String,
+}
+
+/// 预览用的工具执行计划摘要：让"这个工具会做什么"在编译期就可见。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlueprintPreviewToolPlanDto {
+    pub tool_name: String,
+    /// 形如 `gate:gold total_cost` / `calc:stats.gold -= total_cost`
+    pub steps: Vec<String>,
+    pub has_return_template: bool,
 }
 
 /// 预设关联的会话简要选项，供前端下拉切换
@@ -733,6 +894,10 @@ pub struct BlueprintExecutionResult {
     /// 当前执行流激活的 ToolCall 契约列表
     #[serde(default)]
     pub active_tools: Vec<ToolDefinitionConfig>,
+    /// 每个激活契约对应的执行计划（键为 `tool_name`）：沿该 ToolDefinition 的
+    /// `out`/`pass` 边收集到的 Calculator / ConditionGate 步骤链与 ToolReturn 回执。
+    #[serde(default)]
+    pub tool_plans: HashMap<String, crate::models::tool_plan::ToolPlan>,
     /// 当前执行流激活的 UI 布局配置 (若有)
     #[serde(default)]
     pub active_ui_layout: Option<UiLayoutConfig>,

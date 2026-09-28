@@ -256,7 +256,8 @@ async fn world_book_get(db: &sqlx::SqlitePool, id: i64) -> Result<WorldBookSumma
     Ok(row_to_world_book_summary(row))
 }
 
-async fn world_book_entry_get(
+/// 读取单个世界书条目（含关键词）。pub(crate)：action_bridge 的跨域读分发复用。
+pub(crate) async fn world_book_entry_get(
     db: &sqlx::SqlitePool,
     id: i64,
 ) -> Result<WorldBookEntryRecord, String> {

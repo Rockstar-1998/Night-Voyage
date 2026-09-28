@@ -40,6 +40,11 @@ struct StreamResponseData {
     full_content: String,
     thinking_content: Option<String>,
     stop_reason: Option<String>,
+    /// 本轮模型请求执行的工具调用（Anthropic `tool_use` / OpenAI `tool_calls`）。
+    ///
+    /// 非空时调用方必须执行这些工具并把 `tool_result` 回注后继续下一跳——
+    /// 这里**不再**用 `Err` 终止流（旧实现以错误收场，ToolCall 回路因此断掉）。
+    pending_tool_uses: Vec<PendingToolUseSkeleton>,
 }
 
 fn map_structured_field_part_type(key: &str) -> &'static str {
@@ -127,6 +132,174 @@ async fn is_round_aborted(db: &SqlitePool, round_id: i64, assistant_message_id: 
 /// The initial send is not auto-retry and is not counted here.
 const MAX_CHAT_AUTO_RETRY_ATTEMPTS: i64 = 4;
 
+/// 多智能体的一轮：子角色串行产出 → 最终稿作为本轮正文落盘。
+///
+/// 与单模型路径的差别（如实告知，不假装等价）：
+/// - 正文**不是逐字流式**（流水线要等各子角色产出完毕），前端收到的是一个整段 chunk；
+/// - 不产出结构化输出，因此 schema 类 HUD 补丁在本轮为空（预置的 Schema 联动在单模型路径上）。
+async fn run_multi_agent_round(
+    app: &AppHandle,
+    db: &SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    provider_id: i64,
+    assistant_message_id: i64,
+    pipeline: crate::services::agent::orchestrator::AgentPipeline,
+) {
+    let fail = |error: String| {
+        let app = app.clone();
+        let db = db.clone();
+        async move {
+            let _ = RoundRepository::mark_failed(&db, round_id).await;
+            let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &error).await;
+            let _ = app.emit(
+                "llm-stream-error",
+                StreamErrorEvent {
+                    conversation_id,
+                    round_id,
+                    message_id: assistant_message_id,
+                    error,
+                },
+            );
+            broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+        }
+    };
+
+    let provider = match ConversationRepository::load_provider(db, provider_id).await {
+        Ok(provider) => provider,
+        Err(err) => return fail(format!("剧本流水线加载 provider 失败: {}", err)).await,
+    };
+
+    let (system, user_input) = match crate::services::agent::orchestrator::assemble_context(
+        db,
+        conversation_id,
+        round_id,
+        &provider.provider_kind,
+        &provider.model_name,
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(err) => return fail(format!("剧本流水线装配上下文失败: {}", err)).await,
+    };
+
+    let final_text = match pipeline {
+        crate::services::agent::orchestrator::AgentPipeline::Scriptwriter => {
+            crate::services::agent::orchestrator::run_scriptwriter_pipeline(
+                app, db, conversation_id, round_id, &provider, &system, &user_input,
+            )
+            .await
+        }
+        crate::services::agent::orchestrator::AgentPipeline::DirectorActor => {
+            crate::services::agent::director_actor::run_director_actor_pipeline(
+                app, db, conversation_id, round_id, &provider, &system, &user_input,
+            )
+            .await
+        }
+        // 单模型不会走到这里：调用方只把两条流水线路由进来。
+        crate::services::agent::orchestrator::AgentPipeline::Single => {
+            return fail("内部错误：单模型流水线不应进入多智能体执行路径".to_string()).await
+        }
+    };
+
+    let final_text = match final_text {
+        Ok(text) => text,
+        Err(err) => return fail(format!("{}执行失败: {}", pipeline.label(), err)).await,
+    };
+
+    // 禁词门禁同样作用于流水线终稿：流水线不豁免内容合规。
+    // 词库来自蓝图 BannedWordsConfig 节点资产（spec §2A.3，D-6）。
+    let (banned_config, _) = match crate::services::agent_runtime::load_blueprint_configs_for_conversation(
+        db,
+        conversation_id,
+    )
+    .await
+    {
+        Ok(configs) => configs,
+        Err(err) => return fail(format!("加载蓝图编排配置失败: {}", err)).await,
+    };
+    match crate::services::agent_guards::BannedWordsFilter::from_words(
+        &banned_config.map(|cfg| cfg.words).unwrap_or_default(),
+    ) {
+        Ok(filter) => {
+            if let Err(violation) = filter.validate(&final_text) {
+                let reason = format!(
+                    "剧本流水线终稿命中禁词（{}），本轮内容作废：{}",
+                    violation.matched_words.join("、"),
+                    violation.feedback_instruction
+                );
+                crate::services::agent::timeline::emit(
+                    app,
+                    conversation_id,
+                    round_id,
+                    crate::services::agent::timeline::TimelineKind::NudgeRetry,
+                    crate::services::agent::timeline::TimelineStatus::Failed,
+                    "剧本流水线终稿被禁词门禁拦截".to_string(),
+                    reason.clone(),
+                );
+                return fail(reason).await;
+            }
+        }
+        Err(err) => return fail(err).await,
+    }
+
+    if let Err(err) = MessageRepository::update_content(db, assistant_message_id, &final_text).await {
+        return fail(format!("写入流水线终稿失败: {}", err)).await;
+    }
+    if let Err(err) = MessageRepository::replace_content_parts(
+        db,
+        assistant_message_id,
+        &[PendingMessageContentPart {
+            part_index: 0,
+            part_type: "text".to_string(),
+            text_value: Some(final_text.clone()),
+            json_value: None,
+            asset_id: None,
+            mime_type: None,
+            tool_use_id: None,
+            tool_name: None,
+            is_hidden: false,
+        }],
+    )
+    .await
+    {
+        return fail(format!("写入流水线终稿 parts 失败: {}", err)).await;
+    }
+
+    let _ = RetrySnapshotRepository::mark_succeeded(db, round_id).await;
+    let _ = emit_llm_stream_event(
+        app,
+        conversation_id,
+        round_id,
+        assistant_message_id,
+        &provider.provider_kind,
+        "text",
+        Some(0),
+        Some("text"),
+        Some(final_text.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    broadcast_stream_end(app, conversation_id, round_id, assistant_message_id).await;
+
+    // 轮后任务：记忆提取 / 摘要 / 结构化持久化等，单模型路径该做的事流水线也一样要做。
+    spawn_post_round_tasks(
+        app,
+        db,
+        conversation_id,
+        round_id,
+        provider_id,
+        assistant_message_id,
+        &HashMap::new(),
+        &std::collections::HashSet::new(),
+        &final_text,
+    )
+    .await;
+}
+
 pub fn spawn_stream_task(
     app: AppHandle,
     db: SqlitePool,
@@ -146,6 +319,86 @@ pub fn spawn_stream_task(
         // Auto-retry loop: keep retrying until the model responds successfully
         // or the user aborts. Each retry reuses the same assistant_message_id
         // and round, clearing previous partial content.
+        //
+        // Nudge 状态与循环同寿命：同一回合内的禁词纠偏次数在这里累计。
+        // 词库与 Nudge 参数来自蓝图 BannedWordsConfig 节点资产（spec §2A.3，D-1/D-6）；
+        // 加载失败属确定性故障：按本任务统一失败路径收尾，不放行未校验内容。
+        let banned_config: crate::models::blueprint::BannedWordsConfig = match
+            crate::services::agent_runtime::load_blueprint_configs_for_conversation(
+                &db, conversation_id,
+            )
+            .await
+        {
+            Ok((config, _)) => config.unwrap_or_default(),
+            Err(err) => {
+                let _ = RoundRepository::mark_failed(&db, round_id).await;
+                let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &err).await;
+                let _ = app.emit(
+                    "llm-stream-error",
+                    StreamErrorEvent {
+                        conversation_id,
+                        round_id,
+                        message_id: assistant_message_id,
+                        error: err,
+                    },
+                );
+                broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+                return;
+            }
+        };
+        let mut nudge_guard = crate::services::agent::nudge::NudgeGuard::new(
+            banned_config.max_nudge_retries,
+            banned_config.nudge_instruction_template.clone(),
+        );
+        let mut ephemeral_instruction: Option<String> = None;
+
+        // 多智能体编排：本轮是"单模型直出"还是某条流水线，先定下来。
+        // 解析失败（Gate 选项未知/无预设）即报错收尾——不默认落到单模型，
+        // 否则用户以为在跑流水线、实际是单模型直出。
+        let chat_mode =
+            crate::repositories::conversation_repository::ConversationRepository::load_chat_mode(
+                &db, conversation_id,
+            )
+            .await
+            .unwrap_or_default();
+        let pipeline = match crate::services::agent::orchestrator::resolve_pipeline(
+            &db,
+            conversation_id,
+            &chat_mode,
+        )
+        .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                let _ = RoundRepository::mark_failed(&db, round_id).await;
+                let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &err).await;
+                let _ = app.emit(
+                    "llm-stream-error",
+                    StreamErrorEvent {
+                        conversation_id,
+                        round_id,
+                        message_id: assistant_message_id,
+                        error: err,
+                    },
+                );
+                broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+                return;
+            }
+        };
+
+        if pipeline != crate::services::agent::orchestrator::AgentPipeline::Single {
+            run_multi_agent_round(
+                &app,
+                &db,
+                conversation_id,
+                round_id,
+                provider_id,
+                assistant_message_id,
+                pipeline,
+            )
+            .await;
+            return;
+        }
         loop {
             // Mark the retry attempt in the snapshot (tracks attempt_count).
             // Capture the snapshot to read attempt_count for retry notifications.
@@ -187,6 +440,7 @@ pub fn spawn_stream_task(
                 provider_id,
                 assistant_message_id,
                 attachments.clone(),
+                ephemeral_instruction.as_deref(),
             )
             .await;
 
@@ -326,7 +580,97 @@ pub fn spawn_stream_task(
                     // Continue the loop to retry.
                     continue;
                 }
-                Ok((data, db_mappings)) => {
+                Ok((data, db_mappings, persistent_hud_keys)) => {
+                    // 禁词门禁：在终稿对外可见/进入历史之前拦。
+                    // 命中且有额度 → 作废本轮正文、注入纠偏指令重生成；
+                    // 额度用尽 → 硬错收尾，且**不把违规文本留在库里**。
+                    let guard = match crate::services::agent_guards::BannedWordsFilter::from_words(
+                        &banned_config.words,
+                    ) {
+                        Ok(guard) => guard,
+                        Err(err) => {
+                            // 门禁构建失败属确定性故障：报错收尾，不放行未校验内容。
+                            let _ = RoundRepository::mark_failed(&db, round_id).await;
+                            let _ = app.emit(
+                                "llm-stream-error",
+                                StreamErrorEvent {
+                                    conversation_id,
+                                    round_id,
+                                    message_id: assistant_message_id,
+                                    error: err.clone(),
+                                },
+                            );
+                            broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+                            break;
+                        }
+                    };
+                    if let Err(violation) = guard.validate(&data.full_content) {
+                        match nudge_guard.on_violation(&violation) {
+                            crate::services::agent::nudge::NudgeDecision::Retry { attempt, instruction } => {
+                                let _ = sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+                                    .bind(assistant_message_id)
+                                    .execute(&db)
+                                    .await;
+                                let _ = sqlx::query("UPDATE messages SET content = '' WHERE id = ?")
+                                    .bind(assistant_message_id)
+                                    .execute(&db)
+                                    .await;
+                                let _ = sqlx::query(
+                                    "UPDATE message_rounds SET status = 'streaming', updated_at = ? WHERE id = ?",
+                                )
+                                .bind(crate::utils::now_ts())
+                                .bind(round_id)
+                                .execute(&db)
+                                .await;
+
+                                crate::services::agent::timeline::emit(
+                                    &app,
+                                    conversation_id,
+                                    round_id,
+                                    crate::services::agent::timeline::TimelineKind::NudgeRetry,
+                                    crate::services::agent::timeline::TimelineStatus::Blocked,
+                                    format!("禁词命中，第 {}/{} 次自纠重写", attempt, nudge_guard.max_retries()),
+                                    format!("命中: {}", violation.matched_words.join("、")),
+                                );
+                                ephemeral_instruction = Some(instruction);
+                                continue;
+                            }
+                            crate::services::agent::nudge::NudgeDecision::GiveUp { message, .. } => {
+                                let _ = sqlx::query("DELETE FROM message_content_parts WHERE message_id = ?")
+                                    .bind(assistant_message_id)
+                                    .execute(&db)
+                                    .await;
+                                let _ = sqlx::query("UPDATE messages SET content = '' WHERE id = ?")
+                                    .bind(assistant_message_id)
+                                    .execute(&db)
+                                    .await;
+                                let _ = RoundRepository::mark_failed(&db, round_id).await;
+                                let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &message).await;
+                                crate::services::agent::timeline::emit(
+                                    &app,
+                                    conversation_id,
+                                    round_id,
+                                    crate::services::agent::timeline::TimelineKind::NudgeRetry,
+                                    crate::services::agent::timeline::TimelineStatus::Failed,
+                                    "禁词自纠额度用尽，本轮作废".to_string(),
+                                    message.clone(),
+                                );
+                                let _ = app.emit(
+                                    "llm-stream-error",
+                                    StreamErrorEvent {
+                                        conversation_id,
+                                        round_id,
+                                        message_id: assistant_message_id,
+                                        error: message,
+                                    },
+                                );
+                                broadcast_stream_end(&app, conversation_id, round_id, assistant_message_id).await;
+                                break;
+                            }
+                        }
+                    }
+                    // 未被拦截：清掉临时指令，本次成功收尾。
+                    ephemeral_instruction = None;
                     let _ = RetrySnapshotRepository::mark_succeeded(&db, round_id).await;
                     if !data.full_content.is_empty() {
                         spawn_post_round_tasks(
@@ -337,6 +681,7 @@ pub fn spawn_stream_task(
                             provider_id,
                             assistant_message_id,
                             &db_mappings,
+                            &persistent_hud_keys,
                             &data.full_content,
                         )
                         .await;
@@ -371,6 +716,7 @@ async fn spawn_post_round_tasks(
     provider_id: i64,
     assistant_message_id: i64,
     db_mappings: &HashMap<String, String>,
+    persistent_hud_keys: &std::collections::HashSet<String>,
     structured_content: &str,
 ) {
     // Blueprint db_mappings persistence: extract declared fields from the
@@ -387,14 +733,21 @@ async fn spawn_post_round_tasks(
         }
     }
 
-    // Broadcast HUD state patch if structured_content contains schema fields
-    if !structured_content.trim().is_empty() {
+    // Broadcast HUD state patch if structured_content contains schema fields.
+    //
+    // 只发 `DisplayTarget::PersistentHUD` 的字段（计划 §4.3 通道 B）：
+    // `InlineMessage` 字段（narrative / thinking 之类）属于气泡流内容，
+    // 一起塞进常驻面板会让面板变成"什么都有"的垃圾桶；`persistent_hud_keys` 为空
+    // （没有激活任何 Schema，或 Schema 没标 PersistentHUD 字段）时**不发** schema 补丁，
+    // 通道 A（DataContainer 的 stats/inventory/flags）不受影响。
+    if !structured_content.trim().is_empty() && !persistent_hud_keys.is_empty() {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(structured_content) {
             if let Some(obj) = parsed.as_object() {
-                let mut patches = std::collections::HashMap::new();
-                for (k, v) in obj {
-                    patches.insert(k.clone(), v.clone());
-                }
+                let patches: std::collections::HashMap<String, serde_json::Value> = obj
+                    .iter()
+                    .filter(|(key, _)| persistent_hud_keys.contains(key.as_str()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
                 if !patches.is_empty() {
                     let current_state = crate::services::agent_runtime::load_session_state(db, conversation_id)
                         .await
@@ -535,7 +888,15 @@ async fn stream_llm_response(
     provider_id: i64,
     assistant_message_id: i64,
     attachments: Vec<ChatAttachment>,
-) -> Result<(StreamResponseData, HashMap<String, String>), String> {
+    ephemeral_instruction: Option<&str>,
+) -> Result<
+    (
+        StreamResponseData,
+        HashMap<String, String>,
+        std::collections::HashSet<String>,
+    ),
+    String,
+> {
     let provider = ConversationRepository::load_provider(&db, provider_id).await?;
 
     dbg_eprintln!(
@@ -606,6 +967,7 @@ async fn stream_llm_response(
             max_retrieved_detail_tokens: None,
         },
         log_dir: debug_log_dir.clone(),
+        ephemeral_instruction: ephemeral_instruction.map(str::to_string),
     };
     dbg_eprintln!("[chat] stream_llm_response: calling compile_prompt...");
     // Build the memory backend lazily for mem0-mode conversations only.
@@ -833,7 +1195,40 @@ async fn stream_llm_response(
         debug_log_dir.as_deref(),
     );
 
-    stream_result.map(|data| (data, compiled_prompt.db_mappings.clone()))
+    // 模型请求了工具调用：由编排层执行 + 回注，随后开新轮续跑（计划 §5 / §6）。
+    // 放在 debug 日志之后、返回之前，串行完成，避免"流还没收尾就并发开新轮"。
+    if let Ok(data) = &stream_result {
+        if !data.pending_tool_uses.is_empty() {
+            let chat_mode =
+                crate::repositories::conversation_repository::ConversationRepository::load_chat_mode(
+                    &db, conversation_id,
+                )
+                .await?;
+            if chat_mode != "director_agents" {
+                return Err(format!(
+                    "会话 chat_mode='{}' 但模型返回了 ToolCall；只有 agent 模式（director_agents）支持工具调用",
+                    chat_mode
+                ));
+            }
+            crate::services::chat_service::ChatService::dispatch_tool_calls(
+                app.clone(),
+                db.clone(),
+                conversation_id,
+                round_id,
+                data.pending_tool_uses.clone(),
+                &compiled_prompt.tool_plans,
+            )
+            .await?;
+        }
+    }
+
+    stream_result.map(|data| {
+        (
+            data,
+            compiled_prompt.db_mappings.clone(),
+            compiled_prompt.persistent_hud_keys.clone(),
+        )
+    })
 }
 
 async fn execute_provider_http_request(
@@ -932,6 +1327,7 @@ async fn stream_openai_text_response(
     let mut prompt_tokens: Option<i64> = None;
     let mut completion_tokens: Option<i64> = None;
     let mut last_abort_check = Instant::now();
+    let mut pending_openai_tool_uses: Vec<PendingToolUseSkeleton> = Vec::new();
 
     let mut structured_parser = if response_mode == Some("structured_json") {
         Some(crate::services::structured_output_parser::StructuredOutputParser::new())
@@ -1054,6 +1450,7 @@ async fn stream_openai_text_response(
                     full_content: structured_json_content.unwrap_or(full_content),
                     thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                     stop_reason: finish_reason,
+                    pending_tool_uses: Vec::new(),
                 });
             }
 
@@ -1200,6 +1597,57 @@ async fn stream_openai_text_response(
                 }
             }
 
+            // OpenAI 的流式工具调用：`delta.tool_calls` 按 index 分片下发，
+            // id / function.name 通常只在首片出现，arguments 需要逐片拼接。
+            if let Some(tool_calls) = value
+                .get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| choice.get("delta"))
+                .and_then(|delta| delta.get("tool_calls"))
+                .and_then(|calls| calls.as_array())
+            {
+                for call in tool_calls {
+                    let index = call.get("index").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let slot = match pending_openai_tool_uses
+                        .iter_mut()
+                        .find(|skeleton| skeleton.provider_part_index == index)
+                    {
+                        Some(existing) => existing,
+                        None => {
+                            pending_openai_tool_uses.push(PendingToolUseSkeleton {
+                                provider_part_index: index,
+                                tool_use_id: String::new(),
+                                tool_name: String::new(),
+                                input_json: String::new(),
+                            });
+                            let last = pending_openai_tool_uses.len() - 1;
+                            &mut pending_openai_tool_uses[last]
+                        }
+                    };
+                    if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
+                        if !id.is_empty() {
+                            slot.tool_use_id = id.to_string();
+                        }
+                    }
+                    if let Some(name) = call
+                        .get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(|v| v.as_str())
+                    {
+                        if !name.is_empty() {
+                            slot.tool_name = name.to_string();
+                        }
+                    }
+                    if let Some(arguments) = call
+                        .get("function")
+                        .and_then(|function| function.get("arguments"))
+                        .and_then(|v| v.as_str())
+                    {
+                        slot.input_json.push_str(arguments);
+                    }
+                }
+            }
+
             if let Some(reason) = value
                 .get("choices")
                 .and_then(|choices| choices.get(0))
@@ -1309,6 +1757,70 @@ async fn stream_openai_text_response(
         );
         append_content_part_text(&mut content_parts[content_index], &full_content);
     }
+    // OpenAI 的 finish_reason=tool_calls：落盘 + 逐条 emit，然后把待执行清单交回调用方。
+    // 这里**不走** finalize（本轮没有正文终稿），由编排层执行工具、回注 tool_result 后继续。
+    if !pending_openai_tool_uses.is_empty() {
+        for skeleton in &pending_openai_tool_uses {
+            let next_index = content_parts.len() as i64;
+            let content_index = ensure_content_part_by_key(
+                &mut content_parts,
+                &mut content_part_lookup,
+                &skeleton.tool_use_id,
+                next_index,
+                "tool_use",
+            );
+            content_parts[content_index].tool_use_id = Some(skeleton.tool_use_id.clone());
+            content_parts[content_index].tool_name = Some(skeleton.tool_name.clone());
+            content_parts[content_index].json_value =
+                Some(normalize_tool_use_input_json(&skeleton.input_json));
+        }
+
+        RoundRepository::persist_tool_use_skeletons(
+            db,
+            conversation_id,
+            round_id,
+            assistant_message_id,
+            provider_kind,
+            &full_content,
+            content_parts.as_slice(),
+            &pending_openai_tool_uses,
+        )
+        .await?;
+
+        for skeleton in &pending_openai_tool_uses {
+            emit_llm_stream_event(
+                app,
+                conversation_id,
+                round_id,
+                assistant_message_id,
+                provider_kind,
+                "tool_use",
+                Some(skeleton.provider_part_index),
+                Some("tool_use"),
+                None,
+                Some(normalize_tool_use_input_json(&skeleton.input_json)),
+                Some(crate::models::LlmStreamToolUseEvent {
+                    id: skeleton.tool_use_id.clone(),
+                    name: skeleton.tool_name.clone(),
+                }),
+                Some("tool_use"),
+                prompt_tokens,
+                completion_tokens,
+            )?;
+        }
+
+        return Ok(StreamResponseData {
+            full_content,
+            thinking_content: if thinking_content.is_empty() {
+                None
+            } else {
+                Some(thinking_content)
+            },
+            stop_reason: Some("tool_use".to_string()),
+            pending_tool_uses: pending_openai_tool_uses,
+        });
+    }
+
     emit_stream_message_stop(
         app,
         conversation_id,
@@ -1334,6 +1846,7 @@ async fn stream_openai_text_response(
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                 stop_reason: finish_reason,
+                pending_tool_uses: Vec::new(),
             });
         }
         return Err("LLM 响应为空".to_string());
@@ -1354,6 +1867,7 @@ async fn stream_openai_text_response(
         full_content: structured_json_content.unwrap_or(full_content),
         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
         stop_reason: finish_reason,
+        pending_tool_uses: Vec::new(),
     })
 }
 
@@ -1378,7 +1892,7 @@ async fn stream_anthropic_text_response(
     let mut latest_stop_reason: Option<String> = None;
     let provider_kind: &str = "anthropic";
     let mut raw_prose = String::new();
-    let mut pending_tool_use: Option<PendingToolUseSkeleton> = None;
+    let mut pending_tool_uses: Vec<PendingToolUseSkeleton> = Vec::new();
     let mut prompt_tokens: Option<i64> = None;
     let mut completion_tokens: Option<i64> = None;
     let mut last_abort_check = Instant::now();
@@ -1481,7 +1995,7 @@ async fn stream_anthropic_text_response(
                                 .get("input")
                                 .map(|input| input.to_string())
                                 .or_else(|| Some("{}".to_string()));
-                            pending_tool_use = Some(PendingToolUseSkeleton {
+                            pending_tool_uses.push(PendingToolUseSkeleton {
                                 provider_part_index,
                                 tool_use_id: tool_use_id.clone(),
                                 tool_name: tool_name.clone(),
@@ -1705,8 +2219,10 @@ async fn stream_anthropic_text_response(
                                     }
                                 }
                             } else {
-                                let pending_tool_use_ref = pending_tool_use
-                                    .as_mut()
+                                // 按事件里的 index 找到对应的 pending tool_use（一轮可能并发多个）
+                                let pending_tool_use_ref = pending_tool_uses
+                                    .iter_mut()
+                                    .find(|pending| pending.provider_part_index == provider_part_index)
                                     .ok_or_else(|| {
                                         "Anthropic tool_use input_json_delta 缺少 pending tool_use 上下文"
                                             .to_string()
@@ -1858,10 +2374,12 @@ async fn stream_anthropic_text_response(
                         }
                     }
                     if stop_reason == "tool_use" {
-                        let pending_tool_use = pending_tool_use.take().ok_or_else(|| {
-                            "Anthropic 返回 stop_reason=tool_use 但未找到已解析 tool_use block"
-                                .to_string()
-                        })?;
+                        if pending_tool_uses.is_empty() {
+                            return Err(
+                                "Anthropic 返回 stop_reason=tool_use 但未找到已解析 tool_use block"
+                                    .to_string(),
+                            );
+                        }
                         flush_text_delta_event(
                             app,
                             conversation_id,
@@ -1870,39 +2388,49 @@ async fn stream_anthropic_text_response(
                             "anthropic",
                             &mut pending,
                         )?;
-                        RoundRepository::persist_tool_use_agent_skeleton(
+                        RoundRepository::persist_tool_use_skeletons(
                             db,
                             conversation_id,
                             round_id,
                             assistant_message_id,
+                            "anthropic",
                             &full_content,
                             content_parts.as_slice(),
-                            &pending_tool_use,
+                            &pending_tool_uses,
                         )
                         .await?;
-                        emit_llm_stream_event(
-                            app,
-                            conversation_id,
-                            round_id,
-                            assistant_message_id,
-                            "anthropic",
-                            "tool_use",
-                            Some(pending_tool_use.provider_part_index),
-                            Some("tool_use"),
-                            None,
-                            Some(normalize_tool_use_input_json(&pending_tool_use.input_json)),
-                            Some(crate::models::LlmStreamToolUseEvent {
-                                id: pending_tool_use.tool_use_id.clone(),
-                                name: pending_tool_use.tool_name.clone(),
-                            }),
-                            Some("tool_use"),
-                            None,
-                            None,
-                        )?;
-                        return Err(format!(
-                            "Anthropic tool_use '{}' 已记录为最小 agent mode 骨架，等待未来 tool_result 回注",
-                            pending_tool_use.tool_name
-                        ));
+                        for skeleton in &pending_tool_uses {
+                            emit_llm_stream_event(
+                                app,
+                                conversation_id,
+                                round_id,
+                                assistant_message_id,
+                                "anthropic",
+                                "tool_use",
+                                Some(skeleton.provider_part_index),
+                                Some("tool_use"),
+                                None,
+                                Some(normalize_tool_use_input_json(&skeleton.input_json)),
+                                Some(crate::models::LlmStreamToolUseEvent {
+                                    id: skeleton.tool_use_id.clone(),
+                                    name: skeleton.tool_name.clone(),
+                                }),
+                                Some("tool_use"),
+                                None,
+                                None,
+                            )?;
+                        }
+                        // 不再以错误终止：把待执行的工具交回调用方，由编排层执行并回注 tool_result。
+                        return Ok(StreamResponseData {
+                            full_content,
+                            thinking_content: if thinking_content.is_empty() {
+                                None
+                            } else {
+                                Some(thinking_content)
+                            },
+                            stop_reason: Some("tool_use".to_string()),
+                            pending_tool_uses,
+                        });
                     }
                 }
                 "message_stop" => {
@@ -1986,6 +2514,7 @@ async fn stream_anthropic_text_response(
                         full_content: structured_json_content.unwrap_or(full_content),
                         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                         stop_reason: latest_stop_reason.clone(),
+                        pending_tool_uses: Vec::new(),
                     });
                 }
                 "content_block_stop" => {
@@ -2133,6 +2662,7 @@ async fn stream_anthropic_text_response(
                 full_content: String::new(),
                 thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
                 stop_reason: latest_stop_reason.clone(),
+                pending_tool_uses: Vec::new(),
             });
         }
         return Err("LLM 响应为空".to_string());
@@ -2153,6 +2683,7 @@ async fn stream_anthropic_text_response(
         full_content: structured_json_content.unwrap_or(full_content),
         thinking_content: if thinking_content.is_empty() { None } else { Some(thinking_content) },
         stop_reason: latest_stop_reason.clone(),
+        pending_tool_uses: Vec::new(),
     })
 }
 

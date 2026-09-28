@@ -3,7 +3,8 @@ use tauri::{AppHandle, State};
 use crate::models::game_state::DataContainer;
 use crate::services::agent_guards::{BannedWordsFilter, BannedWordsViolation, DiceRollResult};
 use crate::services::agent_runtime::{
-    broadcast_hud_patch, execute_tool_call, load_session_state, reset_session_state, save_session_state,
+    broadcast_hud_patch, execute_tool_call_with_plan, load_session_state, reset_session_state,
+    resolve_tool_plan, save_session_state,
 };
 use crate::AppState;
 
@@ -50,25 +51,38 @@ pub async fn session_tool_call_execute(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<String, String> {
-    execute_tool_call(&state.db, &app, session_id, &tool_name, &arguments_json).await
+    let plan = resolve_tool_plan(&state.db, session_id, &tool_name).await?;
+    execute_tool_call_with_plan(&state.db, &app, session_id, &tool_name, &arguments_json, plan.as_ref())
+        .await
 }
 
 /// 执行确定性 D20 骰点检定
 #[tauri::command]
 pub fn agent_dice_roll(skill: String, dc: i64, modifier: i64) -> Result<DiceRollResult, String> {
-    Ok(DiceRollResult::roll(&skill, dc, modifier))
+    DiceRollResult::roll(&skill, dc, modifier)
 }
 
-/// 执行 Aho-Corasick 禁词检定
+/// 执行 Aho-Corasick 禁词检定（词库来自会话预设的 BannedWordsConfig 节点资产，D-6）
 #[tauri::command]
-pub fn agent_validate_banned_words(
+pub async fn agent_validate_banned_words(
+    state: State<'_, AppState>,
+    session_id: i64,
     text: String,
-    custom_words: Option<Vec<String>>,
 ) -> Result<(), BannedWordsViolation> {
-    let filter = BannedWordsFilter::new_with_custom(&custom_words.unwrap_or_default())
+    let (banned_cfg, _) =
+        crate::services::agent_runtime::load_blueprint_configs_for_conversation(
+            &state.db,
+            session_id,
+        )
+        .await
         .map_err(|e| BannedWordsViolation {
             matched_words: vec![],
             feedback_instruction: e,
         })?;
+    let words = banned_cfg.map(|cfg| cfg.words).unwrap_or_default();
+    let filter = BannedWordsFilter::from_words(&words).map_err(|e| BannedWordsViolation {
+        matched_words: vec![],
+        feedback_instruction: e,
+    })?;
     filter.validate(&text)
 }

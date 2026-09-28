@@ -214,6 +214,10 @@ pub async fn load_blueprint_gates(
             NodeConfig::Calculator(_) => None,
             NodeConfig::ConditionGate(_) => None,
             NodeConfig::ToolReturn(_) => None,
+            NodeConfig::Inspector(_) => None,
+            NodeConfig::Querier(_) => None,
+            NodeConfig::BannedWordsConfig(_) => None,
+            NodeConfig::ScriptwriterPipeline(_) => None,
             NodeConfig::UiLayoutConfig(_) => None,
         })
         .collect();
@@ -407,9 +411,54 @@ pub async fn preview_blueprint_with_session(
 
     let full_prompt_text = full_text_parts.join("\n\n");
 
+    // 编译预览要能回答"我的工具与 HUD 到底激活了没有"：把激活项与执行计划一并带出。
+    let active_tools = blueprint_result
+        .active_tools
+        .iter()
+        .map(|tool| crate::models::blueprint::BlueprintPreviewToolDto {
+            tool_name: tool.tool_name.clone(),
+            description: tool.description.clone(),
+        })
+        .collect();
+
+    let mut tool_plans: Vec<crate::models::blueprint::BlueprintPreviewToolPlanDto> = blueprint_result
+        .tool_plans
+        .values()
+        .map(|plan| crate::models::blueprint::BlueprintPreviewToolPlanDto {
+            tool_name: plan.tool_name.clone(),
+            steps: plan
+                .steps
+                .iter()
+                .map(|step| match step {
+                    crate::models::tool_plan::ToolStep::Calculate(cfg) => {
+                        format!("calc: {} {} {}", cfg.target, cfg.op, cfg.operand_a)
+                    }
+                    crate::models::tool_plan::ToolStep::Gate(cfg) => {
+                        format!("gate: {} {}", cfg.gate_type, cfg.expression)
+                    }
+                    crate::models::tool_plan::ToolStep::Inspect(cfg) => {
+                        format!("inspect: {} {}", cfg.inspect_kind, cfg.key_expr)
+                    }
+                    crate::models::tool_plan::ToolStep::Query(cfg) => {
+                        format!("query: {} (白名单命令)", cfg.command)
+                    }
+                })
+                .collect(),
+            has_return_template: plan
+                .success_return
+                .as_ref()
+                .map(|cfg| !cfg.return_template.trim().is_empty())
+                .unwrap_or(false),
+        })
+        .collect();
+    tool_plans.sort_by(|a, b| a.tool_name.cmp(&b.tool_name));
+
     Ok(BlueprintCompilePreviewDto {
         blocks,
         structured_output_schema: blueprint_result.structured_output_schema,
         full_prompt_text,
+        active_tools,
+        active_ui_layout: blueprint_result.active_ui_layout,
+        tool_plans,
     })
 }

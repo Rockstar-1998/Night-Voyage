@@ -10,7 +10,7 @@ use crate::models::{
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::message_repository::{
-    InsertMessageRecord, MessageRepository, PendingMessageContentPart,
+    normalize_tool_use_input_json, InsertMessageRecord, MessageRepository, PendingMessageContentPart,
 };
 use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
@@ -23,6 +23,24 @@ use crate::utils::now_ts;
 use crate::dbg_eprintln;
 
 const ALLOWED_IMAGE_MIME_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+/// 单个回合内允许的最大工具调用轮次数（模型 → 工具 → 回注 记为一轮）。
+///
+/// 上限存在的意义是防"模型无限 ToolCall 循环"：没有它，一个写错的提示就能让
+/// 会话持续烧 token 到用户手动中止。这是调度级安全护栏（机制，非玩法语义）；
+/// M3 落地编排节点类型后，可调上限随编排节点 config 暴露（spec §4 D-4）。
+const MAX_TOOL_ROUNDS_PER_TURN: i64 = 5;
+
+/// 一条工具回执：`tool_use_id` + 回执正文 + 是否失败/被门禁拦截。
+///
+/// 失败也必须回注（`is_error=true`），让模型拿到「金币不足」这类事实后继续叙事，
+/// 而不是让整轮对话静默中断。
+#[derive(Debug, Clone)]
+pub struct ToolResultInput {
+    pub tool_use_id: String,
+    pub content: String,
+    pub is_error: bool,
+}
 
 pub fn chat_debug_log(app: &AppHandle, message: &str) {
     dbg_eprintln!("[chat] {}", message);
@@ -581,15 +599,93 @@ impl ChatService {
         })
     }
 
-    pub async fn submit_tool_result(
+    /// 执行本轮模型请求的全部 ToolCall，并把回执批量回注（随后开新轮续跑）。
+    ///
+    /// 编排位置的说明：模型 → 工具 → 回注 → 再生成，这一跳由本函数收口。
+    /// 执行计划取自**本轮编译结果**（`compiled_prompt.tool_plans`），不再二次加载蓝图，
+    /// 避免"同一份图两处解析"产生漂移。
+    ///
+    /// 失败与拦截一律转成 `is_error=true` 的回注内容（C2：不让模型误以为成功，
+    /// 也不静默中断对话）。
+    pub async fn dispatch_tool_calls(
         app: AppHandle,
         db: SqlitePool,
         conversation_id: i64,
         round_id: i64,
-        tool_use_id: String,
-        content: String,
-        _is_error: bool,
+        pending: Vec<crate::repositories::message_repository::PendingToolUseSkeleton>,
+        tool_plans: &HashMap<String, crate::models::tool_plan::ToolPlan>,
+    ) -> Result<(), String> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        let mut results = Vec::with_capacity(pending.len());
+        for skeleton in &pending {
+            let arguments_json = normalize_tool_use_input_json(&skeleton.input_json);
+            let outcome = crate::services::agent_runtime::execute_tool_call_with_plan(
+                &db,
+                &app,
+                conversation_id,
+                &skeleton.tool_name,
+                &arguments_json,
+                tool_plans.get(&skeleton.tool_name),
+            )
+            .await;
+
+            let (content, is_error) = match outcome {
+                Ok(text) => (text, false),
+                Err(err) => (err, true),
+            };
+
+            // 时序泳道要看到"真实发生的事"，所以事件由后端发射（含拦截原文），
+            // 前端不再靠流事件推断。
+            crate::services::agent::timeline::emit(
+                &app,
+                conversation_id,
+                round_id,
+                crate::services::agent::timeline::TimelineKind::ToolCall,
+                if is_error {
+                    crate::services::agent::timeline::TimelineStatus::Blocked
+                } else {
+                    crate::services::agent::timeline::TimelineStatus::Success
+                },
+                format!(
+                    "ToolCall: {} ({})",
+                    skeleton.tool_name,
+                    if is_error { "被拦截/失败" } else { "执行成功" }
+                ),
+                content.clone(),
+            );
+
+            results.push(ToolResultInput {
+                tool_use_id: skeleton.tool_use_id.clone(),
+                content,
+                is_error,
+            });
+        }
+
+        Self::submit_tool_results(app, db, conversation_id, round_id, results).await?;
+        Ok(())
+    }
+
+    /// 批量提交工具回执：一条 user 消息承载 N 个 `tool_result` part，然后开新轮续跑。
+    ///
+    /// 与单条版本的区别：
+    /// - 一条 user 消息 + 递增 `part_index`（`message_content_parts` 有
+    ///   `UNIQUE(message_id, part_index)`，多条回执固定写 0 会直接撞约束）；
+    /// - 回执正文写真实内容（此前是 `[Tool Result for id]` 占位符，模型永远读不到事实）；
+    /// - 每个 `tool_use_id` 的状态与 `result_message_id` 逐个更新。
+    pub async fn submit_tool_results(
+        app: AppHandle,
+        db: SqlitePool,
+        conversation_id: i64,
+        round_id: i64,
+        results: Vec<ToolResultInput>,
     ) -> Result<serde_json::Value, String> {
+        if results.is_empty() {
+            return Err("submit_tool_results 收到空的回执列表".to_string());
+        }
+
         let chat_mode = ConversationRepository::load_chat_mode(&db, conversation_id).await?;
         if chat_mode != "director_agents" {
             return Err(
@@ -598,26 +694,23 @@ impl ChatService {
             );
         }
 
-        let tool_call_row = MessageRepository::find_tool_call_by_use_id(&db, &tool_use_id).await?;
-
-        let tool_call_row = tool_call_row.ok_or_else(|| {
-            format!(
-                "tool_use_id not found in message_tool_calls: {}",
-                tool_use_id
-            )
-        })?;
-
-        let tool_call_status: String = tool_call_row.try_get("status").unwrap_or_default();
-        if tool_call_status != "pending" {
+        // 工具轮次上限：防止模型无限 ToolCall 循环把 token 烧光。
+        let tool_rounds = Self::count_tool_rounds_since_last_user_input(&db, conversation_id).await?;
+        if tool_rounds >= MAX_TOOL_ROUNDS_PER_TURN {
             return Err(format!(
-                "tool_use_id {} is not in pending state (current: {})",
-                tool_use_id, tool_call_status
+                "本回合工具调用轮次已达上限（{} 轮），停止继续调用工具；请调整提示或蓝图后重试",
+                MAX_TOOL_ROUNDS_PER_TURN
             ));
         }
 
-        let tool_result_display = format!("[Tool Result for {}]", tool_use_id);
         let now = now_ts();
         let mut tx = db.begin().await.map_err(|err| err.to_string())?;
+
+        let display = if results.len() == 1 {
+            format!("[Tool Result for {}]", results[0].tool_use_id)
+        } else {
+            format!("[Tool Results x{}]", results.len())
+        };
 
         let user_message_id = MessageRepository::insert_record(
             &mut tx,
@@ -627,7 +720,7 @@ impl ChatService {
                 member_id: None,
                 role: "user",
                 message_kind: "user_visible",
-                content: &tool_result_display,
+                content: &display,
                 display_name: None,
                 is_hidden: false,
                 is_swipe: false,
@@ -638,17 +731,35 @@ impl ChatService {
         )
         .await?;
 
-        MessageRepository::insert_tool_result_content_part(
-            &mut tx,
-            user_message_id,
-            &content,
-            &tool_use_id,
-            now,
-        )
-        .await?;
+        for (part_index, result) in results.iter().enumerate() {
+            // 状态必须是 pending：非 pending 说明这条 tool_use 已被处理过，重复回注会污染历史。
+            let row = MessageRepository::find_tool_call_by_use_id(&db, &result.tool_use_id).await?;
+            let status: String = row
+                .as_ref()
+                .map(|row| row.try_get("status").unwrap_or_default())
+                .unwrap_or_default();
+            if status != "pending" {
+                return Err(format!(
+                    "tool_use_id {} 不是 pending 状态（当前: {}），拒绝重复回注",
+                    result.tool_use_id,
+                    if status.is_empty() { "未找到" } else { status.as_str() }
+                ));
+            }
 
-        MessageRepository::update_tool_call_status(&mut tx, user_message_id, now, &tool_use_id)
+            MessageRepository::insert_tool_result_content_part(
+                &mut tx,
+                user_message_id,
+                part_index as i64,
+                &result.content,
+                &result.tool_use_id,
+                result.is_error,
+                now,
+            )
             .await?;
+
+            MessageRepository::update_tool_call_status(&mut tx, user_message_id, now, &result.tool_use_id)
+                .await?;
+        }
 
         let new_round_id = RoundRepository::create_next(&mut tx, conversation_id, now).await?;
 
@@ -656,7 +767,23 @@ impl ChatService {
             .await?
             .ok_or_else(|| "会话尚未绑定 API 档案".to_string())?;
 
-        let aggregated_user_content = format!("[Tool Result for {}]", tool_use_id);
+        // 回执正文必须真正进入下一跳的上下文：聚合 user 消息的 content 就是模型读到的东西。
+        // 若这里仍写 `[Tool Result for id]` 占位符，模型永远拿不到「金币不足」这类事实，
+        // ToolCall 回注等于没做。短展示文案走 user_visible 消息，二者职责不同。
+        let aggregated_user_content = if results.len() == 1 {
+            results[0].content.clone()
+        } else {
+            let mut joined = String::from("【工具执行结果】\n");
+            for (index, result) in results.iter().enumerate() {
+                joined.push_str(&format!(
+                    "{}. [{}] {}\n",
+                    index + 1,
+                    result.tool_use_id,
+                    result.content
+                ));
+            }
+            joined
+        };
         let aggregate_message_id = MessageRepository::insert_record(
             &mut tx,
             InsertMessageRecord {
@@ -715,12 +842,58 @@ impl ChatService {
             provider_id,
             assistant_message_id,
             vec![],
-            false,  // auto_retry_enabled
+            false, // auto_retry_enabled
         );
 
         let round_state =
             RoundRepository::load_state(&db, conversation_id, Some(new_round_id)).await?;
         Ok(serde_json::to_value(round_state).unwrap_or_default())
+    }
+
+    /// 统计「本回合」已发生的工具轮次数（= 自最后一条普通用户输入以来，产生过待回执工具调用的轮次数）。
+    async fn count_tool_rounds_since_last_user_input(
+        db: &SqlitePool,
+        conversation_id: i64,
+    ) -> Result<i64, String> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT round_id) FROM agent_runs \
+             WHERE conversation_id = ? \
+               AND orchestration_mode LIKE '%pending_result%' \
+               AND started_at > COALESCE( \
+                     (SELECT MAX(created_at) FROM messages \
+                      WHERE conversation_id = ? AND role = 'user' \
+                        AND message_kind = 'user_visible' \
+                        AND content NOT LIKE '[Tool Result%'), 0)",
+        )
+        .bind(conversation_id)
+        .bind(conversation_id)
+        .fetch_one(db)
+        .await
+        .map_err(|err| format!("统计工具轮次失败: {}", err))?;
+        Ok(count)
+    }
+
+    pub async fn submit_tool_result(
+        app: AppHandle,
+        db: SqlitePool,
+        conversation_id: i64,
+        round_id: i64,
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    ) -> Result<serde_json::Value, String> {
+        Self::submit_tool_results(
+            app,
+            db,
+            conversation_id,
+            round_id,
+            vec![ToolResultInput {
+                tool_use_id,
+                content,
+                is_error,
+            }],
+        )
+        .await
     }
 
     pub async fn regenerate_round(

@@ -19,10 +19,18 @@ interface AgentDebugDrawerProps {
 interface TimelineEvent {
   id: string;
   time: string;
-  kind: 'tool_call' | 'gate' | 'calc' | 'hud_patch' | 'schema_prune';
+  kind:
+    | 'tool_call'
+    | 'gate'
+    | 'calc'
+    | 'hud_patch'
+    | 'schema_prune'
+    | 'schema_patch'
+    | 'nudge_retry'
+    | 'sub_agent';
   title: string;
   detail: string;
-  status: 'success' | 'blocked' | 'info';
+  status: 'success' | 'blocked' | 'failed' | 'info';
 }
 
 export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
@@ -34,9 +42,10 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
   // 运行态事件泳道（初始为空，由实际操作与事件驱动，禁止伪造假日志）
   const [timeline, setTimeline] = createSignal<TimelineEvent[]>([]);
 
-  // 调试工具执行状态
-  const [customToolName, setCustomToolName] = createSignal('buy_item');
-  const [customToolArgs, setCustomToolArgs] = createSignal('{"item_id": "health_potion", "count": 1, "cost": 50, "weight": 2}');
+  // 调试工具执行状态（默认留空：参数名以真实契约为准，不预填任何伪造数据（C11）。
+  // 直接点执行，后端契约校验会返回该契约的 required 字段清单，按提示填写即可。）
+  const [customToolName, setCustomToolName] = createSignal('');
+  const [customToolArgs, setCustomToolArgs] = createSignal('');
   const [toolResult, setToolResult] = createSignal<string | null>(null);
 
   // 骰点与禁词测试
@@ -107,9 +116,32 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
       }
     });
 
+    // 监听后端时序事件：泳道条目由**后端事实**驱动（工具调用/门禁判定/Nudge 重试/子智能体），
+    // 不再是前端根据流事件猜出来的。
+    const unlistenTimeline = listen<any>('agent:timeline_event', (event) => {
+      const payload = event.payload ?? {};
+      if (
+        props.sessionId &&
+        typeof payload.conversationId === 'number' &&
+        payload.conversationId !== props.sessionId
+      ) {
+        return;
+      }
+      const newEv: TimelineEvent = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        time: new Date().toLocaleTimeString(),
+        kind: (payload.kind ?? 'hud_patch') as TimelineEvent['kind'],
+        title: String(payload.title ?? '时序事件'),
+        detail: String(payload.detail ?? ''),
+        status: (payload.status ?? 'info') as TimelineEvent['status'],
+      };
+      setTimeline((prev) => [newEv, ...prev].slice(0, 200));
+    });
+
     onCleanup(() => {
       window.removeEventListener('keydown', handleKeyDown);
       unlistenPromise.then((unlisten) => unlisten());
+      unlistenTimeline.then((unlisten) => unlisten());
     });
   });
 
@@ -176,8 +208,12 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
   };
 
   const handleTestBanned = async () => {
+    if (!props.sessionId) {
+      setBannedResult('🚫 校验阻断：无会话上下文，无法加载蓝图禁词库');
+      return;
+    }
     try {
-      await agentValidateBannedWords(bannedTestText(), []);
+      await agentValidateBannedWords(props.sessionId, bannedTestText());
       setBannedResult('✅ 校验通过：未命中任何安全与违规词库');
       const newEv: TimelineEvent = {
         id: String(Date.now()),
@@ -420,7 +456,8 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                       type="text"
                       value={customToolName()}
                       onInput={(e) => setCustomToolName(e.currentTarget.value)}
-                      class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs text-white"
+                      placeholder="契约名，如 buy_item"
+                      class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs text-white placeholder:text-mist-solid/25"
                     />
                   </div>
                   <div class="space-y-1">
@@ -429,7 +466,8 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                       rows={3}
                       value={customToolArgs()}
                       onInput={(e) => setCustomToolArgs(e.currentTarget.value)}
-                      class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs font-mono text-white"
+                      placeholder='留空执行可获取该契约的必填参数清单，例如 {"item_id": "...", "unit_price": 30}'
+                      class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs font-mono text-white placeholder:text-mist-solid/25"
                     />
                   </div>
                   <button

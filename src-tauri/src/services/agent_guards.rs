@@ -1,39 +1,20 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::UNIX_EPOCH;
+
+use aho_corasick::AhoCorasick;
 use serde::{Deserialize, Serialize};
 
-/// 默认内置的跑团/角色扮演 AI 机械感与高频套话禁词库
-pub const DEFAULT_BANNED_WORDS: &[&str] = &[
-    "作为一个人工智能",
-    "作为一个AI",
-    "作为一个语言模型",
-    "作为一名人工智能",
-    "作为你的助手",
-    "嘴角勾起一抹弧度",
-    "嘴角勾起一抹笑意",
-    "嘴角勾起一抹冷笑",
-    "深吸了一口气",
-    "眸中闪过一丝",
-    "眼中闪过一丝",
-    "目光中闪过一丝",
-    "不可否认的是",
-    "如释重负地松了一口气",
-    "宛如一尊",
-    "宛如雕塑",
-    "心中暗暗想到",
-    "不由得一愣",
-    "神色复杂地看着你",
-    "淡淡地开口说道",
-    "微不可察地叹了口气",
-    "微不可察地皱了皱眉",
-    "空气仿佛在这一瞬间凝固",
-    "时间仿佛在此刻静止",
-];
-
-/// 确定性禁词校验器
+/// 确定性禁词校验器。
+///
+/// 匹配用 **Aho-Corasick 自动机**（计划 §6.3）：一遍扫描同时命中全部词条，
+/// 词库规模与扫描耗时解耦。
+///
+/// **词库完全来自调用方**（蓝图 `BannedWordsConfig` 节点资产，spec §2A.3）：
+/// 代码不携带内置默认词库（不可知化 I1，去硬化 D-6）——未配置词库的预设
+/// 禁词过滤为空，这是显式的资产决策而非代码默认。
 #[derive(Debug, Clone)]
 pub struct BannedWordsFilter {
+    automaton: AhoCorasick,
+    /// 与自动机内 pattern 下标一一对应（小写形式，用于大小写不敏感匹配）。
     patterns: Vec<String>,
 }
 
@@ -44,26 +25,33 @@ pub struct BannedWordsViolation {
     pub feedback_instruction: String,
 }
 
-impl BannedWordsFilter {
-    pub fn new_default() -> Result<Self, String> {
-        Self::new_with_custom(&[])
+fn build_automaton(patterns: &[String]) -> Result<AhoCorasick, String> {
+    AhoCorasick::builder()
+        .ascii_case_insensitive(true)
+        .build(patterns)
+        .map_err(|err| format!("构建禁词自动机失败: {}", err))
+}
+
+/// 把词库归一为「已排序去重的小写词条」。
+fn normalize_words(words: &[String]) -> Vec<String> {
+    let mut word_set = HashSet::new();
+    for word in words {
+        let trimmed = word.trim();
+        if !trimmed.is_empty() {
+            word_set.insert(trimmed.to_lowercase());
+        }
     }
+    let mut patterns: Vec<String> = word_set.into_iter().collect();
+    patterns.sort();
+    patterns
+}
 
-    pub fn new_with_custom(custom_words: &[String]) -> Result<Self, String> {
-        let mut word_set = HashSet::new();
-        for word in DEFAULT_BANNED_WORDS {
-            word_set.insert(word.to_string());
-        }
-        for word in custom_words {
-            let trimmed = word.trim();
-            if !trimmed.is_empty() {
-                word_set.insert(trimmed.to_string());
-            }
-        }
-
-        let mut patterns: Vec<String> = word_set.into_iter().collect();
-        patterns.sort();
-        Ok(Self { patterns })
+impl BannedWordsFilter {
+    /// 从蓝图 `BannedWordsConfig.words` 构建过滤器（词库即过滤全集，spec §2A.3）。
+    pub fn from_words(words: &[String]) -> Result<Self, String> {
+        let patterns = normalize_words(words);
+        let automaton = build_automaton(&patterns)?;
+        Ok(Self { automaton, patterns })
     }
 
     /// 检测文本中是否包含禁词。
@@ -84,16 +72,13 @@ impl BannedWordsFilter {
         }
     }
 
-    /// 查找所有匹配到的不重复禁词
+    /// 查找所有匹配到的不重复禁词（单遍扫描，命中即收）。
     pub fn find_violations(&self, text: &str) -> Vec<String> {
-        let lower_text = text.to_lowercase();
-        let mut found = Vec::new();
-
-        for pattern in &self.patterns {
-            if lower_text.contains(&pattern.to_lowercase()) {
-                found.push(pattern.clone());
-            }
-        }
+        let mut found: Vec<String> = self
+            .automaton
+            .find_iter(text)
+            .map(|mat| self.patterns[mat.pattern().as_usize()].clone())
+            .collect();
 
         found.sort();
         found.dedup();
@@ -101,21 +86,16 @@ impl BannedWordsFilter {
     }
 }
 
-static RNG_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-fn random_d20() -> i64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(987654321);
-    let seq = RNG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // SplitMix64 算法产出高质量确定性随机熵
-    let mut x = nanos ^ seq.wrapping_mul(0x9E3779B97F4A7C15);
-    x = x.wrapping_add(0x9E3779B97F4A7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
-    x = x ^ (x >> 31);
-    ((x % 20) + 1) as i64
+/// 密码学安全随机源产出的 d20（1..=20）。
+///
+/// 用 `getrandom`（OS CSPRNG）而不是"时间戳 ^ 计数器 + SplitMix64"：
+/// 骰点是"不可篡改检定"的信任基础，可预测的伪随机让玩家/模型有机会操纵结果。
+/// 取随机数失败时**报错**而不是回退到弱随机（C2）。
+pub fn random_d20() -> Result<i64, String> {
+    let mut buf = [0u8; 8];
+    getrandom::getrandom(&mut buf).map_err(|err| format!("获取安全随机数失败: {}", err))?;
+    let value = u64::from_le_bytes(buf);
+    Ok(((value % 20) + 1) as i64)
 }
 
 /// D20 骰点检定参数规约
@@ -145,9 +125,12 @@ pub struct DiceRollResult {
 }
 
 impl DiceRollResult {
-    /// 执行确定性 CSPRNG / SplitMix64 D20 掷骰检定
-    pub fn roll(skill: &str, dc: i64, modifier: i64) -> Self {
-        let d20_roll = random_d20();
+    /// 执行 D20 掷骰检定（随机源为 OS CSPRNG，见 [`random_d20`]）。
+    ///
+    /// 取随机数失败时返回 `Err`：宁可让本次检定失败可见，也不用弱随机顶替——
+    /// 骰点是"不可篡改"的信任基础。
+    pub fn roll(skill: &str, dc: i64, modifier: i64) -> Result<Self, String> {
+        let d20_roll = random_d20()?;
         let total = d20_roll + modifier;
 
         let is_critical_success = d20_roll == 20;
@@ -178,7 +161,7 @@ impl DiceRollResult {
             "技能检定 [{skill}]: 掷出 {d20_roll}{mod_sign}{modifier} = {total} vs DC {dc} -> {outcome_str}"
         );
 
-        Self {
+        Ok(Self {
             skill: skill.to_string(),
             d20_roll,
             modifier,
@@ -189,6 +172,6 @@ impl DiceRollResult {
             is_critical_failure,
             formula,
             summary,
-        }
+        })
     }
 }

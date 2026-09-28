@@ -11,6 +11,7 @@ use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
     AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
     InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
+    ToolDefinitionConfig, ToolReturnConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -73,6 +74,26 @@ pub enum BlueprintError {
     /// `context.protocol` is neither `anthropic` nor `chat_completions`，无法裁定
     /// 采样参数节点该走哪套协议方言。
     UnknownSamplingProtocol(String),
+    /// ConditionGate 的 `gate_type` 不是 `gold` / `weight` / `slots` 之一。
+    ///
+    /// 门禁判定未知类型必须当场失败：若按"未知即放行"处理，门禁形同虚设，
+    /// 数据容器会被本该被拦截的 ToolCall 改写（C2 零静默回退）。
+    UnknownGateType { node: String, gate_type: String },
+    /// ConditionGate 的 `expression` 不是可解析的数值。
+    ///
+    /// 门禁阈值解析失败必须当场失败：按 0 处理会让"金币不足"等判定恒真/恒假，
+    /// 属于把确定性运算交给容错默认值（C2）。
+    NonNumericGateExpression { node: String, expression: String },
+    /// ConditionGate 需要实时数据容器做判定，但执行上下文里没有 `game_state`。
+    MissingGameState(String),
+    /// 两个 `ToolDefinition` 节点声明了同一个 `tool_name` —— 计划无法唯一绑定。
+    DuplicateToolName(String),
+    /// ToolCall 链上出现了 Calculator / ConditionGate / ToolReturn 之外的节点。
+    ToolChainInvalidStep { node: String, node_type: String },
+    /// 工具链专属节点（Inspector / Querier）出现在主执行流上。
+    ChainOnlyNodeOnMainFlow { node: String, node_type: String },
+    /// 同类编排资产节点（BannedWordsConfig / ScriptwriterPipeline）在图中出现多次。
+    DuplicateOrchestrationNode { node_type: &'static str, id: String },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -141,6 +162,39 @@ impl std::fmt::Display for BlueprintError {
                      `chat_completions`)"
                 )
             }
+            Self::UnknownGateType { node, gate_type } => write!(
+                f,
+                "condition gate node {node} uses unknown gate_type `{gate_type}` \
+                 (expected `gold`, `weight` or `slots`)"
+            ),
+            Self::NonNumericGateExpression { node, expression } => write!(
+                f,
+                "condition gate node {node} has a non-numeric expression `{expression}`"
+            ),
+            Self::MissingGameState(node) => write!(
+                f,
+                "condition gate node {node} requires the session DataContainer, \
+                 but the execution context carries no game_state"
+            ),
+            Self::DuplicateToolName(name) => {
+                write!(f, "duplicate tool definition for tool_name `{name}`")
+            }
+            Self::ToolChainInvalidStep { node, node_type } => write!(
+                f,
+                "tool call chain reaches node {node} of type `{node_type}`; \
+                 only calculator / condition_gate / inspector / querier / tool_return \
+                 are allowed on a tool chain"
+            ),
+            Self::ChainOnlyNodeOnMainFlow { node, node_type } => write!(
+                f,
+                "node {node} of type `{node_type}` is a tool-chain step; it must sit on a \
+                 ToolDefinition chain, not on the main execution flow"
+            ),
+            Self::DuplicateOrchestrationNode { node_type, id } => write!(
+                f,
+                "duplicate orchestration node `{id}`: at most one `{node_type}` node is \
+                 allowed per graph"
+            ),
         }
     }
 }
@@ -281,6 +335,7 @@ pub async fn execute_blueprint(
         display_config: HashMap::new(),
         active_schemas: Vec::new(),
         active_tools: Vec::new(),
+        tool_plans: HashMap::new(),
         active_ui_layout: None,
         schema_field_order: Vec::new(),
     };
@@ -435,11 +490,45 @@ fn traverse(
         }
         NodeConfig::ToolDefinition(cfg) => {
             result.active_tools.push(cfg.clone());
-            let next = next_node_id(graph, node_id, "out")?;
-            traverse(graph, &next, context, result, visited, path, values)?;
+            // 同时把该契约的执行计划（下游 Calculator / ConditionGate / ToolReturn）编译出来，
+            // 供运行期 `run_tool_plan` 在真实 DataContainer 上执行（计划 §5）。
+            //
+            // 整条工具链是「规则定义」而不是主流程的一段：编译期把链上的门禁/运算折进 ToolPlan，
+            // 并把遍历**跳过**整条链（从链尾继续），避免编译期用当前状态替模型做门禁判定。
+            let (plan, chain_tail) = collect_tool_plan(graph, cfg, node_id)?;
+            if result
+                .tool_plans
+                .insert(cfg.tool_name.clone(), plan)
+                .is_some()
+            {
+                return Err(BlueprintError::DuplicateToolName(cfg.tool_name.clone()));
+            }
+            if let Ok(next) = next_node_id(graph, &chain_tail, "out") {
+                traverse(graph, &next, context, result, visited, path, values)?;
+            }
         }
         NodeConfig::UiLayoutConfig(cfg) => {
             result.active_ui_layout = Some(cfg.clone());
+            let next = next_node_id(graph, node_id, "out")?;
+            traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::Inspector(cfg) => {
+            let _ = cfg;
+            return Err(BlueprintError::ChainOnlyNodeOnMainFlow {
+                node: node_id.to_string(),
+                node_type: "inspector".to_string(),
+            });
+        }
+        NodeConfig::Querier(cfg) => {
+            let _ = cfg;
+            return Err(BlueprintError::ChainOnlyNodeOnMainFlow {
+                node: node_id.to_string(),
+                node_type: "querier".to_string(),
+            });
+        }
+        // 编排资产节点在主流程中是惰性占位：语义由 extract_orchestration_configs
+        // 全图扫描读取（与执行流无关），这里只要求它接有出边以保持图连通。
+        NodeConfig::BannedWordsConfig(_) | NodeConfig::ScriptwriterPipeline(_) => {
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path, values)?;
         }
@@ -448,16 +537,25 @@ fn traverse(
             traverse(graph, &next, context, result, visited, path, values)?;
         }
         NodeConfig::ConditionGate(cfg) => {
-            let port = if let Some(ref gs) = context.game_state {
-                let cost_val = cfg.expression.parse::<f64>().unwrap_or(0.0);
-                if gs.evaluate_condition(&cfg.gate_type, cost_val).unwrap_or(true) {
-                    "pass"
-                } else {
-                    "blocked"
+            // 门禁是确定性判定：未知 gate_type、非数值阈值、缺数据容器都当场硬错，
+            // 绝不静默放行（C2）。
+            let gs = context
+                .game_state
+                .as_ref()
+                .ok_or_else(|| BlueprintError::MissingGameState(node_id.to_string()))?;
+            let cost_val = cfg.expression.parse::<f64>().map_err(|_| {
+                BlueprintError::NonNumericGateExpression {
+                    node: node_id.to_string(),
+                    expression: cfg.expression.clone(),
                 }
-            } else {
-                "pass"
-            };
+            })?;
+            let passed = gs
+                .evaluate_condition(&cfg.gate_type, cost_val)
+                .map_err(|_| BlueprintError::UnknownGateType {
+                    node: node_id.to_string(),
+                    gate_type: cfg.gate_type.clone(),
+                })?;
+            let port = if passed { "pass" } else { "blocked" };
             let branch_target = target_of(graph, node_id, port)?;
             traverse(graph, &branch_target, context, result, visited, path, values)?;
         }
@@ -1099,6 +1197,150 @@ fn target_of(
     next_node_id(graph, node_id, port)
 }
 
+/// 沿 `ToolDefinition` 的 `out` / `pass` 边收集一条线性 ToolCall 执行计划。
+///
+/// 返回 `(计划, 链尾节点 id)`。链尾是链上最后一个节点（通常是 `ToolReturn`，它没有输出端口），
+/// 调用方据此决定主流程从哪儿继续。
+///
+/// 约束：
+/// - 链上只允许出现 `Calculator` / `ConditionGate` / `Inspector` / `Querier` / `ToolReturn`；
+///   出现其它节点说明作者把工具链接到了主流程上，属图结构错误，当场报错而不是猜；
+/// - 每条边只走一次并限制步数，形成环即报 `CycleDetected`；
+/// - `ConditionGate` 只沿 `pass` 边继续（`blocked` 出口的语义由运行期门禁判定承担，
+///   其阻断理由取自该节点的 `block_reason`）。
+fn collect_tool_plan(
+    graph: &BlueprintGraph,
+    definition: &ToolDefinitionConfig,
+    from_node_id: &str,
+) -> Result<(crate::models::tool_plan::ToolPlan, String), BlueprintError> {
+    use crate::models::tool_plan::{ToolPlan, ToolStep};
+
+    let mut steps: Vec<ToolStep> = Vec::new();
+    let mut success_return: Option<ToolReturnConfig> = None;
+    let mut current = match next_node_id(graph, from_node_id, "out") {
+        Ok(next) => next,
+        // 只声明契约、没有接链：空计划，运行期退化为「仅广播校验」，不算错误。
+        Err(_) => {
+            return Ok((
+                ToolPlan {
+                    tool_name: definition.tool_name.clone(),
+                    steps,
+                    success_return,
+                    parameters_schema: Some(definition.parameters_schema.clone()),
+                },
+                from_node_id.to_string(),
+            ))
+        }
+    };
+
+    let mut hops = 0usize;
+    loop {
+        hops += 1;
+        if hops > 64 {
+            return Err(BlueprintError::CycleDetected(current));
+        }
+
+        let node = graph
+            .nodes
+            .iter()
+            .find(|n| n.id == current)
+            .ok_or_else(|| BlueprintError::NodeNotFound(current.clone()))?;
+
+        match &node.config {
+            NodeConfig::Calculator(cfg) => {
+                steps.push(ToolStep::Calculate(cfg.clone()));
+                current = match next_node_id(graph, &current, "out") {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+            }
+            NodeConfig::ConditionGate(cfg) => {
+                steps.push(ToolStep::Gate(cfg.clone()));
+                current = match next_node_id(graph, &current, "pass") {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+            }
+            NodeConfig::ToolReturn(cfg) => {
+                success_return = Some(cfg.clone());
+                break;
+            }
+            NodeConfig::Inspector(cfg) => {
+                steps.push(ToolStep::Inspect(cfg.clone()));
+                current = match next_node_id(graph, &current, "out") {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+            }
+            NodeConfig::Querier(cfg) => {
+                steps.push(ToolStep::Query(cfg.clone()));
+                current = match next_node_id(graph, &current, "out") {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+            }
+            other => {
+                return Err(BlueprintError::ToolChainInvalidStep {
+                    node: current.clone(),
+                    node_type: format!("{:?}", other.node_type()),
+                })
+            }
+        }
+    }
+
+    Ok((
+        ToolPlan {
+            tool_name: definition.tool_name.clone(),
+            steps,
+            success_return,
+            parameters_schema: Some(definition.parameters_schema.clone()),
+        },
+        current,
+    ))
+}
+
+/// 从图中提取编排资产节点（BannedWordsConfig / ScriptwriterPipeline）。
+///
+/// 全图扫描、与执行流无关——这些节点的语义是全局配置而非流程步骤。同类节点
+/// 复数即硬错（资产歧义，C2）。stream_processor 与剧本流水线编排由此获得
+/// 词库 / 锚点 / 阶段参数（spec §4 D-1/D-2/D-6）。
+pub fn extract_orchestration_configs(
+    graph: &BlueprintGraph,
+) -> Result<
+    (
+        Option<crate::models::blueprint::BannedWordsConfig>,
+        Option<crate::models::blueprint::ScriptwriterPipelineConfig>,
+    ),
+    BlueprintError,
+> {
+    let mut banned = None;
+    let mut pipeline = None;
+    for node in &graph.nodes {
+        match &node.config {
+            NodeConfig::BannedWordsConfig(cfg) => {
+                if banned.is_some() {
+                    return Err(BlueprintError::DuplicateOrchestrationNode {
+                        node_type: "banned_words_config",
+                        id: node.id.clone(),
+                    });
+                }
+                banned = Some(cfg.clone());
+            }
+            NodeConfig::ScriptwriterPipeline(cfg) => {
+                if pipeline.is_some() {
+                    return Err(BlueprintError::DuplicateOrchestrationNode {
+                        node_type: "scriptwriter_pipeline",
+                        id: node.id.clone(),
+                    });
+                }
+                pipeline = Some(cfg.clone());
+            }
+            _ => {}
+        }
+    }
+    Ok((banned, pipeline))
+}
+
 /// Find the target of the single outgoing edge from `node_id`:`port`.
 fn next_node_id(
     graph: &BlueprintGraph,
@@ -1178,6 +1420,10 @@ fn evaluate_port(
         | NodeConfig::Calculator(_)
         | NodeConfig::ConditionGate(_)
         | NodeConfig::ToolReturn(_)
+        | NodeConfig::Inspector(_)
+        | NodeConfig::Querier(_)
+        | NodeConfig::BannedWordsConfig(_)
+        | NodeConfig::ScriptwriterPipeline(_)
         | NodeConfig::UiLayoutConfig(_)
         | NodeConfig::MutexGate(_)
         | NodeConfig::GroupGate(_)
