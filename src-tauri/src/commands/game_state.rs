@@ -69,7 +69,7 @@ pub async fn agent_validate_banned_words(
     session_id: i64,
     text: String,
 ) -> Result<(), BannedWordsViolation> {
-    let (banned_cfg, _) =
+    let banned_cfg =
         crate::services::agent_runtime::load_blueprint_configs_for_conversation(
             &state.db,
             session_id,
@@ -79,7 +79,7 @@ pub async fn agent_validate_banned_words(
             matched_words: vec![],
             feedback_instruction: e,
         })?;
-    let words = banned_cfg.map(|cfg| cfg.words).unwrap_or_default();
+    let words = banned_cfg.banned_words.map(|cfg| cfg.words).unwrap_or_default();
     let filter = BannedWordsFilter::from_words(&words).map_err(|e| BannedWordsViolation {
         matched_words: vec![],
         feedback_instruction: e,

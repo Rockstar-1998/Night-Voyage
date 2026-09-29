@@ -323,20 +323,12 @@ pub async fn execute_tool_call(
     }
 }
 
-/// 加载会话预设的编排资产节点（BannedWordsConfig / ScriptwriterPipeline）。
-///
-/// 会话 → 预设 → 蓝图图 → `extract_orchestration_configs` 全图扫描。未绑定预设 /
-/// 预设无图 → 两个 None（调用方按各自语义处理：禁词过滤为空、流水线参数缺省报错）。
+/// 加载会话预设的编排资产节点全集（BannedWords / ScriptwriterPipeline / AgentModeSwitch /
+/// DirectorConfig / ActorDefinition）。未绑定预设 / 预设无图 → Default（调用方按语义处理）。
 pub async fn load_blueprint_configs_for_conversation(
     db: &SqlitePool,
     conversation_id: i64,
-) -> Result<
-    (
-        Option<crate::models::blueprint::BannedWordsConfig>,
-        Option<crate::models::blueprint::ScriptwriterPipelineConfig>,
-    ),
-    String,
-> {
+) -> Result<crate::models::blueprint::OrchestrationConfigs, String> {
     let preset_id: Option<i64> =
         sqlx::query_scalar("SELECT preset_id FROM conversations WHERE id = ?")
             .bind(conversation_id)
@@ -345,7 +337,7 @@ pub async fn load_blueprint_configs_for_conversation(
             .map_err(|e| format!("查询会话预设失败: {}", e).replace('\\', "/"))?
             .flatten();
     let Some(preset_id) = preset_id else {
-        return Ok((None, None));
+        return Ok(Default::default());
     };
     let graph_json: Option<String> =
         sqlx::query_scalar("SELECT blueprint_graph FROM presets WHERE id = ?")
@@ -354,7 +346,7 @@ pub async fn load_blueprint_configs_for_conversation(
             .await
             .map_err(|e| format!("读取预设蓝图失败: {}", e).replace('\\', "/"))?;
     let Some(graph_json) = graph_json else {
-        return Ok((None, None));
+        return Ok(Default::default());
     };
     let graph: crate::models::blueprint::BlueprintGraph = serde_json::from_str(&graph_json)
         .map_err(|e| format!("blueprint_graph JSON invalid: {}", e).replace('\\', "/"))?;

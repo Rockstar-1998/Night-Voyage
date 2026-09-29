@@ -52,6 +52,13 @@ import type {
   CalculatorConfig,
   ConditionGateConfig,
   ToolReturnConfig,
+  InspectorConfig,
+  QuerierConfig,
+  BannedWordsConfig,
+  ScriptwriterPipelineConfig,
+  AgentModeSwitchConfig,
+  DirectorConfig,
+  ActorDefinition,
   UiLayoutConfig,
 } from '../../lib/blueprint/types';
 import { isNodeLocked } from './nodeLayout';
@@ -83,6 +90,8 @@ export interface NodeConfigComponentProps<C> {
   config: C;
   isLocked: boolean;
   onUpdate: (updates: Partial<C>) => void;
+  /** 当前预设 id：供需要读取预设级资产（Schema 列表 / UI 布局列表）的节点配置使用。 */
+  presetId?: number;
 }
 
 // ─── Panel props ───
@@ -91,6 +100,8 @@ export interface NodeConfigPanelProps {
   node: BlueprintNode | null;
   onUpdate: (nodeId: string, updates: Partial<NodeConfig>) => void;
   onDelete: (nodeId: string) => void;
+  /** 当前预设 id，透传给节点配置组件。 */
+  presetId?: number;
 }
 
 // ─── Node type → display label ───
@@ -114,6 +125,13 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   calculator: 'Calculator',
   condition_gate: 'Condition Gate',
   tool_return: 'Tool Return',
+  inspector: 'Inspector（容器读）',
+  querier: 'Querier（跨域读）',
+  banned_words_config: 'Banned Words Config',
+  scriptwriter_pipeline: 'Scriptwriter Pipeline',
+  agent_mode_switch: 'Agent Mode Switch',
+  director_config: 'Director Config',
+  actor_definition: 'Actor Definition',
   ui_layout_config: 'UI Layout Config',
 };
 
@@ -138,6 +156,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
   // config change (each keystroke), causing the input to lose focus.
   // <Match> only re-mounts when the node *type* changes; config changes
   // update props in-place, preserving focus.
+
+  // ─── Generic update helper for new node types ───
+  const updateNode = (nodeId: string, updates: Record<string, unknown>) => {
+    props.onUpdate(nodeId, updates as Partial<NodeConfig>);
+  };
 
   const updateStart = (_nodeId: string) => {};
   const updatePrompt = (nodeId: string, updates: Partial<PromptConfig>) =>
@@ -389,6 +412,7 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as InvokeSchemaConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateInvokeSchema(node().id, updates)}
+                    presetId={props.presetId}
                   />
                 </Match>
                 <Match when={node().type === 'tool_definition'}>
@@ -424,7 +448,119 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as UiLayoutConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateUiLayoutConfig(node().id, updates)}
+                    presetId={props.presetId}
                   />
+                </Match>
+                <Match when={node().type === 'inspector'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Inspect Kind</label>
+                    <select class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as InspectorConfig).inspect_kind}
+                      onChange={(e) => updateNode(node().id, { inspect_kind: e.currentTarget.value })}
+                    >
+                      <option value="inventory">inventory</option>
+                      <option value="stats">stats</option>
+                      <option value="item">item</option>
+                      <option value="scratchpad">scratchpad</option>
+                    </select>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Key Expr</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as InspectorConfig).key_expr}
+                      onChange={(e) => updateNode(node().id, { key_expr: e.currentTarget.value })}
+                      placeholder="args.item_id"
+                    />
+                  </div>
+                </Match>
+                <Match when={node().type === 'querier'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Command（须在白名单）</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as QuerierConfig).command}
+                      onChange={(e) => updateNode(node().id, { command: e.currentTarget.value })}
+                      placeholder="query_world_book_entries"
+                    />
+                    <p class="text-xs text-mist-solid/40">args_template 经蓝图 JSON 编辑（当前: {JSON.stringify((node().config as QuerierConfig).args_template)}）</p>
+                  </div>
+                </Match>
+                <Match when={node().type === 'banned_words_config'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Words（每行一个）</label>
+                    <textarea class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white" rows={4}
+                      value={(node().config as BannedWordsConfig).words.join('\n')}
+                      onChange={(e) => updateNode(node().id, { words: e.currentTarget.value.split('\n').filter(Boolean) })}
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Max Nudge Retries</label>
+                    <input type="number" class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as BannedWordsConfig).max_nudge_retries}
+                      onChange={(e) => updateNode(node().id, { max_nudge_retries: Number(e.currentTarget.value) })}
+                    />
+                  </div>
+                </Match>
+                <Match when={node().type === 'scriptwriter_pipeline'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Anchor Tail Chars</label>
+                    <input type="number" class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as ScriptwriterPipelineConfig).anchor_tail_chars}
+                      onChange={(e) => updateNode(node().id, { anchor_tail_chars: Number(e.currentTarget.value) })}
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Blackout Marker</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as ScriptwriterPipelineConfig).blackout_marker}
+                      onChange={(e) => updateNode(node().id, { blackout_marker: e.currentTarget.value })}
+                    />
+                    <p class="text-xs text-mist-solid/40">stages 列表经蓝图 JSON 编辑</p>
+                  </div>
+                </Match>
+                <Match when={node().type === 'agent_mode_switch'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Default Mode</label>
+                    <select class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as AgentModeSwitchConfig).default_mode}
+                      onChange={(e) => updateNode(node().id, { default_mode: e.currentTarget.value })}
+                    >
+                      <option value="single">single</option>
+                      <option value="director_actor">director_actor</option>
+                      <option value="scriptwriter">scriptwriter</option>
+                    </select>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Max Tool Rounds</label>
+                    <input type="number" class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as AgentModeSwitchConfig).max_tool_rounds}
+                      onChange={(e) => updateNode(node().id, { max_tool_rounds: Number(e.currentTarget.value) })}
+                    />
+                  </div>
+                </Match>
+                <Match when={node().type === 'director_config'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Director Prompt</label>
+                    <textarea class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white" rows={4}
+                      value={(node().config as DirectorConfig).director_prompt}
+                      onChange={(e) => updateNode(node().id, { director_prompt: e.currentTarget.value })}
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Tools（逗号分隔）</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as DirectorConfig).tools.join(', ')}
+                      onChange={(e) => updateNode(node().id, { tools: e.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    />
+                  </div>
+                </Match>
+                <Match when={node().type === 'actor_definition'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Actor Name</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as ActorDefinition).actor_name}
+                      onChange={(e) => updateNode(node().id, { actor_name: e.currentTarget.value })}
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Persona</label>
+                    <textarea class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white" rows={4}
+                      value={(node().config as ActorDefinition).persona}
+                      onChange={(e) => updateNode(node().id, { persona: e.currentTarget.value })}
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Tools（逗号分隔）</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as ActorDefinition).tools.join(', ')}
+                      onChange={(e) => updateNode(node().id, { tools: e.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    />
+                  </div>
                 </Match>
               </Switch>
             </div>

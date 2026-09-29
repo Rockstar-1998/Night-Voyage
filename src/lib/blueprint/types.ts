@@ -35,6 +35,13 @@ export const NODE_TYPES = [
   'calculator',
   'condition_gate',
   'tool_return',
+  'inspector',
+  'querier',
+  'banned_words_config',
+  'scriptwriter_pipeline',
+  'agent_mode_switch',
+  'director_config',
+  'actor_definition',
   'ui_layout_config',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -248,6 +255,58 @@ export interface UiLayoutConfig {
   is_locked: boolean;
 }
 
+export interface InspectorConfig {
+  inspect_kind: 'inventory' | 'stats' | 'item' | 'scratchpad';
+  key_expr: string;
+  is_locked: boolean;
+}
+
+export interface QuerierConfig {
+  command: string;
+  args_template: Record<string, unknown>;
+  is_locked: boolean;
+}
+
+export interface BannedWordsConfig {
+  words: string[];
+  max_nudge_retries: number;
+  nudge_instruction_template: string;
+  is_locked: boolean;
+}
+
+export interface ScriptwriterStage {
+  stage: 'drafter' | 'critic' | 'refiner';
+  workspace_key: string;
+  prompt: string;
+  tools: string[];
+}
+
+export interface ScriptwriterPipelineConfig {
+  stages: ScriptwriterStage[];
+  anchor_tail_chars: number;
+  blackout_marker: string;
+  is_locked: boolean;
+}
+
+export interface AgentModeSwitchConfig {
+  default_mode: 'single' | 'director_actor' | 'scriptwriter';
+  max_tool_rounds: number;
+  is_locked: boolean;
+}
+
+export interface DirectorConfig {
+  director_prompt: string;
+  tools: string[];
+  is_locked: boolean;
+}
+
+export interface ActorDefinition {
+  actor_name: string;
+  persona: string;
+  tools: string[];
+  is_locked: boolean;
+}
+
 // ─── Discriminated union: NodeType + Config strong binding ───
 
 export type NodeConfig =
@@ -269,6 +328,13 @@ export type NodeConfig =
   | { type: 'calculator'; config: CalculatorConfig }
   | { type: 'condition_gate'; config: ConditionGateConfig }
   | { type: 'tool_return'; config: ToolReturnConfig }
+  | { type: 'inspector'; config: InspectorConfig }
+  | { type: 'querier'; config: QuerierConfig }
+  | { type: 'banned_words_config'; config: BannedWordsConfig }
+  | { type: 'scriptwriter_pipeline'; config: ScriptwriterPipelineConfig }
+  | { type: 'agent_mode_switch'; config: AgentModeSwitchConfig }
+  | { type: 'director_config'; config: DirectorConfig }
+  | { type: 'actor_definition'; config: ActorDefinition }
   | { type: 'ui_layout_config'; config: UiLayoutConfig };
 
 export type BlueprintNode = NodeConfig & {

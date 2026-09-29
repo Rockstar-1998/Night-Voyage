@@ -50,6 +50,13 @@ export const NODE_LABELS: Record<NodeType, string> = {
   calculator: 'Calculator（确定性数值与背包运算器）',
   condition_gate: 'Condition Gate（金币/负重/槽位拦截门禁）',
   tool_return: 'Tool Return（ToolCall 回执返回）',
+  inspector: 'Inspector（容器读原语：inventory/stats/item/scratchpad）',
+  querier: 'Querier（跨域读原语：白名单命令代理）',
+  banned_words_config: 'Banned Words Config（禁词词库与 Nudge 参数）',
+  scriptwriter_pipeline: 'Scriptwriter Pipeline（剧本流水线参数）',
+  agent_mode_switch: 'Agent Mode Switch（智能体模式选择）',
+  director_config: 'Director Config（导演提示词与工具）',
+  actor_definition: 'Actor Definition（演员定义：persona 与工具）',
   ui_layout_config: 'UI Layout Config（常驻 HUD 模板绑定）',
 };
 
@@ -73,6 +80,13 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   condition_gate: '确定性门禁判定（金币不足、背包超重、槽位已满），提供放行 pass 与拦截 blocked 双出口',
   tool_return: '封装 ToolCall 执行成功或拦截信息回传大模型，引导后续推进与正文 Schema 规范输出',
   ui_layout_config: '绑定预设常驻 HUD 布局模板，指定视口挂载锚点（RightDock/TopSticky/FloatingHUD）',
+  inspector: '读取 DataContainer 的指定片段（背包/数值/单件/工作区），结果供 ToolReturn 模板引用',
+  querier: '跨域读原语：经 action_bridge 白名单代理调用既有 Tauri 命令，JSON 结果入链上下文',
+  banned_words_config: '禁词词库（Aho-Corasick 自动机）+ Nudge 自纠重试次数与纠偏指令模板',
+  scriptwriter_pipeline: '剧本流水线参数：阶段列表（drafter/critic/refiner）、工作区变量、锚点涂黑参数',
+  agent_mode_switch: '智能体模式选择节点：Gate 面板单选 single / director_actor / scriptwriter',
+  director_config: '导演分镜提示词与工具引用列表（产出分镜计划 JSON）',
+  actor_definition: '演员定义：actor_name（分镜引用键）、persona（视界内容）、tools（可用契约）',
 };
 
 /// 选择器中展示的节点类型列表：移除已废弃的 role_switch 与 legacy

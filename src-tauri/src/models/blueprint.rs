@@ -52,6 +52,12 @@ pub enum NodeType {
     BannedWordsConfig,
     /// 剧本流水线参数节点（编排资产：阶段/工作区/锚点涂黑，计划 §6.2）
     ScriptwriterPipeline,
+    /// 智能体模式选择节点（编排资产：single / director_actor / scriptwriter）
+    AgentModeSwitch,
+    /// 导演节点（编排资产：分镜提示词 + 导演工具引用）
+    DirectorConfig,
+    /// 演员定义节点（编排资产：persona + 视界 + 工具引用）
+    ActorDefinition,
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig,
@@ -106,6 +112,12 @@ pub enum NodeConfig {
     BannedWordsConfig(BannedWordsConfig),
     /// 剧本流水线参数节点（编排资产）
     ScriptwriterPipeline(ScriptwriterPipelineConfig),
+    /// 智能体模式选择节点（编排资产）
+    AgentModeSwitch(AgentModeSwitchConfig),
+    /// 导演节点（编排资产）
+    DirectorConfig(DirectorConfig),
+    /// 演员定义节点（编排资产）
+    ActorDefinition(ActorDefinition),
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig(UiLayoutConfig),
@@ -137,6 +149,9 @@ impl NodeConfig {
             Self::Querier(_) => NodeType::Querier,
             Self::BannedWordsConfig(_) => NodeType::BannedWordsConfig,
             Self::ScriptwriterPipeline(_) => NodeType::ScriptwriterPipeline,
+            Self::AgentModeSwitch(_) => NodeType::AgentModeSwitch,
+            Self::DirectorConfig(_) => NodeType::DirectorConfig,
+            Self::ActorDefinition(_) => NodeType::ActorDefinition,
             Self::UiLayoutConfig(_) => NodeType::UiLayoutConfig,
         }
     }
@@ -585,6 +600,60 @@ fn default_blackout_marker() -> String {
     "【前文背景已锁定】\n…（此处为已发生的情节，润色时不得改写）…".to_string()
 }
 
+/// 智能体模式选择节点配置（编排资产，计划 §6.1）。
+///
+/// `default_mode`：Gate 面板未选中时的缺省架构（"single" / "director_actor" /
+/// "scriptwriter"）。选择仍走 Gate 面板（按本节点 id 查 `preset_gate_selections`）。
+/// `max_tool_rounds`：导演/演员子代理的工具循环轮次上限（D-4，缺省 5）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentModeSwitchConfig {
+    #[serde(default = "default_agent_mode")]
+    pub default_mode: String,
+    #[serde(default = "default_max_tool_rounds")]
+    pub max_tool_rounds: i64,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_agent_mode() -> String {
+    "single".to_string()
+}
+
+fn default_max_tool_rounds() -> i64 {
+    5
+}
+
+/// 导演节点配置（编排资产，计划 §6.1）。
+///
+/// `director_prompt`：导演分镜指令（产出 beats JSON 的规则说明）。
+/// `tools`：导演子代理可用的契约引用数组（按 tool_name 指向图中 ToolDefinition，
+/// 编译期校验存在，缺失硬错）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DirectorConfig {
+    #[serde(default)]
+    pub director_prompt: String,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+/// 演员定义节点配置（编排资产，计划 §6.1）。每演员一节点。
+///
+/// `persona`：角色视界内容（视界裁剪时注入演员子代理，替代旧"角色名包含过滤"）。
+/// `tools`：该演员的契约引用数组（语义同 DirectorConfig.tools）。
+/// `actor_name` 供分镜计划的 `character` 字段引用；同名演员硬错。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActorDefinition {
+    pub actor_name: String,
+    #[serde(default)]
+    pub persona: String,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
 impl Default for BannedWordsConfig {
     /// serde 缺省值之外的运行期缺省：未配置词库的预设以「空词库 + 计划 Nudge 参数」运行。
     fn default() -> Self {
@@ -595,6 +664,18 @@ impl Default for BannedWordsConfig {
             is_locked: false,
         }
     }
+}
+
+/// 全图编排资产配置集（`extract_orchestration_configs` 的产出）。
+#[derive(Debug, Clone, Default)]
+pub struct OrchestrationConfigs {
+    pub banned_words: Option<BannedWordsConfig>,
+    pub scriptwriter_pipeline: Option<ScriptwriterPipelineConfig>,
+    /// (节点 id, 配置)——编排器按 id 查 Gate 面板选择
+    pub agent_mode_switch: Option<AgentModeSwitchConfig>,
+    pub agent_mode_switch_node_id: String,
+    pub director_config: Option<DirectorConfig>,
+    pub actors: Vec<ActorDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

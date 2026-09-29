@@ -94,6 +94,10 @@ pub enum BlueprintError {
     ChainOnlyNodeOnMainFlow { node: String, node_type: String },
     /// 同类编排资产节点（BannedWordsConfig / ScriptwriterPipeline）在图中出现多次。
     DuplicateOrchestrationNode { node_type: &'static str, id: String },
+    /// 演员定义节点的 actor_name 重复。
+    DuplicateActorName(String),
+    /// 导演/演员的 tools 引用了图中不存在的 ToolCall 契约。
+    ToolReferenceNotFound { owner: String, tool: String },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -194,6 +198,13 @@ impl std::fmt::Display for BlueprintError {
                 f,
                 "duplicate orchestration node `{id}`: at most one `{node_type}` node is \
                  allowed per graph"
+            ),
+            Self::DuplicateActorName(name) => {
+                write!(f, "duplicate actor_name `{name}`: each ActorDefinition must have a unique actor_name")
+            }
+            Self::ToolReferenceNotFound { owner, tool } => write!(
+                f,
+                "`{owner}` 引用了未定义契约「{tool}」——请在蓝图中添加对应 ToolDefinition 链"
             ),
         }
     }
@@ -528,7 +539,11 @@ fn traverse(
         }
         // 编排资产节点在主流程中是惰性占位：语义由 extract_orchestration_configs
         // 全图扫描读取（与执行流无关），这里只要求它接有出边以保持图连通。
-        NodeConfig::BannedWordsConfig(_) | NodeConfig::ScriptwriterPipeline(_) => {
+        NodeConfig::BannedWordsConfig(_)
+        | NodeConfig::ScriptwriterPipeline(_)
+        | NodeConfig::AgentModeSwitch(_)
+        | NodeConfig::DirectorConfig(_)
+        | NodeConfig::ActorDefinition(_) => {
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path, values)?;
         }
@@ -1299,22 +1314,36 @@ fn collect_tool_plan(
     ))
 }
 
-/// 从图中提取编排资产节点（BannedWordsConfig / ScriptwriterPipeline）。
+/// 从图中提取编排资产节点（BannedWordsConfig / ScriptwriterPipeline / AgentModeSwitch /
+/// DirectorConfig / ActorDefinition）。
 ///
 /// 全图扫描、与执行流无关——这些节点的语义是全局配置而非流程步骤。同类节点
-/// 复数即硬错（资产歧义，C2）。stream_processor 与剧本流水线编排由此获得
-/// 词库 / 锚点 / 阶段参数（spec §4 D-1/D-2/D-6）。
+/// 复数即硬错（资产歧义，C2）；演员同名硬错；工具引用不存在硬错（spec §2A.2）。
 pub fn extract_orchestration_configs(
     graph: &BlueprintGraph,
-) -> Result<
-    (
-        Option<crate::models::blueprint::BannedWordsConfig>,
-        Option<crate::models::blueprint::ScriptwriterPipelineConfig>,
-    ),
-    BlueprintError,
-> {
+) -> Result<crate::models::blueprint::OrchestrationConfigs, BlueprintError> {
+    use crate::models::blueprint::{
+        ActorDefinition, AgentModeSwitchConfig, BannedWordsConfig, DirectorConfig,
+        OrchestrationConfigs, ScriptwriterPipelineConfig,
+    };
+
     let mut banned = None;
-    let mut pipeline = None;
+    let mut scriptwriter = None;
+    let mut agent_mode_switch = None;
+    let mut agent_mode_switch_id = String::new();
+    let mut director = None;
+    let mut actors: Vec<ActorDefinition> = Vec::new();
+
+    // 图中声明的全部 ToolCall 契约名（tools 引用校验的合法集）
+    let declared_tools: HashSet<String> = graph
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.config {
+            NodeConfig::ToolDefinition(cfg) => Some(cfg.tool_name.clone()),
+            _ => None,
+        })
+        .collect();
+
     for node in &graph.nodes {
         match &node.config {
             NodeConfig::BannedWordsConfig(cfg) => {
@@ -1327,18 +1356,70 @@ pub fn extract_orchestration_configs(
                 banned = Some(cfg.clone());
             }
             NodeConfig::ScriptwriterPipeline(cfg) => {
-                if pipeline.is_some() {
+                if scriptwriter.is_some() {
                     return Err(BlueprintError::DuplicateOrchestrationNode {
                         node_type: "scriptwriter_pipeline",
                         id: node.id.clone(),
                     });
                 }
-                pipeline = Some(cfg.clone());
+                scriptwriter = Some(cfg.clone());
+            }
+            NodeConfig::AgentModeSwitch(cfg) => {
+                if agent_mode_switch.is_some() {
+                    return Err(BlueprintError::DuplicateOrchestrationNode {
+                        node_type: "agent_mode_switch",
+                        id: node.id.clone(),
+                    });
+                }
+                agent_mode_switch = Some(cfg.clone());
+                agent_mode_switch_id = node.id.clone();
+            }
+            NodeConfig::DirectorConfig(cfg) => {
+                if director.is_some() {
+                    return Err(BlueprintError::DuplicateOrchestrationNode {
+                        node_type: "director_config",
+                        id: node.id.clone(),
+                    });
+                }
+                director = Some(cfg.clone());
+            }
+            NodeConfig::ActorDefinition(cfg) => {
+                if actors.iter().any(|a| a.actor_name == cfg.actor_name) {
+                    return Err(BlueprintError::DuplicateActorName(cfg.actor_name.clone()));
+                }
+                actors.push(cfg.clone());
             }
             _ => {}
         }
     }
-    Ok((banned, pipeline))
+
+    // 工具引用校验：导演与每个演员的 tools 引用必须在图中有同名 ToolDefinition
+    let validate_tools = |owner: &str, tools: &[String]| -> Result<(), BlueprintError> {
+        for tool in tools {
+            if !declared_tools.contains(tool) {
+                return Err(BlueprintError::ToolReferenceNotFound {
+                    owner: owner.to_string(),
+                    tool: tool.clone(),
+                });
+            }
+        }
+        Ok(())
+    };
+    if let Some(dir) = &director {
+        validate_tools("导演", &dir.tools)?;
+    }
+    for actor in &actors {
+        validate_tools(&actor.actor_name, &actor.tools)?;
+    }
+
+    Ok(OrchestrationConfigs {
+        banned_words: banned,
+        scriptwriter_pipeline: scriptwriter,
+        agent_mode_switch,
+        agent_mode_switch_node_id: agent_mode_switch_id,
+        director_config: director,
+        actors,
+    })
 }
 
 /// Find the target of the single outgoing edge from `node_id`:`port`.
@@ -1424,6 +1505,9 @@ fn evaluate_port(
         | NodeConfig::Querier(_)
         | NodeConfig::BannedWordsConfig(_)
         | NodeConfig::ScriptwriterPipeline(_)
+        | NodeConfig::AgentModeSwitch(_)
+        | NodeConfig::DirectorConfig(_)
+        | NodeConfig::ActorDefinition(_)
         | NodeConfig::UiLayoutConfig(_)
         | NodeConfig::MutexGate(_)
         | NodeConfig::GroupGate(_)

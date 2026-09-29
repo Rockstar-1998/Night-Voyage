@@ -114,6 +114,13 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   calculator: '#f59e0b',
   condition_gate: '#ef4444',
   tool_return: '#10b981',
+  inspector: '#22d3ee',
+  querier: '#818cf8',
+  banned_words_config: '#f87171',
+  scriptwriter_pipeline: '#a78bfa',
+  agent_mode_switch: '#34d399',
+  director_config: '#fbbf24',
+  actor_definition: '#60a5fa',
   ui_layout_config: '#ec4899',
 };
 
@@ -136,6 +143,13 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'sampling_params_anthropic':
     case 'tool_definition':
     case 'calculator':
+    case 'inspector':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
     case 'condition_gate':
@@ -221,6 +235,13 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'calculator':
     case 'condition_gate':
     case 'tool_return':
+    case 'inspector':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
@@ -243,6 +264,13 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'calculator':
     case 'condition_gate':
     case 'tool_return':
+    case 'inspector':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return node.config.is_locked;
     case 'start':
@@ -296,6 +324,20 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.gate_type ? `Gate: ${node.config.gate_type}` : 'Condition Gate';
     case 'tool_return':
       return 'Tool Return';
+    case 'inspector':
+      return `Inspect: ${node.config.inspect_kind}`;
+    case 'querier':
+      return node.config.command ? `Query: ${node.config.command}` : 'Querier';
+    case 'banned_words_config':
+      return `Banned Words (${node.config.words.length})`;
+    case 'scriptwriter_pipeline':
+      return `Pipeline (${node.config.stages.length} stages)`;
+    case 'agent_mode_switch':
+      return `Agent Mode: ${node.config.default_mode}`;
+    case 'director_config':
+      return 'Director';
+    case 'actor_definition':
+      return node.config.actor_name ? `Actor: ${node.config.actor_name}` : 'Actor Definition';
     case 'ui_layout_config':
       return node.config.mount_type ? `HUD: ${node.config.mount_type}` : 'UI Layout';
   }
@@ -338,6 +380,20 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return node.config.is_blocked ? '拦截阻断' : '成功回执';
     case 'ui_layout_config':
       return node.config.layout_id || '未绑定模板';
+    case 'inspector':
+      return node.config.inspect_kind;
+    case 'querier':
+      return node.config.command || '跨域读';
+    case 'banned_words_config':
+      return `${node.config.words.length} 词`;
+    case 'scriptwriter_pipeline':
+      return `${node.config.stages.length} stages`;
+    case 'agent_mode_switch':
+      return node.config.default_mode;
+    case 'director_config':
+      return null;
+    case 'actor_definition':
+      return node.config.actor_name || null;
   }
 }
 

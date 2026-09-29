@@ -209,13 +209,13 @@ async fn run_multi_agent_round(
 
     // 禁词门禁同样作用于流水线终稿：流水线不豁免内容合规。
     // 词库来自蓝图 BannedWordsConfig 节点资产（spec §2A.3，D-6）。
-    let (banned_config, _) = match crate::services::agent_runtime::load_blueprint_configs_for_conversation(
+    let banned_config = match crate::services::agent_runtime::load_blueprint_configs_for_conversation(
         db,
         conversation_id,
     )
     .await
     {
-        Ok(configs) => configs,
+        Ok(configs) => configs.banned_words,
         Err(err) => return fail(format!("加载蓝图编排配置失败: {}", err)).await,
     };
     match crate::services::agent_guards::BannedWordsFilter::from_words(
@@ -329,7 +329,7 @@ pub fn spawn_stream_task(
             )
             .await
         {
-            Ok((config, _)) => config.unwrap_or_default(),
+            Ok(configs) => configs.banned_words.unwrap_or_default(),
             Err(err) => {
                 let _ = RoundRepository::mark_failed(&db, round_id).await;
                 let _ = RetrySnapshotRepository::mark_failed(&db, round_id, &err).await;

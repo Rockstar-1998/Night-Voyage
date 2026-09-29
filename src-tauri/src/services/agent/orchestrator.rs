@@ -18,9 +18,6 @@ use crate::services::prompt_compiler::{
     compile_prompt, PromptBudget, PromptCompileInput, PromptCompileMode,
 };
 
-/// 预设 Gate 里"智能体架构"选项的节点 id（与预置蓝图一致）。
-pub const AGENT_GATE_NODE_ID: &str = "n_agent_gate";
-
 /// 本轮实际采用的流水线。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentPipeline {
@@ -42,10 +39,11 @@ impl AgentPipeline {
     }
 }
 
-/// 解析本轮流水线：只有 agent 模式 + 预设 Gate 选中对应 key 时才启用多智能体。
+/// 解析本轮流水线：只有 agent 模式 + 预设蓝图含 AgentModeSwitch 节点时才启用多智能体。
 ///
-/// 读不到选中项或选中项未知时**报错**，不默认落到某条流水线——
-/// "以为在跑流水线、其实在单模型直出"是最难排查的一类问题（C2）。
+/// **按节点类型发现**（D-3：`AGENT_GATE_NODE_ID` 硬编码 id 已废除）——从编排资产
+/// 全图提取中获取 `AgentModeSwitch` 节点 id 与缺省模式；Gate 面板选择覆盖缺省。
+/// agent 模式但蓝图缺节点 → 显式报错（I2）。
 pub async fn resolve_pipeline(
     db: &SqlitePool,
     conversation_id: i64,
@@ -55,6 +53,19 @@ pub async fn resolve_pipeline(
         return Ok(AgentPipeline::Single);
     }
 
+    let configs = crate::services::agent_runtime::load_blueprint_configs_for_conversation(
+        db,
+        conversation_id,
+    )
+    .await?;
+
+    let Some(switch_cfg) = &configs.agent_mode_switch else {
+        return Err(format!(
+            "agent 模式会话 {conversation_id} 的蓝图中缺少 AgentModeSwitch 节点，\
+             无法确定智能体架构（请在预设蓝图中添加）"
+        ));
+    };
+    let switch_node_id = &configs.agent_mode_switch_node_id;
     let preset_id: Option<i64> =
         sqlx::query_scalar("SELECT preset_id FROM conversations WHERE id = ? LIMIT 1")
             .bind(conversation_id)
@@ -63,27 +74,28 @@ pub async fn resolve_pipeline(
             .map_err(|err| format!("读取会话预设失败: {}", err))?
             .flatten();
 
-    let Some(preset_id) = preset_id else {
-        return Err(format!(
-            "agent 模式会话 {} 未绑定预设，无法确定智能体架构",
-            conversation_id
-        ));
+    let key = match preset_id {
+        Some(pid) => {
+            let selection = PresetGateRepository::load_one(db, pid, switch_node_id)
+                .await
+                .map_err(|err| format!("读取智能体架构 Gate 失败: {}", err))?;
+            selection
+                .map(|s| s.selected_keys)
+                .unwrap_or_default()
+                .first()
+                .map(String::as_str)
+                .unwrap_or(switch_cfg.default_mode.as_str())
+                .to_string()
+        }
+        None => switch_cfg.default_mode.clone(),
     };
 
-    let selection = PresetGateRepository::load_one(db, preset_id, AGENT_GATE_NODE_ID)
-        .await
-        .map_err(|err| format!("读取智能体架构 Gate 失败: {}", err))?;
-
-    let keys = selection.map(|s| s.selected_keys).unwrap_or_default();
-    let key = keys.first().map(String::as_str).unwrap_or("single");
-
-    match key {
+    match key.as_str() {
         "single" => Ok(AgentPipeline::Single),
         "director_actor" => Ok(AgentPipeline::DirectorActor),
         "scriptwriter" => Ok(AgentPipeline::Scriptwriter),
         other => Err(format!(
-            "未知的智能体架构选项 `{}`（期望 single / director_actor / scriptwriter）",
-            other
+            "未知的智能体架构选项 `{other}`（期望 single / director_actor / scriptwriter）"
         )),
     }
 }
@@ -147,10 +159,9 @@ pub async fn run_scriptwriter_pipeline(
 
     // 锚点涂黑参数来自蓝图 ScriptwriterPipeline 节点资产（spec §2A.3/2A.4，D-2）。
     // 节点缺失 = 显式报错（I2）：跑流水线的预设必须定义流水线参数。
-    let (_banned_cfg, scriptwriter_cfg) =
-        crate::services::agent_runtime::load_blueprint_configs_for_conversation(db, conversation_id)
-            .await?;
-    let pipeline_cfg = scriptwriter_cfg.ok_or_else(|| {
+    let configs = crate::services::agent_runtime::load_blueprint_configs_for_conversation(db, conversation_id)
+        .await?;
+    let pipeline_cfg = configs.scriptwriter_pipeline.ok_or_else(|| {
         "蓝图缺少 ScriptwriterPipeline 节点，无法运行剧本流水线（请在该预设蓝图中添加）".to_string()
     })?;
 
