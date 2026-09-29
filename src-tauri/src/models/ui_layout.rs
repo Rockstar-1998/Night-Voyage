@@ -42,6 +42,8 @@ pub enum WidgetType {
     DataLabel,
     Badge,
     AvatarFrame,
+    /// 动作按钮：点击时经 action_bridge 白名单代理调用既有命令（spec §2.3，M4）
+    ActionButton,
 }
 
 /// 原子交互与展示控件

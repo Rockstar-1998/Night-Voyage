@@ -45,7 +45,7 @@ pub struct SchemaFieldDefinition {
 }
 
 /// 独立 Schema 资产定义
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaDefinition {
     pub id: String,
@@ -56,8 +56,32 @@ pub struct SchemaDefinition {
     pub retention_depth: Option<u32>,
     /// 字段列表（物理顺序由 Vec 顺序严格保证）
     pub fields: Vec<SchemaFieldDefinition>,
+    /// 产物卡片配置（spec §2.4 M5）：字段渲染顺序即卡片展示顺序，actions 为卡片按钮
+    #[serde(default)]
+    pub card: Option<SchemaCardConfig>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// 产物卡片动作按钮（spec §2.4 M5：点击时经 action_bridge 白名单代理既有命令）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaCardAction {
+    pub label: String,
+    pub command: String,
+    /// 参数模板：值支持 `{字段名}` 占位（从卡片 JSON 中取值）
+    pub args_template: Vec<(String, String)>,
+}
+
+/// 产物卡片配置（spec §2.4 M5：Schema 资产的 card 扩展字段）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaCardConfig {
+    /// 卡片标题取哪个字段的值
+    pub title_field: String,
+    /// 卡片上的动作按钮列表（点击经 action_bridge 白名单代理）
+    #[serde(default)]
+    pub actions: Vec<SchemaCardAction>,
 }
 
 impl SchemaDefinition {
@@ -120,6 +144,7 @@ impl SchemaDefinition {
             description,
             retention_depth,
             fields,
+            card: None,
             created_at,
             updated_at,
         })
