@@ -1,0 +1,4 @@
+- [x] WorkspaceSidebar 的 "角色展示柜" 图标 ID 为 `'character'`
+- [x] WorkspaceSidebar 的 "对话补全预设" 图标 ID 为 `'workspace'`
+- [x] 点击图标后 `DesktopView` 正确渲染对应组件
+- [x] `npm run build` 通过无报错

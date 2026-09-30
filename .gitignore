@@ -36,7 +36,8 @@ src-tauri/target-*/
 # Agent workspace
 .codex/*
 !.codex/skills/
-.trae/
+.trae/*
+!.trae/specs/
 
 # Logs and debug
 log/
@@ -69,3 +70,16 @@ Multiplayer_log/
 refactor_completionsidebar.py
 temp_decompress.py
 .aider*
+
+# Local reference sources / scratch / tool state (kept out of repo)
+ST2NV-Converter-Web/
+TauriTavern-main/
+aisandboxgame-master/
+sillytavern/
+scratch/
+.workbuddy/
+.codebuddy/
+.roo/
+.zcode/
+.zcodeignore
+temp_old.json

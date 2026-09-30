@@ -1,0 +1,9 @@
+- [x] 根目录下废弃构建脚本已删除（build-debug.bat、build-release.bat、run-release.bat）
+- [x] 根目录下所有 fix_*.py 和 fix_stuck_rounds.sql 已删除
+- [x] 根目录下所有 refactor_*.py、trace*.py、read_diff.py、rewrite_settings.py 已删除
+- [x] 根目录下调试产物已删除（cargo-build-log.txt、diff.txt、llm.txt）
+- [x] 根目录下错放的角色卡 JSON 文件已删除（文件原本已不存在）
+- [x] scripts/ 下未使用脚本已全部删除
+- [x] src-tauri/ 下一次性工具脚本已删除（fix-vendor-builds.py、update-checksums.py）
+- [x] scripts/README.md 已更新，只反映保留的脚本
+- [x] 保留的文件未被误删（start-dev.bat、build-android-arm64-*.ps1、build-frontend.js、windows-dev-preclean.ps1、night-voyage.keystore、index.html、index-mobile.html）

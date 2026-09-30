@@ -108,10 +108,27 @@ export interface BlueprintPreviewBlock {
   content: string;
 }
 
+export interface BlueprintPreviewTool {
+  toolName: string;
+  description: string;
+}
+
+export interface BlueprintPreviewToolPlan {
+  toolName: string;
+  steps: string[];
+  hasReturnTemplate: boolean;
+}
+
 export interface BlueprintCompilePreview {
   blocks: BlueprintPreviewBlock[];
   structuredOutputSchema: Record<string, unknown>;
   fullPromptText: string;
+  /** 本次执行流激活的 ToolCall 契约 */
+  activeTools?: BlueprintPreviewTool[];
+  /** 本次执行流激活的 UI 布局（Rust `UiLayoutConfig` 为蓝图图 JSON，字段为 snake_case） */
+  activeUiLayout?: { layout_id?: string; mount_type?: string } | null;
+  /** 每个契约的执行计划摘要 */
+  toolPlans?: BlueprintPreviewToolPlan[];
 }
 
 export async function listPresetConversations(

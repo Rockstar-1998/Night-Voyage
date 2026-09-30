@@ -1,0 +1,16 @@
+- [x] `TokenLayerUsage` 和 `TokenUsageReport` 结构体已定义且可序列化为 camelCase JSON
+- [x] `get_conversation_token_usage` command 返回正确的各层 token 估算值和上下文窗口大小
+- [x] `update_conversation_context_window` command 能正确更新 `api_providers.max_context_tokens`
+- [x] 数据库迁移成功添加 `messages.actual_prompt_tokens` 列
+- [x] OpenAI 兼容流式响应中 `usage` 字段被正确提取并存储
+- [x] Anthropic 流式响应中 `usage` 字段被正确提取并存储
+- [x] `LlmStreamEventPayload` 新增 `prompt_tokens` / `completion_tokens` 字段且仅在 stream_end 时填充
+- [x] TokenIsland 位于 ChatArea 聊天消息区域正上方，作为顶部固定元素，不遮挡聊天内容
+- [x] TokenIsland 收起状态显示总 token / 上下文窗口 + 迷你分段进度条
+- [x] TokenIsland 展开状态显示上下文窗口输入框和各层详细列表
+- [x] 展开/收起使用 Motion One 动画，时长约 300ms
+- [x] 未设定上下文窗口时显示"点击设定上下文窗口"提示
+- [x] 占用 >80% 时显示警告色
+- [x] 占用 >100% 时显示溢出红色条纹
+- [x] 切换会话、发送消息后、设定上下文窗口后自动刷新 token 用量数据
+- [x] PC 和 Android 布局均可用（触控热区足够、窄屏适配）

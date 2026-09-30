@@ -218,6 +218,9 @@ pub async fn load_blueprint_gates(
             NodeConfig::Querier(_) => None,
             NodeConfig::BannedWordsConfig(_) => None,
             NodeConfig::ScriptwriterPipeline(_) => None,
+            NodeConfig::AgentModeSwitch(_) => None,
+            NodeConfig::DirectorConfig(_) => None,
+            NodeConfig::ActorDefinition(_) => None,
             NodeConfig::UiLayoutConfig(_) => None,
         })
         .collect();

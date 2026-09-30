@@ -25,16 +25,26 @@ fn row_to_ui_layout(row: &sqlx::sqlite::SqliteRow) -> Result<UILayoutDefinition,
     let custom_css: String = row.try_get("custom_css").map_err(|e| e.to_string())?;
     let layout_json: String = row.try_get("layout_json").map_err(|e| e.to_string())?;
 
+    // 未知 mount_type 必须当场失败：静默落到 RightDock 会让保存时读回的布局
+    // 与创作者所见不一致（C2 零静默回退）。
     let mount_type = match mount_type_str.as_str() {
+        "RightDock" => LayoutMountType::RightDock,
         "TopSticky" => LayoutMountType::TopSticky,
         "FloatingHUD" => LayoutMountType::FloatingHUD,
         "MobileDrawer" => LayoutMountType::MobileDrawer,
         "MobileBottomSticky" => LayoutMountType::MobileBottomSticky,
-        _ => LayoutMountType::RightDock,
+        other => {
+            return Err(format!(
+                "未知的 mount_type: {} (期望 RightDock / TopSticky / FloatingHUD / MobileDrawer / MobileBottomSticky)",
+                other
+            )
+            .replace('\\', "/"))
+        }
     };
 
+    // layout_json 解析失败同样硬错：用默认模板顶替会把"布局数据坏了"伪装成"布局是空的"。
     let root_container: LayoutContainer = serde_json::from_str(&layout_json)
-        .unwrap_or_else(|_| UILayoutDefinition::default().root_container);
+        .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
 
     Ok(UILayoutDefinition {
         id,
@@ -62,11 +72,10 @@ pub async fn preset_ui_layout_list(
     .await
     .map_err(|e| format!("查询 preset_ui_layouts 失败: {}", e).replace('\\', "/"))?;
 
-    let mut list = Vec::new();
+    // 逐行硬错而不是跳过坏行：列表里"少一个布局"比"报错"更难排查（C2）。
+    let mut list = Vec::with_capacity(rows.len());
     for row in rows {
-        if let Ok(layout) = row_to_ui_layout(&row) {
-            list.push(layout);
-        }
+        list.push(row_to_ui_layout(&row)?);
     }
 
     Ok(list)
@@ -157,4 +166,76 @@ pub async fn preset_ui_layout_delete(
         .map_err(|e| format!("删除 preset_ui_layout 失败: {}", e).replace('\\', "/"))?;
 
     Ok(())
+}
+
+/// 把某个 UI 布局绑定到指定会话（会话级常驻 HUD 布局选择）。
+///
+/// 绑定前先校验该布局存在，避免写入悬空引用（C2：不留下"绑了个不存在的模板"这种坏状态）。
+#[tauri::command]
+pub async fn preset_ui_layout_activate(
+    session_id: i64,
+    layout_id: String,
+    state: State<'_, AppState>,
+) -> Result<UILayoutDefinition, String> {
+    let row = sqlx::query(
+        "SELECT id, preset_id, name, mount_type, theme, custom_css, layout_json, created_at, updated_at \
+         FROM preset_ui_layouts WHERE id = ?",
+    )
+    .bind(&layout_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| format!("查询 preset_ui_layout 失败: {}", e).replace('\\', "/"))?
+    .ok_or_else(|| format!("未找到 UI 布局 ID: {}", layout_id))?;
+
+    let layout = row_to_ui_layout(&row)?;
+
+    sqlx::query(
+        "INSERT INTO session_ui_layouts (session_id, layout_id, updated_at) VALUES (?, ?, ?) \
+         ON CONFLICT(session_id) DO UPDATE SET layout_id = excluded.layout_id, updated_at = excluded.updated_at",
+    )
+    .bind(session_id)
+    .bind(&layout_id)
+    .bind(crate::utils::now_ts())
+    .execute(&state.db)
+    .await
+    .map_err(|e| format!("绑定会话布局失败: {}", e).replace('\\', "/"))?;
+
+    Ok(layout)
+}
+
+/// 取指定会话当前生效的 UI 布局。
+///
+/// 解析链只有一环：`session_ui_layouts` 的显式绑定。没有绑定就报错，
+/// **不返回默认模板**——否则"没配布局"与"配了默认布局"在界面上一模一样，
+/// 创作者无法判断自己的布局到底有没有生效。
+#[tauri::command]
+pub async fn preset_ui_layout_for_conversation(
+    conversation_id: i64,
+    state: State<'_, AppState>,
+) -> Result<UILayoutDefinition, String> {
+    let bound: Option<String> =
+        sqlx::query_scalar("SELECT layout_id FROM session_ui_layouts WHERE session_id = ? LIMIT 1")
+            .bind(conversation_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| format!("查询会话布局绑定失败: {}", e).replace('\\', "/"))?;
+
+    let layout_id = bound.ok_or_else(|| {
+        format!(
+            "会话 {} 尚未绑定常驻 HUD 布局；请在预设详情页的「UI 设计器」里创建布局并绑定",
+            conversation_id
+        )
+    })?;
+
+    let row = sqlx::query(
+        "SELECT id, preset_id, name, mount_type, theme, custom_css, layout_json, created_at, updated_at \
+         FROM preset_ui_layouts WHERE id = ?",
+    )
+    .bind(&layout_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| format!("查询 preset_ui_layout 失败: {}", e).replace('\\', "/"))?
+    .ok_or_else(|| format!("会话绑定的 UI 布局已不存在: {}", layout_id))?;
+
+    row_to_ui_layout(&row)
 }

@@ -1,0 +1,30 @@
+- [x] `structured_output_parser.rs` 文件存在且不依赖 `stream_processor.rs`
+- [x] 增量 JSON 解析器能正确提取 thinking 字段增量并发射 ThinkingDelta 事件
+- [x] 增量 JSON 解析器能正确提取 text 字段增量并发射 TextDelta 事件
+- [x] 增量 JSON 解析器能正确检测字段切换（thinking → text）
+- [x] 增量 JSON 解析器能正确解析 choices 对象并在完整闭合后发射 ChoicesComplete 事件
+- [x] 增量 JSON 解析器在流中断时能提取已完整字段并返回显式错误
+- [x] `StructuredOutputSchema` 枚举包含 Basic 和 InteractiveFiction 两个变体
+- [x] `to_json_schema()` 方法能正确生成基础模板和交互小说模板的 JSON Schema
+- [x] `ProviderCapabilityMatrix` 新增 `supports_structured_json_output` 字段，OpenAI 和 Anthropic 均为 true
+- [x] `normalize_loaded_response_mode` 接受 `"structured_json"` 合法值
+- [x] OpenAI structured_json 请求体包含 `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`
+- [x] Anthropic structured_json 请求体包含 tool 定义和 `tool_choice: { type: "tool", name: "night_voyage_response" }`
+- [x] 不支持 structured_json 的 provider 返回显式错误而非静默降级
+- [x] OpenAI 流式链路在 structured_json 模式下使用增量 JSON 解析器处理 delta
+- [x] Anthropic 流式链路在 structured_json 模式下使用增量 JSON 解析器处理 tool_use input_json_delta
+- [x] 非 structured_json 模式下 OpenAI 和 Anthropic 流式行为与修改前完全一致
+- [x] thinking 内容写入 hidden_parts（与 Anthropic 原生 thinking 处理方式一致）
+- [x] text 内容写入 full_content
+- [x] choices 内容在完整接收后持久化
+- [x] 预设表新增 `structured_output_schema` 字段，默认值为 'basic'
+- [x] `preset_provider_overrides` 表新增 `structured_output_schema_override` 字段
+- [x] `PresetSummary` / `PresetDetail` 类型包含 `structuredOutputSchema` 字段
+- [x] 前端 `StructuredResponseNode` 类型定义正确，包含 thinking / text / choices 字段
+- [x] 前端能将 thinking 渲染为可折叠块（复用 CollapsibleTag 组件）
+- [x] 前端能将 text 渲染为普通正文（经过 parseMessageContent 管道）
+- [x] 前端能将 choices 渲染为可点击按钮，点击后触发 chat_submit_input
+- [x] 预设 UI Response Mode 下拉框包含 structured_json 选项
+- [x] 选择 structured_json 时显示 Schema 模板选择器
+- [x] 现有伪 XML 解析逻辑未被删除或修改
+- [x] `backend-ai-handoff.md` 已更新，记录 structured_json 模式的变更

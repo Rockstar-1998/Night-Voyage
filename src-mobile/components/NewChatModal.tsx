@@ -111,12 +111,17 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     try {
       await props.onCreateConversation(payload);
 
+      // key 与预置蓝图 `n_agent_gate` 的 option key 一致（single / director_actor / scriptwriter），
+      // 与 PC 端保持同一份契约。
       if (isAgent && selectedPresetId()) {
-        const gateKey = agentSubMode() === 'scriptwriter' ? 'pipeline_agent' : 'dual_agent_drafter_critic';
+        const gateKey = agentSubMode() === 'scriptwriter' ? 'scriptwriter' : 'director_actor';
         try {
           await updatePresetGateSelection(selectedPresetId()!, 'n_agent_gate', [gateKey]);
         } catch (gateErr) {
-          console.warn('[Mobile NewChatModal] Failed to sync n_agent_gate selection', gateErr);
+          showToast(
+            `Agent 子模式未能写入预设 Gate：${gateErr instanceof Error ? gateErr.message : String(gateErr)}`,
+            'error',
+          );
         }
       }
 

@@ -22,8 +22,9 @@ import { JoinRoomModal } from './components/JoinRoomModal';
 import { WorkspaceTransitionStage } from './components/WorkspaceTransitionStage';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { NotificationContainer, showToast, showConfirm } from './components/Toast';
-import { PersistentHudContainer } from './components/hud/PersistentHudContainer';
+import { SessionHudMount } from './components/hud/SessionHudMount';
 import { AgentDebugDrawer } from './components/debug/AgentDebugDrawer';
+import { McpDebugPanel } from './components/hud/McpDebugPanel';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
@@ -612,8 +613,8 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                   </div>
                                 </div>
                                 <Show when={props.selectedConversationId}>
-                                  <PersistentHudContainer
-                                    sessionId={props.selectedConversationId ?? undefined}
+                                  <SessionHudMount
+                                    conversationId={props.selectedConversationId!}
                                     onOpenDebug={() => props.onOpenAgentDebug?.()}
                                   />
                                 </Show>
@@ -974,6 +975,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                               return preset ? (
                                 <PresetDetailView
                                   preset={preset}
+                                  sessionId={props.selectedConversationId ?? undefined}
                                   onBack={() => setPresetDetailId(null)}
                                   onEditBlueprint={() => setEditingBlueprintId(preset.id)}
                                   onExport={() => void handleExportPreset(preset.id, preset.name)}
@@ -2699,7 +2701,17 @@ function App() {
       }));
     });
 
+    // 全局 Ctrl+Shift+D：切换 Agent 调试抽屉（原先只有抽屉内部监听，未打开时按无效）
+    const handleDebugHotkey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault();
+        setIsAgentDebugOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handleDebugHotkey);
+
     onCleanup(() => {
+      window.removeEventListener('keydown', handleDebugHotkey);
       chunkUnlisten();
       errorUnlisten();
       retryUnlisten();
@@ -2982,6 +2994,7 @@ function App() {
         onClose={() => setIsAgentDebugOpen(false)}
         sessionId={selectedConversationId() ?? undefined}
       />
+      <McpDebugPanel sessionId={selectedConversationId() ?? undefined} />
     </>
   );
 }

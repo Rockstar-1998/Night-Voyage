@@ -78,6 +78,23 @@ Walkthrough/          → 变更留痕记录（每次代码修改一份新文件
 - **C5 Mobile Frontend Independence**：`src/` 与 `src-mobile/` 零 UI 代码耦合，禁止 `isMobile` 条件分支，禁止互引组件。详见 guardrails "Enforce Mobile Frontend Independence"。
 - **C6 Project Cache Location**：所有运行时缓存必须写入 `D:\software_cache`，禁止写入系统盘。详见 guardrails "Enforce Project Cache Location"。
 - **C7 PC/Android Dual-Platform Coverage**：每个新功能必须同时覆盖两端，后端命令不得为某端单开后门。详见 guardrails "Design For PC And Android Together"。
+- **C8 MCP-Only Acceptance**：验收一律只用 MCP——以集成连接器工具逐步操作**真实运行中的系统**，
+  每一步由用户当场看到真实界面/真实数据的变化。不接受任何脚本文件（`.py` / `.mjs` / `.bat` 等）
+  的执行结果作为验收依据，不接受 `selftest` / 自测工具 / 测试报告替代演示，
+  不接受"测试全通过"这类结论。违反即验收不通过，一律拒绝。
+  **演示形式的硬性要求**：必须以 **① 模拟鼠标点击真实界面按钮**，或 **② MCP 控制前端按钮**
+  （触发按钮同款处理路径且界面可见）的方式驱动前端；**纯后端操作内部数据、或直接拿既有成果
+  宣称"已跑通"而当场不做操作的一律拒绝**。演示必须逐步展示功能是如何被操作并跑通的。
+- **C9 MCP Rolling Development**：MCP 工具按滚动开发推进——用到哪个能力就当场把那个工具加上，
+  加完立刻现场演示该工具。严禁一次性批量工具、严禁"先把工具攒齐再演示"，
+  严禁为验收而造的一次性工具（`selftest` / `e2e` / `self_check` 之类）。
+- **C10 MCP Demo Front-Mount**：验收演示涉及的 MCP 工具能力，必须同时挂载为**前端真实界面上的
+  可点按钮/面板**（调用与 MCP 工具相同的后端命令/服务），让用户能在 UI 上亲手触发并当场看到
+  界面变化。只在内部数据层操作、不挂前端按钮的演示一律验收不通过。
+- **C11 No Hardcoded Data**：严禁硬编码数据。前端、演示、测试代码一律不得内置伪造的游戏数据、
+  预设参数、示例物品/数值（如内置的 buy_item 物品清单）；界面上展示或预填的可选值必须来自
+  真实数据源（后端命令、数据库、既有契约定义）。真实数据源尚未暴露的能力，就留空由使用者
+  手动输入，或先滚动开发出真实数据源命令再挂 UI——不得用硬编码清单顶替。
 
 ### Approved Exceptions
 
@@ -183,6 +200,10 @@ Walkthrough/          → 变更留痕记录（每次代码修改一份新文件
 | C5 Mobile Frontend Independence | √/× |  |
 | C6 Project Cache Location | √/× |  |
 | C7 PC/Android Coverage | √/× |  |
+| C8 MCP-Only Acceptance | √/× |  |
+| C9 MCP Rolling Development | √/× |  |
+| C10 MCP Demo Front-Mount | √/× |  |
+| C11 No Hardcoded Data | √/× |  |
 
 任何 × 必须附用户批准记录，否则不得提交。
 

@@ -1,10 +1,8 @@
-import { Component } from 'solid-js';
+import { Component, For, Show, createResource } from 'solid-js';
 import type { UiLayoutConfig } from '../../../lib/blueprint/types';
 import type { NodeConfigComponentProps } from '../NodeConfigPanel';
+import { presetUiLayoutList } from '../../../lib/backend/ui_layout';
 import { Layout, Lock } from '../../../lib/icons';
-
-const INPUT_CLASS =
-  'w-full bg-black/30 border border-white/15 rounded-lg py-2 px-3 text-sm font-mono text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
 const SELECT_CLASS =
   'w-full bg-night-water border border-white/15 rounded-lg py-2 px-3 text-sm text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed';
@@ -13,6 +11,19 @@ const LABEL_CLASS = 'text-[10px] text-mist-solid/40 uppercase tracking-widest';
 
 export const UiLayoutConfigNode: Component<NodeConfigComponentProps<UiLayoutConfig>> = (props) => {
   const update = (updates: Partial<UiLayoutConfig>) => props.onUpdate(updates);
+
+  // 布局模板列表来自真实数据源（preset_ui_layout_list），不内置任何候选值（C11）。
+  // 读取失败必须显式可见（C2）：没有预设 id / 列表为空 / 请求出错分别给出不同提示。
+  const [layouts] = createResource(
+    () => props.presetId,
+    async (presetId: number) => presetUiLayoutList(presetId),
+  );
+
+  const layoutError = () => {
+    const err = layouts.error;
+    if (!err) return null;
+    return err instanceof Error ? err.message : String(err);
+  };
 
   return (
     <div class="space-y-4">
@@ -43,17 +54,51 @@ export const UiLayoutConfigNode: Component<NodeConfigComponentProps<UiLayoutConf
       </div>
 
       <div class="space-y-1">
-        <label class={LABEL_CLASS}>UI 布局模板 ID (Layout ID)</label>
-        <input
-          type="text"
-          value={props.config.layout_id || ''}
-          disabled={props.isLocked}
-          onInput={(e) => update({ layout_id: e.currentTarget.value.trim() })}
-          class={INPUT_CLASS}
-          placeholder="如: default_hud_layout"
-        />
+        <label class={LABEL_CLASS}>UI 布局模板 (Layout)</label>
+        <Show
+          when={props.presetId != null}
+          fallback={
+            <div class="p-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-[11px] text-rose-300">
+              无法读取布局列表：当前蓝图没有关联预设 id。
+            </div>
+          }
+        >
+          <Show
+            when={!layoutError()}
+            fallback={
+              <div class="p-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-[11px] text-rose-300">
+                读取布局列表失败：{layoutError()}
+              </div>
+            }
+          >
+            <Show
+              when={(layouts() ?? []).length > 0}
+              fallback={
+                <div class="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300">
+                  该预设下还没有 UI 布局模板。请先在预设详情页的「UI 设计器」里创建布局，再回到这里绑定。
+                </div>
+              }
+            >
+              <select
+                value={props.config.layout_id || ''}
+                disabled={props.isLocked || layouts.loading}
+                onChange={(e) => update({ layout_id: e.currentTarget.value })}
+                class={SELECT_CLASS}
+              >
+                <option value="">（未绑定）</option>
+                <For each={layouts() ?? []}>
+                  {(layout) => (
+                    <option value={layout.id}>
+                      {layout.name} · {layout.mountType}
+                    </option>
+                  )}
+                </For>
+              </select>
+            </Show>
+          </Show>
+        </Show>
         <p class="text-[10px] text-mist-solid/35">
-          留空或使用 default_hud_layout 时，将使用项目默认的工业级玄青色常驻面板。
+          未绑定时，会话使用项目默认的工业级玄青色常驻面板。
         </p>
       </div>
 

@@ -1,0 +1,5 @@
+- [x] NewChatModal Step 2 的 API 档案下拉框展示所有 provider 名称
+- [x] API 档案下拉框在无 provider 时显示正确占位提示
+- [x] RightDrawer 预设绑定 Select 选择预设后状态正确更新
+- [x] RightDrawer 世界书绑定 Select 选择后状态正确更新（修复了同样的 bug）
+- [x] `npm run build` 通过无报错

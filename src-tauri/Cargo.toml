@@ -29,6 +29,10 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["time", "net", "rt", "sync", "io-util", "macros"] }
 minijinja = "2"
 regex = "1"
+# 禁词门禁的多模式单遍匹配（计划 §6.3）；lock 中已作为传递依赖存在。
+aho-corasick = "1"
+# D20 骰点的密码学安全随机源（计划 §6.3）。
+getrandom = "0.2"
 async-trait = "0.1"
 # 开发期 MCP 端点的 HTTP 传输层。四者均已在 Cargo.lock 中作为 Tauri 传递依赖存在，
 # 此处仅将其提升为直接依赖并开启 server 侧 feature，不引入新的版本线。
@@ -42,6 +46,25 @@ chrono = "0.4"
 # checkout. Only the adapter in services/memory_providers/mem0_rs.rs may touch
 # these types; business code depends solely on the local MemoryService trait.
 mem0 = { path = "../MEM0/mem0-rs/crates/mem0" }
+
+# 开发期 MCP 截图工具的 Windows 依赖。两者均已在 Cargo.lock 中作为传递依赖存在
+# （`windows` 与 tauri 2.11.2 共用 0.61.3，句柄类型因此可直接互通），
+# 此处仅提升为直接依赖并开启所需 Win32 feature，不引入新的版本线。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_WindowsAndMessaging",
+] }
+png = "0.17"
+
+[features]
+# 开发期 MCP 端点开关。默认关闭 ⇒ `npm run tauri build`（build_dual_release.bat）
+# 产出的发行版实例**不含**该模块。需要带端点的实例时显式：
+#   cargo build --release --features mcp-dev
+# 该端点能读写玩家存档，因此只允许显式开启，绝不默认随发行版发布。
+mcp-dev = []
 
 [profile.dev]
 opt-level = 1

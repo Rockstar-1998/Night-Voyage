@@ -1,6 +1,7 @@
 use sqlx::{Row, SqlitePool, Transaction};
 
 use crate::models::RoundState;
+use crate::repositories::message_repository::normalize_tool_use_input_json;
 use crate::utils::now_ts;
 
 pub struct RoundRepository;
@@ -456,15 +457,26 @@ impl RoundRepository {
         }
     }
 
-    pub async fn persist_tool_use_agent_skeleton(
+    /// 记录一轮里模型发起的全部 ToolCall（Anthropic `tool_use` / OpenAI `tool_calls`）。
+    ///
+    /// 一次写入：assistant 正文与 content parts 只写一遍，然后为每个 tool_use 落一条
+    /// `agent_runs` + `agent_drafts`（工具记账）与一条 `message_tool_calls(status='pending')`。
+    /// 批量而非逐个调用，是因为逐个调用会把同一 assistant 消息的 parts 反复替换、
+    /// 并产生多条语义重复的 run 记录。
+    pub async fn persist_tool_use_skeletons(
         db: &SqlitePool,
         conversation_id: i64,
         round_id: i64,
         assistant_message_id: i64,
+        provider_kind: &str,
         full_content: &str,
         content_parts: &[crate::repositories::message_repository::PendingMessageContentPart],
-        pending_tool_use: &crate::repositories::message_repository::PendingToolUseSkeleton,
+        pending_tool_uses: &[crate::repositories::message_repository::PendingToolUseSkeleton],
     ) -> Result<(), String> {
+        if pending_tool_uses.is_empty() {
+            return Ok(());
+        }
+
         if !full_content.is_empty() {
             crate::repositories::message_repository::MessageRepository::update_content(
                 db,
@@ -492,61 +504,88 @@ impl RoundRepository {
         } else {
             "classic_tool_use_pending_result"
         };
-        let provider_decision = format!(
-            "provider_kind=anthropic;tool_use_id={};tool_name={}",
-            pending_tool_use.tool_use_id, pending_tool_use.tool_name
-        );
 
         let mut tx = db.begin().await.map_err(|err| err.to_string())?;
-        let agent_run_id = sqlx::query(
-            "INSERT INTO agent_runs (
-                round_id, conversation_id, orchestration_mode, provider_decision, status, started_at, finished_at
-             ) VALUES (?, ?, ?, ?, ?, ?, NULL)",
-        )
-        .bind(round_id)
-        .bind(conversation_id)
-        .bind(orchestration_mode)
-        .bind(&provider_decision)
-        .bind("pending_tool_result")
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?
-        .last_insert_rowid();
 
-        sqlx::query(
-            "INSERT INTO agent_drafts (
-                run_id, agent_key, character_id, draft_content, draft_intent, status, created_at
-             ) VALUES (?, ?, NULL, ?, ?, ?, ?)",
-        )
-        .bind(agent_run_id)
-        .bind(format!("tool:{}", pending_tool_use.tool_name))
-        .bind(normalize_tool_use_input_json(&pending_tool_use.input_json))
-        .bind(Some(pending_tool_use.tool_name.clone()))
-        .bind("pending_tool_result")
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?;
+        for pending_tool_use in pending_tool_uses {
+            let provider_decision = format!(
+                "provider_kind={};tool_use_id={};tool_name={}",
+                provider_kind, pending_tool_use.tool_use_id, pending_tool_use.tool_name
+            );
 
-        sqlx::query(
-            "INSERT OR REPLACE INTO message_tool_calls (
-                message_id, tool_use_id, tool_name, input_json, status, result_message_id, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(assistant_message_id)
-        .bind(&pending_tool_use.tool_use_id)
-        .bind(&pending_tool_use.tool_name)
-        .bind(normalize_tool_use_input_json(&pending_tool_use.input_json))
-        .bind("pending")
-        .bind(now)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?;
+            let agent_run_id = sqlx::query(
+                "INSERT INTO agent_runs (
+                    round_id, conversation_id, orchestration_mode, provider_decision, status, started_at, finished_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            )
+            .bind(round_id)
+            .bind(conversation_id)
+            .bind(orchestration_mode)
+            .bind(&provider_decision)
+            .bind("pending_tool_result")
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?
+            .last_insert_rowid();
+
+            sqlx::query(
+                "INSERT INTO agent_drafts (
+                    run_id, agent_key, character_id, draft_content, draft_intent, status, created_at
+                 ) VALUES (?, ?, NULL, ?, ?, ?, ?)",
+            )
+            .bind(agent_run_id)
+            .bind(format!("tool:{}", pending_tool_use.tool_name))
+            .bind(normalize_tool_use_input_json(&pending_tool_use.input_json))
+            .bind(Some(pending_tool_use.tool_name.clone()))
+            .bind("pending_tool_result")
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+            sqlx::query(
+                "INSERT OR REPLACE INTO message_tool_calls (
+                    message_id, tool_use_id, tool_name, input_json, status, result_message_id, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            )
+            .bind(assistant_message_id)
+            .bind(&pending_tool_use.tool_use_id)
+            .bind(&pending_tool_use.tool_name)
+            .bind(normalize_tool_use_input_json(&pending_tool_use.input_json))
+            .bind("pending")
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
 
         tx.commit().await.map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn persist_tool_use_agent_skeleton(
+        db: &SqlitePool,
+        conversation_id: i64,
+        round_id: i64,
+        assistant_message_id: i64,
+        full_content: &str,
+        content_parts: &[crate::repositories::message_repository::PendingMessageContentPart],
+        pending_tool_use: &crate::repositories::message_repository::PendingToolUseSkeleton,
+    ) -> Result<(), String> {
+        // 单工具入口保留为薄包装，实际落库逻辑只在批量实现里（避免两份实现漂移）。
+        Self::persist_tool_use_skeletons(
+            db,
+            conversation_id,
+            round_id,
+            assistant_message_id,
+            "anthropic",
+            full_content,
+            content_parts,
+            std::slice::from_ref(pending_tool_use),
+        )
+        .await
     }
 
     /// 查询目标轮次的 (conversation_id, round_index, status)
@@ -695,11 +734,3 @@ impl RoundRepository {
     }
 }
 
-fn normalize_tool_use_input_json(input_json: &str) -> String {
-    let trimmed = input_json.trim();
-    if trimmed.is_empty() {
-        "{}".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}

@@ -1,0 +1,2 @@
+- [x] `scrollToBottom` 使用 `scrollTo({ behavior: 'smooth' })` 实现平滑滚动
+- [x] 项目构建通过，无编译错误

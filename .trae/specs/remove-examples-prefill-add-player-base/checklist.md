@@ -1,0 +1,22 @@
+# Checklist
+
+- [x] `PromptBlockKind` 枚举中不再包含 `ExampleMessage` 和 `PrefillSeed` 变体
+- [x] `PromptBlockKind` 枚举包含 `PlayerBase` 变体，priority 为 250
+- [x] `PromptBlockSource` 枚举包含 `Player { character_id }` 变体
+- [x] `PromptCompileResult` 不包含 `example_blocks` 和 `prefill_seed` 字段
+- [x] `ProviderCapabilityMatrix` 不包含 `supports_example_messages` 和 `supports_prefill_seed` 字段
+- [x] `parse_preset_block_directive` 遇到 `compiler:prefill` 时返回错误
+- [x] `ConversationCompileContext` 包含 `player_character_id` 字段
+- [x] `load_conversation_compile_context` 正确查询 `conversation_members.player_character_id`
+- [x] 当 `player_character_id` 存在时，`compile_prompt` 生成 `PlayerBase` block
+- [x] 当 `player_character_id` 为 NULL 时，`compile_prompt` 不生成 `PlayerBase` block 且不报错
+- [x] `PromptTemplateRenderContext` 包含 `player_character` 字段
+- [x] `build_runtime_template_render_context` 正确填充 `player_character`
+- [x] PlayerBase block 的 `required` 为 true，不可被预算裁剪
+- [x] 预算裁剪中不再有 `ExampleMessage` 裁剪逻辑
+- [x] `PortablePresetFile` 不包含 `examples` 字段（或用 serde(default) 兼容旧格式）
+- [x] 狐神抚 V9.4 预设文件中 `examples` 数组已清空或移除
+- [x] 狐神抚 V9.4 预设文件中 `compiler:prefill` block 已移除
+- [x] `cargo build` 无编译错误
+- [x] 现有单元测试通过
+- [x] PromptBlockKind priority 排序：PresetRule(100) < MultiplayerProtocol(150) < CharacterBase(200) < PlayerBase(250) < WorldBookMatch(300)

@@ -1,0 +1,16 @@
+- [x] `Cargo.toml` 中已添加 `axum` 依赖
+- [x] `src-tauri/src/backdoor/mod.rs` 存在且定义了 `BackdoorState` 结构体（包含 `SqlitePool`、`AppHandle`、启动时间戳）
+- [x] `src-tauri/src/backdoor/handlers.rs` 实现了 `health_handler`、`providers_handler`、`chat_test_handler` 三个 handler
+- [x] `lib.rs` 中声明了 `mod backdoor` 并在 `setup` 中启动后门 HTTP 服务器
+- [x] 后门服务器默认监听 `127.0.0.1:17530`，可通过 `NIGHT_VOYAGE_BACKDOOR_PORT` 环境变量覆盖
+- [x] `GET /health` 返回 `{"status": "ready", "uptime_ms": <毫秒数>}`
+- [x] `GET /backdoor/providers` 返回已配置的 API 档案列表
+- [x] `POST /backdoor/chat-test` 能创建测试会话、发送消息、等待 LLM 响应、返回计时数据
+- [x] 对话测试无可用 API 档案时返回 `{"ok": false, "error": "no_api_provider"}`
+- [x] 对话测试超时时返回 `{"ok": false, "error": "timeout"}`
+- [x] 对话测试完成后异步清理测试会话数据
+- [x] `scripts/startup_benchmark.py` 支持 `--mode debug|release`、`--runs N`、`--port PORT` 参数
+- [x] 基准测试脚本能完成冷启动 → 就绪探测 → 对话测试 → 计时报告的完整流程
+- [x] 基准测试脚本输出冷启动耗时、对话可用耗时、LLM 响应耗时三项指标
+- [x] 多次运行模式下输出每次详细计时和平均值
+- [x] 后门服务器端口被占用时不阻塞应用启动

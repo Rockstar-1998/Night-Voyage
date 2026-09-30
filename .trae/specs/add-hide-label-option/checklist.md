@@ -1,0 +1,9 @@
+- [x] `SchemaKeyConfig` 接口包含 `hideLabel: boolean` 字段
+- [x] `serializeDisplayConfig` 输出包含 `hideLabel` 字段
+- [x] `parseJsonSchema` 正确解析 `hideLabel`，缺失时默认为 `false`
+- [x] SchemaConfigPanel 中每个键配置区域有"隐藏标签"复选框
+- [x] 勾选"隐藏标签"时，"默认展开"自动勾选并禁用
+- [x] 取消勾选"隐藏标签"时，"默认展开"恢复可编辑
+- [x] `StructuredResponseRenderer` 中 `hideLabel` 为 `true` 的字段直接渲染内容，不包裹 `CollapsibleTag`
+- [x] `hideLabel` 为 `false` 或未设置的字段保持现有可折叠标签行为
+- [x] 项目构建通过，无编译错误（所有报错均为预存问题）

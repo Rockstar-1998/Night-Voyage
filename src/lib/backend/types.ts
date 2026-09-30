@@ -1123,12 +1123,15 @@ export interface DiceRollResult {
 
 // ─── UI Layout Definition & Widgets ───
 
+// 与 Rust `LayoutMountType` 的 serde camelCase 对齐（IPC 约定见 AGENTS.md：图 JSON 用 snake_case、
+// 运行时 IPC 用 camelCase）。数据库列 `preset_ui_layouts.mount_type` 存 PascalCase，
+// 由 commands/ui_layout.rs 显式映射，不依赖 serde 命名。
 export type LayoutMountType =
-  | 'RightDock'
-  | 'TopSticky'
-  | 'FloatingHUD'
-  | 'MobileDrawer'
-  | 'MobileBottomSticky';
+  | 'rightDock'
+  | 'topSticky'
+  | 'floatingHUD'
+  | 'mobileDrawer'
+  | 'mobileBottomSticky';
 
 export type ContainerKind = 'rootCanvas' | 'panel' | 'tabs' | 'grid';
 export type WidgetType = 'statBar' | 'inventorySlotGrid' | 'dataLabel' | 'badge' | 'avatarFrame';
@@ -1142,9 +1145,11 @@ export interface WidgetDefinition {
   style?: Record<string, string>;
 }
 
+// Rust `LayoutNode` 是 `#[serde(tag = "nodeType")]` 的内部标签枚举，容器/控件的字段
+// **平铺**在同一个对象里（没有 `container:` / `widget:` 嵌套层），前端必须按同一形状读写。
 export type LayoutNode =
-  | { nodeType: 'container'; container: LayoutContainer }
-  | { nodeType: 'widget'; widget: WidgetDefinition };
+  | ({ nodeType: 'container' } & LayoutContainer)
+  | ({ nodeType: 'widget' } & WidgetDefinition);
 
 export interface LayoutContainer {
   id: string;

@@ -5,8 +5,9 @@
 //! `claireon`（UE 编辑器）与 `unity` 一致：GUI 应用自监听本地 MCP 端点。
 //!
 //! 定位是开发期诊断通道，不是产品功能：
-//! - 调用方在 `lib.rs` 以 `cfg(all(desktop, debug_assertions))` 引入，发行版与
-//!   Android 构建经 cfg 剥离，产物中不含本模块任何代码；
+//! - 调用方在 `lib.rs` 以 `cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))`
+//!   引入：默认发行版与 Android 构建经 cfg 剥离，产物中不含本模块任何代码；
+//!   需要带端点的发行版实例时显式构建 `--features mcp-dev`；
 //! - 仅绑定 `127.0.0.1`，并要求 `X-NV-Token` 请求头；
 //! - 监听失败只记录日志，不阻断应用启动——MCP 不是产品启动前提。
 //!

@@ -1,0 +1,18 @@
+- [ ] character_cards.personality 字段在整个 Rust 代码库中零引用，确认完全废弃
+- [ ] character_cards.system_prompt 字段在整个 Rust 代码库中零引用，确认完全废弃
+- [ ] character_cards.example_messages 字段在整个 Rust 代码库中零引用，确认完全废弃
+- [ ] character_cards.creator_notes 字段在整个 Rust 代码库中零引用，确认完全废弃
+- [ ] character_cards.first_message 已被 character_card_openers 取代但仍双写，确认冗余
+- [ ] character_cards.description 已被 character_card_base_sections 取代但仍双写，确认冗余
+- [ ] character_cards.tags 已被 character_card_tags 取代但仍双写，确认冗余
+- [ ] presets.system_prompt_template 已被 preset_prompt_blocks 取代且零引用，确认完全废弃
+- [ ] presets.jailbreak_prompt 已被 preset_prompt_blocks 取代且零引用，确认完全废弃
+- [ ] conversations.character_id 已被 host_character_id 取代，仅一处 COALESCE 兼容读取
+- [ ] rooms.character_id 在整个代码库中零引用，确认完全废弃
+- [ ] agent_bindings 表在整个代码库中零访问，确认完全废弃
+- [ ] agent_runs 表仅写入和删除无业务读取，确认为只写不读废弃表
+- [ ] agent_drafts 表仅写入和删除无业务读取，确认为只写不读废弃表
+- [ ] api_provider_models 表仅写入和删除无业务读取，确认为只写不读废弃表
+- [ ] message_tool_calls.status CHECK 约束与实际使用的状态值不一致
+- [ ] message_repository.update_content_parts_text 方法引用不存在的列名，属于死代码/bug
+- [ ] idx_messages_created_at 索引被 idx_messages_visible_window 覆盖，确认冗余

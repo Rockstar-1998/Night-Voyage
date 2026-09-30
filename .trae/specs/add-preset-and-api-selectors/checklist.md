@@ -1,0 +1,7 @@
+- [x] NewChatModal Step 2 有预设选择器，选项来自 presetSummaries
+- [x] NewChatModal 创建会话时 payload 包含 presetId
+- [x] NewChatModal 中预设占位提示已删除
+- [x] RightDrawer "会话绑定"区域有 API 档案选择器
+- [x] RightDrawer 保存绑定时包含 providerId
+- [x] RightDrawer 显示当前绑定的 API 档案名称
+- [x] `npx tsc --noEmit` 相关文件无新增类型错误

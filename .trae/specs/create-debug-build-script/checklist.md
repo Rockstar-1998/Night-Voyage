@@ -1,0 +1,5 @@
+- [x] start-debug.bat 存在且可执行
+- [x] 环境变量与 start-dev.bat 一致（缓存目录等）
+- [x] 脚本执行 cargo build 而非 tauri build
+- [x] 脚本启动 Vite 开发服务器而非 Tauri 窗口
+- [x] 不创建隔离实例

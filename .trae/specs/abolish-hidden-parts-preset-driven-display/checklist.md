@@ -1,0 +1,22 @@
+- [ ] 数据库迁移：`presets` 表新增 `structured_output_display TEXT DEFAULT NULL` 列
+- [ ] 数据库迁移：`preset_provider_overrides` 表新增 `structured_output_display_override TEXT DEFAULT NULL` 列
+- [ ] 数据库迁移：所有 `message_content_parts` 中 `is_hidden=1` 的记录改为 `is_hidden=0`
+- [ ] `models/mod.rs` 中 `PresetDetail`、`PresetUpdate`、`ProviderOverrideInput` 新增 `structured_output_display` 字段
+- [ ] `llm/mod.rs` 中 `LlmChatRequest` 新增 `structured_output_display` 字段
+- [ ] `services/prompt_compiler.rs` 中 `PromptCompileResult` 和 `ProviderOverrideData` 新增字段并从数据库加载
+- [ ] `services/preset_service.rs` 中 `PortablePresetMeta`、`create`、`update` 新增字段
+- [ ] `validators/preset_validator.rs` 新增 `structured_output_display` 校验
+- [ ] `repositories/preset_repository.rs` CRUD 新增 `structured_output_display` 字段
+- [ ] `stream_processor.rs` 移除 `primary_display_key` 和 `hidden_parts`，改为 `content_parts` + 字段名 lookup
+- [ ] `stream_processor.rs` 所有字段 `is_hidden=false`，不再区分主/非主字段
+- [ ] `stream_processor.rs` `StreamResponseData` 移除 `hidden_parts_json`
+- [ ] `stream_processor.rs` 同步修改 `stream_anthropic_text_response`
+- [ ] `message_repository.rs` `replace_content_parts` 不再区分 hidden/visible，所有 part `is_hidden=false`
+- [ ] 预设文件 `狐神抚 V9.4 [Night Voyage].json` 新增 `structuredOutputDisplay`
+- [ ] 前端 `App.tsx` 处理 `string_field_delta` 事件，实时渲染非主内容字段
+- [ ] 前端 `messageFormatter.ts` `StructuredResponseNode` 新增 `displayConfig`
+- [ ] 前端 `MessageFormatRenderer.tsx` 按 `displayConfig` 渲染折叠/展开
+- [ ] 前端字段渲染顺序按 JSON 出现顺序（thinking → content → choices）
+- [ ] `cargo build --release` 编译通过
+- [ ] 重新导入预设后 `structured_output_display` 正确保存
+- [ ] 发送消息后所有字段可见，thinking 默认折叠，content 和 choices 默认展开

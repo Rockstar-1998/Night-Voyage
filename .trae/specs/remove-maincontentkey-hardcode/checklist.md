@@ -1,0 +1,6 @@
+- [x] `StructuredResponseNode` 接口中不再包含 `mainContentKey` 字段
+- [x] `parseStructuredResponse` 不再返回 `mainContentKey`
+- [x] `MessageItem.tsx` 的 `structuredResponse` memo 不再包含 `mainContentKey`
+- [x] `StructuredResponseRenderer` 不再接收 `mainContentKey` prop
+- [x] 字段标签隐藏仅由 `hideLabel` 控制，无任何隐式默认值
+- [x] 项目构建通过，无编译错误（报错均为预存问题）

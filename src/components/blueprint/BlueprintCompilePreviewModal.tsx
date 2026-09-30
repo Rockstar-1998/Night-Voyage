@@ -195,6 +195,62 @@ export const BlueprintCompilePreviewModal: Component<BlueprintCompilePreviewModa
                   )}
                 </For>
 
+                {/* 工具调用与 HUD 布局激活情况：创作者据此确认"配的东西真的被激活了" */}
+                <Show
+                  when={
+                    (data().activeTools?.length ?? 0) > 0 ||
+                    data().activeUiLayout ||
+                    (data().toolPlans?.length ?? 0) > 0
+                  }
+                >
+                  <div class="mt-8 pt-6 border-t border-white/5 space-y-3">
+                    <div class="text-xs font-semibold text-mist-solid/60">工具调用与常驻 HUD 激活情况</div>
+
+                    <Show when={data().activeUiLayout}>
+                      {(layout) => (
+                        <div class="text-[11px] text-mist-solid/70">
+                          常驻 HUD 布局：<span class="text-accent">{layout().layout_id || '(未指定 id)'}</span>
+                          <span class="text-mist-solid/40"> · 锚点 {layout().mount_type || '(未指定)'}</span>
+                        </div>
+                      )}
+                    </Show>
+
+                    <Show when={(data().activeTools?.length ?? 0) > 0}>
+                      <div class="space-y-1">
+                        <For each={data().activeTools ?? []}>
+                          {(tool) => (
+                            <div class="text-[11px] text-mist-solid/70">
+                              ToolCall 契约：<span class="text-accent">{tool.toolName}</span>
+                              <span class="text-mist-solid/40"> · {tool.description || '无描述'}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+
+                    <Show when={(data().toolPlans?.length ?? 0) > 0}>
+                      <div class="space-y-2">
+                        <For each={data().toolPlans ?? []}>
+                          {(plan) => (
+                            <div class="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                              <div class="text-[11px] text-mist-solid/80">
+                                {plan.toolName} 的执行计划
+                                <span class="text-mist-solid/40">
+                                  {' '}
+                                  · {plan.steps.length} 步 · {plan.hasReturnTemplate ? '含回执模板' : '用默认回执'}
+                                </span>
+                              </div>
+                              <For each={plan.steps}>
+                                {(step) => <div class="text-[10px] font-mono text-mist-solid/50">{step}</div>}
+                              </For>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
                 {/* Structured Output Schema Section */}
                 <Show when={data().structuredOutputSchema && Object.keys(data().structuredOutputSchema).length > 0}>
                   <div class="mt-8 pt-6 border-t border-white/5">

@@ -1,11 +1,15 @@
-import { Component, For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Component, For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { listen } from '@tauri-apps/api/event';
 import type { DataContainerPatch, InventoryItem } from '../../lib/backend/types';
 import { sessionGameStateGet } from '../../lib/backend/game_state';
+import { presetUiLayoutGet } from '../../lib/backend/ui_layout';
+import { LayoutTreeNode } from './LayoutTreeNode';
+import type { HudSnapshot } from '../../lib/hud/layoutBinding';
 
 interface PersistentHudContainerProps {
   sessionId?: number;
+  /** 绑定到会话的 UI 布局 id；为空时使用内置默认视图。 */
   layoutId?: string;
   customCss?: string;
   className?: string;
@@ -316,6 +320,32 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
   const [schemaPatches, setSchemaPatches] = createSignal<Record<string, any>>({});
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
+  // 布局模式：会话绑定了 UI 布局就按布局渲染；未绑定 / 读取失败时退回内置默认视图
+  // （内置视图是产品既定外观，不是"静默兜底"；布局读取本身的失败会显式报错）。
+  const [layout] = createResource(
+    () => props.layoutId,
+    async (layoutId: string) => presetUiLayoutGet(layoutId),
+  );
+
+  const layoutError = createMemo(() => {
+    const err = layout.error;
+    if (!err) return null;
+    return err instanceof Error ? err.message : String(err);
+  });
+
+  const hudSnapshot = (): HudSnapshot => ({
+    stats: stats(),
+    inventory: inventory(),
+    flags: flags(),
+    schemaPatches: schemaPatches(),
+  });
+
+  // 移动端锚点布局在 PC 端不适用：显式提示，而不是把移动端布局硬塞进 PC 视口。
+  const mobileMountOnDesktop = createMemo(() => {
+    const mount = layout()?.mountType;
+    return mount === 'mobileDrawer' || mount === 'mobileBottomSticky' ? mount : null;
+  });
+
   onMount(() => {
     if (hostEl && !hostEl.shadowRoot) {
       const root = hostEl.attachShadow({ mode: 'open' });
@@ -405,16 +435,27 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
             <Show when={props.customCss}>
               <style>{props.customCss}</style>
             </Show>
+            {/* 布局自带的自定义 CSS：同样只在 Shadow DOM 内生效（C4） */}
+            <Show when={layout()?.customCss}>
+              <style>{layout()?.customCss}</style>
+            </Show>
 
             <div class="hud-panel">
               {/* 顶栏 */}
               <div class="hud-header">
                 <div class="hud-title-group">
                   <div class="hud-badge-dot" />
-                  <span class="hud-title">常驻状态面板 (Persistent HUD)</span>
+                  <span class="hud-title">
+                    {layout() ? `常驻状态面板 · ${layout()?.name}` : '常驻状态面板 (Persistent HUD)'}
+                  </span>
                   <Show when={patchEntries().length > 0}>
                     <span style={{ "font-size": "10px", color: "#38bdf8", "background": "rgba(56, 189, 248, 0.1)", "padding": "1px 6px", "border-radius": "4px" }}>
                       Schema 已联动
+                    </span>
+                  </Show>
+                  <Show when={layout()}>
+                    <span style={{ "font-size": "10px", color: "#a78bfa", "background": "rgba(167, 139, 250, 0.12)", "padding": "1px 6px", "border-radius": "4px" }}>
+                      布局: {layout()?.mountType}
                     </span>
                   </Show>
                 </div>
@@ -440,8 +481,33 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
                 )}
               </Show>
 
+              {/* 布局读取失败显式报错 */}
+              <Show when={layoutError()}>
+                {(msg) => (
+                  <div class="hud-error" role="alert">
+                    <span class="hud-error-title">UI 布局加载失败（已回退内置视图）</span>
+                    <span class="hud-error-msg">{msg()}</span>
+                  </div>
+                )}
+              </Show>
+
+              <Show when={mobileMountOnDesktop()}>
+                {(mount) => (
+                  <div class="hud-error" role="alert">
+                    <span class="hud-error-title">布局锚点不适用于当前端</span>
+                    <span class="hud-error-msg">
+                      该布局的挂载锚点是 {mount()}（移动端），PC 端不渲染；请改用 RightDock / TopSticky / FloatingHUD。
+                    </span>
+                  </div>
+                )}
+              </Show>
+
               {/* 折叠区 */}
               <Show when={!collapsed()}>
+                {/* 绑定了 UI 布局且锚点适用于本端 → 按布局渲染；否则用内置默认视图 */}
+                <Show
+                  when={layout() && !mobileMountOnDesktop()}
+                  fallback={
                 <div class="hud-body">
                   {/* 数值属性条 */}
                   <Show when={statEntries().length > 0}>
@@ -525,6 +591,15 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
                     </div>
                   </Show>
                 </div>
+                  }
+                >
+                  <div class="hud-body">
+                    <LayoutTreeNode
+                      node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }}
+                      snapshot={hudSnapshot()}
+                    />
+                  </div>
+                </Show>
               </Show>
             </div>
           </Portal>

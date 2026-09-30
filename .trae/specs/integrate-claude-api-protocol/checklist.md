@@ -1,0 +1,37 @@
+- [x] Anthropic API 版本常量已从 `2023-06-01` 更新为 `2025-04-14`
+- [x] 所有 Anthropic HTTP 请求头中 `anthropic-version` 值为 `2025-04-14`
+- [x] `anthropic-beta` 请求头在需要时自动添加（token counting、prompt caching 等）
+- [x] `presets` 表已新增 `top_k INTEGER NULL` 字段
+- [x] `preset_provider_overrides` 表已新增 `top_k_override INTEGER NULL` 字段
+- [x] `CompiledSamplingParams` 包含 `top_k` 字段
+- [x] Prompt Compiler 加载并编译 `top_k`，应用 provider override
+- [x] Anthropic 请求体正确映射 `top_k` 参数
+- [x] OpenAI 兼容请求体不包含 `top_k`（不支持时不发送）
+- [x] `ProviderCapabilityMatrix` 包含 `supports_top_k`，Anthropic 为 true，OpenAI 为 false
+- [x] 不支持 `top_k` 的 provider 收到 `top_k` 值时显式报错
+- [x] 预设命令 DTO（PresetSummary、PresetDetail、PresetCompilePreview、create、update）包含 topK
+- [x] Anthropic 请求体 `system` 字段使用 `RequestTextBlock[]` 数组格式
+- [x] 每个 system block 映射为 `{"type": "text", "text": "..."}`
+- [x] system 数组格式天然支持未来 `cache_control` 扩展
+- [x] Anthropic provider 模型列表拉取有专用逻辑
+- [x] 模型列表拉取失败时回退到硬编码的 Claude 模型列表
+- [x] 硬编码模型列表包含当前已知 Claude 模型 ID
+- [x] `providers_count_tokens` 命令已实现并注册
+- [x] Anthropic token 计数请求正确发送到 `/v1/messages/count_tokens`
+- [x] OpenAI 兼容 provider 调用 token 计数时返回显式错误
+- [x] `chat_submit_input` 接受可选 `attachments` 参数
+- [x] 图片附件被编译为 `LlmContentPart::Image`
+- [x] Anthropic 请求中图片正确转为 base64 image source 格式
+- [x] 非法图片格式返回显式错误
+- [x] 图片内容持久化到 `message_content_parts` 表
+- [x] Anthropic 流式链路完整发射 `llm-stream-event` 事件
+- [x] `llm-stream-event` 的 `eventKind` 正确映射所有 Anthropic SSE 事件类型
+- [x] `llm-stream-chunk` 保持向后兼容，只包含可见文本增量
+- [x] OpenAI 流式链路也同步发射 `llm-stream-event`
+- [x] `chat_submit_tool_result` 命令已实现并注册
+- [x] 非 agent mode 下调用 `chat_submit_tool_result` 返回显式错误
+- [x] tool_result 写入 `message_content_parts`
+- [x] `message_tool_calls` 状态更新为 `result_available`
+- [x] tool_result 提交后能发起新的 Anthropic 流式请求
+- [x] 继续推理的流式结果走与普通聊天相同的持久化和事件发射路径
+- [x] `plans/backend-ai-handoff.md` 已新增 Phase 14 Update 章节

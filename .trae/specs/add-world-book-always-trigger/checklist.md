@@ -1,0 +1,6 @@
+- [x] `world_book_entry_matches` 函数中 `"always"` 模式返回 `true`
+- [x] 前端 `triggerMode` 类型包含 `'always'`
+- [x] 触发方式选择器包含"永远触发"选项
+- [x] 条目卡片上 `always` 模式显示"永远触发"标签
+- [x] `cargo check` 通过
+- [x] `npx tsc --noEmit` 通过（相关文件无新增错误）

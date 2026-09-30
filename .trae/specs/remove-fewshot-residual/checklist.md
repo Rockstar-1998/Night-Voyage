@@ -1,0 +1,7 @@
+- [x] Migration 0032 文件存在且内容为 DROP TABLE IF EXISTS preset_examples
+- [x] models/mod.rs 中无 PresetExampleRecord 结构体
+- [x] backend.ts 中无 PresetExampleRecord 接口
+- [x] docs/preset-system-architecture.md 中无 Few-shot 示例层章节
+- [x] docs/preset-system-architecture.md 编译顺序中无第7层
+- [x] cargo check 通过
+- [x] npm run build 通过

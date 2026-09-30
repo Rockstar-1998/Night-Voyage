@@ -1,0 +1,8 @@
+- [x] `structuredResponse` memo 能同时处理流式（`structuredFields`）和静态（`content` JSON）两种数据来源
+- [x] `StreamingFieldTag` 组件已从 `MessageItem.tsx` 中删除
+- [x] `streamingObjectFields`、`streamingStringAuxFieldKeys`、`streamingContentText` 三个 memo 已删除
+- [x] `MessageItem` 模板中不再有 `streamingStructuredMode()` 的独立渲染分支，统一走 `structuredResponse()` 路径
+- [x] 流式传输中 `isStreaming` 正确传递给 `MessageFormatRenderer`，逐字动画正常工作
+- [x] 流式传输中光标闪烁动画（`animate-pulse` 竖线）正常显示
+- [x] 流式传输完毕后 `clearStreamingRenderCache` 仍被调用
+- [x] 项目构建通过，无编译错误（`MessageItem.tsx` 无类型错误）

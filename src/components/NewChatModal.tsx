@@ -138,13 +138,18 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
       const conversationId = await props.onCreateConversation(payload);
       console.debug('[NewChatModal] handleSubmit: conversation created, id=', conversationId);
 
-      // 若为 Agent 模式且选定了预设，将所选子模式同步到预设 Gate 选择
+      // 若为 Agent 模式且选定了预设，将所选子模式同步到预设 Gate 选择。
+      // key 必须与预置蓝图里 `n_agent_gate` 的 option key 一致（single / director_actor / scriptwriter），
+      // 否则运行期按 `out_{key}` 找不到分支端口，所选子模式不会生效。
       if (isAgent && selectedPresetId()) {
-        const gateKey = agentSubMode() === 'scriptwriter' ? 'pipeline_agent' : 'dual_agent_drafter_critic';
+        const gateKey = agentSubMode() === 'scriptwriter' ? 'scriptwriter' : 'director_actor';
         try {
           await updatePresetGateSelection(selectedPresetId()!, 'n_agent_gate', [gateKey]);
         } catch (gateErr) {
-          console.warn('[NewChatModal] Failed to sync n_agent_gate selection', gateErr);
+          showToast(
+            `Agent 子模式未能写入预设 Gate：${gateErr instanceof Error ? gateErr.message : String(gateErr)}`,
+            'error',
+          );
         }
       }
 
@@ -200,11 +205,13 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
           setCreatedConversationId(conversationId);
 
           if (isAgent && selectedPresetId()) {
-            const gateKey = agentSubMode() === 'scriptwriter' ? 'pipeline_agent' : 'dual_agent_drafter_critic';
+            const gateKey = agentSubMode() === 'scriptwriter' ? 'scriptwriter' : 'director_actor';
             try {
               await updatePresetGateSelection(selectedPresetId()!, 'n_agent_gate', [gateKey]);
             } catch (gateErr) {
-              console.warn('[NewChatModal] Failed to sync n_agent_gate selection in room creation', gateErr);
+              setRoomError(
+                `Agent 子模式未能写入预设 Gate：${gateErr instanceof Error ? gateErr.message : String(gateErr)}`,
+              );
             }
           }
         } else {

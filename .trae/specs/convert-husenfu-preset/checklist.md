@@ -1,0 +1,19 @@
+- [x] 预设 JSON 文件格式正确，可被 Night Voyage 的 PortablePresetFile 反序列化
+- [x] response_mode 设置为 "structured_json"
+- [x] structured_output_schema 包含 thinking/content/choices 三个字段，符合 OpenAI strict: true 要求
+- [x] 所有 17 个单选语义组创建完整，每个组的选项数量和内容与 spec 一致
+- [x] 所有 2 个多选语义组创建完整，每个组的选项数量和内容与 spec 一致
+- [x] 默认选中的选项与原 SillyTavern 预设的默认启用状态一致
+- [x] 提示词中无 {{setvar::}}/{{getvar::}} 残留
+- [x] 提示词中无 XML 标签输出格式引用（<content>, <fox_selc>, <think_fox~> 等）
+- [x] 提示词中无 SillyTavern 模板变量残留（{{user}}, {{char}} 等）
+- [x] 思维链提示词引导模型在 JSON thinking 字段输出
+- [x] 正文提示词引导模型在 JSON content 字段输出
+- [x] 行动选项提示词引导模型在 JSON choices 字段输出
+- [x] 说明类词条已排除（使用必看、声明等）
+- [x] 思维链美化代码已排除
+- [x] MVU 变量相关词条已排除
+- [x] 正则脚本和扩展插件已排除
+- [x] 预设参数（temperature, top_p, top_k 等）与原预设一致
+- [x] prefill 块正确引导模型开始输出 JSON 结构
+- [ ] 预设可通过 Night Voyage 导入功能成功导入（需实际运行应用验证）

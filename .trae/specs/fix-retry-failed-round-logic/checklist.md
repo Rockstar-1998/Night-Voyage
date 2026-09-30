@@ -1,0 +1,5 @@
+- [x] `retry_failed_round` 使用 `spawn_stream_task` 替代 `spawn_retry_worker`，每次重试重新编译 prompt
+- [x] `spawn_retry_worker`、`run_retry_worker`、`stream_openai_retry_response`、`stream_anthropic_retry_response` 已删除
+- [x] `RETRY_BACKOFF_SECS` 常量已删除
+- [x] 重试前正确清理失败状态（清空消息内容、重置轮次状态）
+- [x] `cargo check` 通过，无编译错误

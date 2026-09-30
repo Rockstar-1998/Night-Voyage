@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::{
+    llm::LlmToolDefinition,
     models::{
-        blueprint::{BlueprintExecutionContext, BlueprintGraph, CompiledBlock, GateSelection},
+        blueprint::{BlueprintExecutionContext, BlueprintGraph, CompiledBlock, GateSelection, ToolDefinitionConfig},
+        schema::{DisplayTarget, SchemaDefinition},
         TokenLayerUsage, TokenUsageReport,
     },
     repositories::preset_gate_repository::PresetGateRepository,
@@ -53,6 +55,11 @@ pub struct PromptCompileInput {
     /// Optional log directory for intermediate LLM request logging (e.g. MEM0 search).
     /// When set, intermediate requests are logged to `{log_dir}/llm_debug_logs/`.
     pub log_dir: Option<std::path::PathBuf>,
+    /// 本跳临时注入的最高优先级指令（Nudge 自纠、导演装配说明等）。
+    ///
+    /// 与预设里作者写的 Prompt 块分开：它不落库、不参与版本管理，
+    /// 只在这一次编译里以最高优先级 system 块出现在正文之前。
+    pub ephemeral_instruction: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,6 +414,83 @@ pub struct PromptCompileResult {
     /// `stream_processor` 解析 structured_output 后查此映射提取需持久化的字段
     /// （如 `world_variables` / `plot_summary`）写入 `message_rounds`。
     pub db_mappings: HashMap<String, String>,
+    /// 蓝图激活的 ToolCall 契约，编译为 LLM function-calling 定义（计划 §5.1）。
+    ///
+    /// 由 `provider_adapter` 注入请求体的 `tools`；为空表示本次不做工具调用。
+    pub tools: Vec<LlmToolDefinition>,
+    /// 标记为 `DisplayTarget::PersistentHUD` 的 Schema 字段名集合（计划 §4.3 通道 B）。
+    ///
+    /// `stream_processor` 只把这些字段发射为常驻 HUD 补丁，`InlineMessage` 字段仅入气泡流。
+    pub persistent_hud_keys: HashSet<String>,
+    /// 本次编译激活的每个 ToolCall 契约的执行计划（键为 `tool_name`）。
+    ///
+    /// 由 `blueprint_executor::collect_tool_plan` 在编译期收集；流式响应里出现 `tool_use` /
+    /// `tool_calls` 时，编排层**直接用这份计划**执行工具，不再重新加载蓝图——避免二次编译
+    /// 与「同一份图两处解析」的漂移风险。
+    pub tool_plans: HashMap<String, crate::models::tool_plan::ToolPlan>,
+}
+
+/// 把蓝图激活的 ToolCall 契约编译成 function-calling 定义。
+///
+/// 硬错而非常量兜底（C2）：`tool_name` 为空、重名、`parameters_schema` 不是合法 JSON 对象
+/// 都当场报错——否则模型拿到的工具定义与作者意图不一致，问题要到演示时才暴露。
+fn compile_tool_definitions(
+    active_tools: &[ToolDefinitionConfig],
+) -> Result<Vec<LlmToolDefinition>, String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut compiled = Vec::with_capacity(active_tools.len());
+
+    for cfg in active_tools {
+        let name = cfg.tool_name.trim();
+        if name.is_empty() {
+            return Err("ToolDefinition 节点的 tool_name 为空".to_string());
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!("ToolCall 契约重名: {}", name));
+        }
+
+        // 未填 parameters_schema 视为「无参数工具」，用空对象 schema，而不是拒绝。
+        let schema_json = if cfg.parameters_schema.trim().is_empty() {
+            r#"{"type":"object","properties":{}}"#.to_string()
+        } else {
+            cfg.parameters_schema.clone()
+        };
+        let input_schema: serde_json::Value = serde_json::from_str(&schema_json)
+            .map_err(|err| format!("ToolCall 契约 `{}` 的 parameters_schema 不是合法 JSON: {}", name, err))?;
+        if !input_schema.is_object() {
+            return Err(format!(
+                "ToolCall 契约 `{}` 的 parameters_schema 必须是 JSON 对象",
+                name
+            ));
+        }
+
+        let description = {
+            let trimmed = cfg.description.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(cfg.description.clone())
+            }
+        };
+
+        compiled.push(LlmToolDefinition {
+            name: name.to_string(),
+            description,
+            input_schema,
+        });
+    }
+
+    Ok(compiled)
+}
+
+/// 汇总所有激活 Schema 中标记为 `PersistentHUD` 的字段名。
+fn collect_persistent_hud_keys(schemas: &[SchemaDefinition]) -> HashSet<String> {
+    schemas
+        .iter()
+        .flat_map(|schema| schema.fields.iter())
+        .filter(|field| field.display_target == DisplayTarget::PersistentHUD)
+        .map(|field| field.name.clone())
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -816,6 +900,15 @@ pub async fn compile_prompt(
     // 4. db_mappings: 传给 stream_processor 供持久化使用
     let db_mappings: HashMap<String, String> = blueprint_result.db_mappings;
 
+    // 5. ToolCall 契约 → function-calling 定义（计划 §5.1）。空 = 本次不带工具。
+    let tools = compile_tool_definitions(&blueprint_result.active_tools)?;
+
+    // 6. 常驻 HUD 字段白名单（通道 B 的过滤依据，计划 §4.3）：只放 PersistentHUD 字段进补丁。
+    let persistent_hud_keys = collect_persistent_hud_keys(&blueprint_result.active_schemas);
+
+    // 7. 每个契约的执行计划：随编译结果一起交给编排层执行（不再二次编译蓝图）。
+    let tool_plans = blueprint_result.tool_plans.clone();
+
     debug
         .input_sources
         .push(format!("preset:blueprint_graph:{}", input.conversation_id));
@@ -948,38 +1041,34 @@ pub async fn compile_prompt(
     };
 
     // 倒序滑动裁剪（Reverse Sliding Pruner）：针对每个激活的 Schema，若其配置了 retention_depth: Some(N) (N >= 1)
-    // 逆序遍历历史消息中的 Assistant 结构化输出，仅保留最近 N 层该 Schema 的历史数据，超出层级硬丢弃
+    // 逆序遍历历史，仅保留最近 N 层**该 Schema 自己**的结构化输出，超出层级硬丢弃。
+    // 实现见 `services::schema_retention`（含 `Some(0)` 非法配置的硬错与按字段签名识别归属）。
     for schema in &blueprint_result.active_schemas {
-        if let Some(depth) = schema.retention_depth {
-            if depth >= 1 {
-                let mut kept_count = 0u32;
-                let mut drop_indices = std::collections::HashSet::new();
-                for (idx, block) in history_blocks.iter().enumerate().rev() {
-                    if block.role == PromptRole::Assistant {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&block.content) {
-                            if v.is_object() {
-                                kept_count += 1;
-                                if kept_count > depth {
-                                    drop_indices.insert(idx);
-                                }
-                            }
-                        }
-                    }
-                }
-                if !drop_indices.is_empty() {
-                    dbg_eprintln!(
-                        "[prompt-compiler] reverse sliding pruner: schema='{}' retention_depth={}, dropping {} older historical schema turn(s)",
-                        schema.name, depth, drop_indices.len()
-                    );
-                    let mut i = 0;
-                    history_blocks.retain(|_| {
-                        let keep = !drop_indices.contains(&i);
-                        i += 1;
-                        keep
-                    });
-                }
-            }
+        let is_assistant: Vec<bool> = history_blocks
+            .iter()
+            .map(|block| block.role == PromptRole::Assistant)
+            .collect();
+        let contents: Vec<&str> = history_blocks.iter().map(|block| block.content.as_str()).collect();
+
+        let drop_indices =
+            crate::services::schema_retention::dropped_indices(&is_assistant, &contents, schema)?;
+        if drop_indices.is_empty() {
+            continue;
         }
+
+        let dropped_set: std::collections::HashSet<usize> = drop_indices.iter().copied().collect();
+        dbg_eprintln!(
+            "[prompt-compiler] reverse sliding pruner: schema='{}' retention_depth={:?}, dropping {} older historical schema turn(s)",
+            schema.name,
+            schema.retention_depth,
+            dropped_set.len()
+        );
+        let mut i = 0;
+        history_blocks.retain(|_| {
+            let keep = !dropped_set.contains(&i);
+            i += 1;
+            keep
+        });
     }
 
     // Ensure the opening message is always present and marked as required
@@ -1051,6 +1140,30 @@ pub async fn compile_prompt(
     // overlap numerically (preset rule 10..=100 < meta 150+), so this simply
     // reverses the within-preset-rule order while preserving the existing
     // preset-rules-before-meta boundary.
+    // 本跳的临时最高优先级指令（Nudge 自纠 / 导演装配说明）：
+    // 用 PresetRule 类型 + 极大 priority，保证它排在所有预设规则之前——
+    // 纠偏指令只有在"最先被读到"时才有效。
+    if let Some(instruction) = input
+        .ephemeral_instruction
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        system_blocks.push(PromptBlock {
+            kind: PromptBlockKind::PresetRule,
+            priority: i32::MAX,
+            role: PromptRole::System,
+            title: Some("系统纠偏指令".to_string()),
+            content: instruction.to_string(),
+            source: PromptBlockSource::Compiler,
+            token_cost_estimate: None,
+            required: true,
+        });
+        debug
+            .input_sources
+            .push("ephemeral_instruction:runtime".to_string());
+    }
+
     system_blocks.sort_by(|a, b| {
         let a_preset = a.kind == PromptBlockKind::PresetRule;
         let b_preset = b.kind == PromptBlockKind::PresetRule;
@@ -1070,6 +1183,9 @@ pub async fn compile_prompt(
         params: preset_compiler_data.params,
         debug,
         db_mappings,
+        tools,
+        persistent_hud_keys,
+        tool_plans,
     };
 
     result.debug.total_token_estimate_before_trim = total_estimated_tokens(&result);
@@ -1107,6 +1223,7 @@ pub async fn compile_token_usage_report(
         include_streaming_seed: false,
         budget: PromptBudget::default(),
         log_dir: None,
+        ephemeral_instruction: None,
     };
 
     let result = match compile_prompt(db, &input, 0, None).await {

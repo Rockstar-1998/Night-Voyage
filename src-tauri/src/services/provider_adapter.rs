@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use crate::{
     llm::{
-        ChatMessage, LlmBinarySource, LlmChatRequest, LlmContentPart, LlmMessage, LlmRole,
+        LlmBinarySource, LlmChatRequest, LlmContentPart, LlmMessage, LlmRole,
         LlmThinkingConfig, LlmToolChoice, ProviderHttpHeader, ProviderHttpRequest,
         ANTHROPIC_API_VERSION,
     },
@@ -38,7 +38,9 @@ impl ProviderCapabilityMatrix {
                 supports_top_k: true,
                 supports_presence_penalty: true,
                 supports_frequency_penalty: true,
-                supports_tools: false,
+                // OpenAI 兼容路径已装配 `tools`/`tool_choice` 与工具消息回注（见本文件 flatten 与 body 装配），
+                // 因此这里放开；能力位与实现必须保持一致，否则蓝图一旦激活契约就会误报不支持。
+                supports_tools: true,
                 supports_thinking: false,
                 supports_image_input: false,
                 supports_thinking_config: false,
@@ -123,6 +125,16 @@ pub fn build_llm_chat_request(
         .capability_checks
         .extend(capabilities.describe_checks());
 
+    // 蓝图激活了 ToolCall 契约时，provider 必须真的支持 tools；
+    // 不支持就直接失败，绝不静默把工具丢掉（否则模型永远不会发起 ToolCall，问题要到演示时才暴露）。
+    if !result.tools.is_empty() && !capabilities.supports_tools {
+        return Err(format!(
+            "当前 provider（{}）不支持工具调用（tools），但预设激活了 {} 个 ToolCall 契约；请改用支持 function calling 的 provider",
+            provider_kind,
+            result.tools.len()
+        ));
+    }
+
     validate_prompt_for_provider(result, &capabilities)?;
 
     let resolved_max_output_tokens = result
@@ -184,7 +196,7 @@ pub fn build_llm_chat_request(
             vec![]
         },
         stream,
-        tools: vec![],
+        tools: result.tools.clone(),
         tool_choice: None,
         thinking,
         beta_features: result.params.beta_features.clone(),
@@ -298,10 +310,19 @@ fn prompt_role_to_llm_role(role: &PromptRole) -> LlmRole {
     }
 }
 
+/// 把编译结果摊平成 OpenAI Chat Completions 的 messages 数组。
+///
+/// 与纯文本路径的关键差别是**工具消息的装配**（计划 §5 / §7.2）：
+/// - assistant 消息里的 `ToolUse` part → `tool_calls` 数组（`arguments` 为 JSON 字符串）；
+/// - 用户侧消息里的 `ToolResult` part → 独立的 `{role:"tool", tool_call_id, content}` 消息
+///   （一条 user 消息带 N 个回执时展开成 N 条 tool 消息，再补一条含正文的 user 消息）；
+/// - `Thinking` / `RedactedThinking` / `Image` 在 OpenAI 兼容路径上不支持，硬错而不是静默丢弃。
+///
+/// 少了这一段，回注必然被 provider 以 400 拒绝，ToolCall 回路就走不通。
 fn flatten_request_to_legacy_chat_messages(
     request: &LlmChatRequest,
-) -> Result<Vec<ChatMessage>, String> {
-    let mut messages = Vec::new();
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut messages: Vec<serde_json::Value> = Vec::new();
 
     // OpenAI-compatible endpoints here only accept one leading system message.
     let system_text = request
@@ -312,37 +333,79 @@ fn flatten_request_to_legacy_chat_messages(
         .collect::<Vec<_>>()
         .join("\n\n");
     if !system_text.is_empty() {
-        messages.push(ChatMessage::new("system", system_text));
+        messages.push(json!({"role": "system", "content": system_text}));
     }
 
     for message in &request.messages {
         if message.role == LlmRole::System {
             continue;
         }
-        messages.push(ChatMessage::new(
-            message.role.as_str(),
-            extract_text_only_content(message)?,
-        ));
-    }
 
-    Ok(messages)
-}
+        let mut text_segments: Vec<&str> = Vec::new();
+        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
 
-fn extract_text_only_content(message: &LlmMessage) -> Result<String, String> {
-    let mut text_segments = Vec::new();
-    for part in &message.parts {
-        match part {
-            LlmContentPart::Text { text } => text_segments.push(text.as_str()),
-            other => {
-                return Err(format!(
-                    "当前路径只支持纯文本消息，遇到不支持的 content part: {}",
-                    describe_content_part(other)
-                ))
+        for part in &message.parts {
+            match part {
+                LlmContentPart::Text { text } => text_segments.push(text.as_str()),
+                LlmContentPart::ToolUse { id, name, input_json } => tool_calls.push(json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": input_json.to_string(),
+                    }
+                })),
+                LlmContentPart::ToolResult { tool_use_id, content_parts, is_error } => {
+                    let mut body = String::new();
+                    for inner in content_parts {
+                        match inner {
+                            LlmContentPart::Text { text } => body.push_str(text),
+                            other => {
+                                return Err(format!(
+                                    "tool_result 里出现不支持的内容 part: {}",
+                                    describe_content_part(other)
+                                ))
+                            }
+                        }
+                    }
+                    if *is_error {
+                        body = format!("【执行失败】{}", body);
+                    }
+                    tool_results.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tool_use_id,
+                        "content": body,
+                    }));
+                }
+                other => {
+                    return Err(format!(
+                        "当前路径只支持文本与工具消息，遇到不支持的 content part: {}",
+                        describe_content_part(other)
+                    ))
+                }
             }
+        }
+
+        // 工具回执先按顺序落位，再补正文，保持"先看结果、再读指令"的自然顺序。
+        messages.extend(tool_results);
+
+        let joined = text_segments.join("");
+        if !tool_calls.is_empty() {
+            messages.push(json!({
+                "role": message.role.as_str(),
+                "content": if joined.is_empty() { serde_json::Value::Null } else { json!(joined) },
+                "tool_calls": tool_calls,
+            }));
+        } else if !joined.is_empty() {
+            messages.push(json!({
+                "role": message.role.as_str(),
+                "content": joined,
+            }));
         }
     }
 
-    Ok(text_segments.join(""))
+    Ok(messages)
 }
 
 fn describe_content_part(part: &LlmContentPart) -> &'static str {
@@ -361,25 +424,13 @@ fn build_openai_http_request(
     base_url: &str,
     api_key: &str,
 ) -> Result<ProviderHttpRequest, String> {
-    if !request.tools.is_empty() || request.tool_choice.is_some() {
-        return Err("当前 OpenAI 兼容路径尚未接入 tools 请求体编译".to_string());
-    }
-
     if let Some(thinking) = &request.thinking {
         if thinking.enabled {
             return Err("当前 OpenAI 兼容路径不支持 thinking".to_string());
         }
     }
 
-    let messages = flatten_request_to_legacy_chat_messages(request)?
-        .into_iter()
-        .map(|message| {
-            json!({
-                "role": message.role,
-                "content": message.content,
-            })
-        })
-        .collect::<Vec<_>>();
+    let messages = flatten_request_to_legacy_chat_messages(request)?;
 
     let mut body = serde_json::Map::new();
     body.insert("model".to_string(), json!(request.model));
@@ -424,6 +475,35 @@ fn build_openai_http_request(
         multiple => {
             body.insert("stop".to_string(), json!(multiple));
         }
+    }
+
+    // Function calling：把蓝图激活的契约按 OpenAI 规范装配成 `tools`（计划 §5.1）。
+    if !request.tools.is_empty() {
+        let tools: Vec<serde_json::Value> = request
+            .tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description.clone().unwrap_or_default(),
+                        "parameters": tool.input_schema,
+                    }
+                })
+            })
+            .collect();
+        body.insert("tools".to_string(), Value::Array(tools));
+        body.insert(
+            "tool_choice".to_string(),
+            match request.tool_choice.as_ref() {
+                None | Some(LlmToolChoice::Auto) => json!("auto"),
+                Some(LlmToolChoice::Any) => json!("required"),
+                Some(LlmToolChoice::Tool { name }) => {
+                    json!({"type": "function", "function": {"name": name}})
+                }
+            },
+        );
     }
 
     Ok(ProviderHttpRequest {
@@ -788,6 +868,9 @@ mod tests {
             params: CompiledSamplingParams::default(),
             debug: PromptCompileDebugReport::default(),
             db_mappings: std::collections::HashMap::new(),
+            tools: vec![],
+            persistent_hud_keys: std::collections::HashSet::new(),
+            tool_plans: std::collections::HashMap::new(),
         }
     }
 

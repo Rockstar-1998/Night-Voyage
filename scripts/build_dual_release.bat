@@ -99,7 +99,10 @@ if exist "%RELEASE_EXE%" (
 )
 
 echo [Night Voyage] Building release (unlimited memory, no bundle)...
-call npm run tauri build -- --no-bundle
+:: Extra args are forwarded verbatim to `tauri build`. Usage:
+::   build_dual_release.bat --features mcp-dev
+:: (two separate tokens; a quoted "--features mcp-dev" is rejected by the tauri CLI)
+call npm run tauri build -- --no-bundle %*
 if errorlevel 1 (
   echo [Night Voyage] Release build FAILED.
   popd

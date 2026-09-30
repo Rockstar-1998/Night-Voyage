@@ -30,6 +30,7 @@ import {
 } from '../lib/backend';
 import { showToast } from './Toast';
 import { SchemaEditorModal } from './schema/SchemaEditorModal';
+import { UiDesignerModal } from './ui-designer/UiDesignerModal';
 
 // ─── Props ───
 
@@ -38,6 +39,8 @@ export interface PresetDetailViewProps {
   onBack: () => void;
   onEditBlueprint: () => void;
   onExport?: () => void;
+  /** 当前选中的会话 id：UI 设计器用它把布局一键绑定到会话。 */
+  sessionId?: number;
 }
 
 // ─── 单个 Gate 选择器 ───
@@ -180,6 +183,7 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [schemaModalOpen, setSchemaModalOpen] = createSignal(false);
+  const [uiDesignerOpen, setUiDesignerOpen] = createSignal(false);
 
   const refreshAll = async () => {
     setLoading(true);
@@ -256,6 +260,15 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
           </button>
           <button
             type="button"
+            class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 transition-colors flex items-center gap-1.5 shadow-sm"
+            onClick={() => setUiDesignerOpen(true)}
+            title="可视化设计常驻 HUD 布局（容器嵌套、控件绑定、自定义 CSS）"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            UI 设计器
+          </button>
+          <button
+            type="button"
             class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
             onClick={props.onEditBlueprint}
             title="打开蓝图编辑器（幕后）"
@@ -325,6 +338,13 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
         presetId={props.preset.id}
         isOpen={schemaModalOpen()}
         onClose={() => setSchemaModalOpen(false)}
+      />
+
+      <UiDesignerModal
+        presetId={props.preset.id}
+        isOpen={uiDesignerOpen()}
+        sessionId={props.sessionId}
+        onClose={() => setUiDesignerOpen(false)}
       />
     </div>
   );

@@ -281,11 +281,20 @@ impl MessageRepository {
         Ok(())
     }
 
+    /// 写入一条 tool_result part。
+    ///
+    /// `part_index` 由调用方递增：同一条 user 消息可以携带多个工具回执
+    /// （一轮多 ToolCall），而 `message_content_parts` 有 `UNIQUE(message_id, part_index)`，
+    /// 固定写 0 会在第二个回执上直接撞约束。
+    /// `is_error` 用于区分「工具执行失败/被门禁拦截」与「正常回执」，
+    /// 让回注内容与 `LlmContentPart::ToolResult.is_error` 语义一致。
     pub async fn insert_tool_result_content_part(
         tx: &mut Transaction<'_, sqlx::Sqlite>,
         message_id: i64,
+        part_index: i64,
         content: &str,
         tool_use_id: &str,
+        is_error: bool,
         now: i64,
     ) -> Result<(), String> {
         sqlx::query(
@@ -295,13 +304,28 @@ impl MessageRepository {
              ) VALUES (?, ?, 'tool_result', ?, NULL, NULL, NULL, ?, NULL, 0, ?)",
         )
         .bind(message_id)
-        .bind(0i64)
+        .bind(part_index)
         .bind(content)
         .bind(tool_use_id)
         .bind(now)
         .execute(&mut **tx)
         .await
         .map_err(|err| err.to_string())?;
+
+        if is_error {
+            // 失败语义必须能被子序列读取方还原（prompt_compiler 装配 ToolResult part 时要用），
+            // 直接落在 json_value 上，不额外加列。
+            sqlx::query(
+                "UPDATE message_content_parts SET json_value = '{\"isError\":true}' \
+                 WHERE message_id = ? AND part_index = ?",
+            )
+            .bind(message_id)
+            .bind(part_index)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
+
         Ok(())
     }
 

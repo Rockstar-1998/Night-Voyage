@@ -1,0 +1,3 @@
+- [x] 数据库 `world_book_entries.trigger_mode` CHECK 约束包含 `'always'`
+- [x] 选择"永远触发"后保存条目，后端写入成功，前端标签显示"永远触发"（需删除旧数据库重建后验证）
+- [x] `cargo check` 通过

@@ -1,0 +1,3 @@
+- [x] 联机会话房间详情展开/收起使用 CSS grid 动画（grid-rows-[0fr]/[1fr] + opacity）
+- [x] 动画参数为 `transition-all duration-300 ease-in-out`
+- [x] 项目构建通过，无编译错误

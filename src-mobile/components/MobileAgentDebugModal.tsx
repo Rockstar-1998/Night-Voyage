@@ -82,8 +82,32 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
       }
     });
 
+    // 后端时序事件：工具调用 / 门禁判定 / Nudge 重试 / 子智能体——移动端与 PC 订阅同一事件名，
+    // 看到的条目来自后端事实，不是前端推断。
+    const unlistenTimeline = listen<any>('agent:timeline_event', (event) => {
+      const payload = event.payload ?? {};
+      if (
+        props.conversationId &&
+        typeof payload.conversationId === 'number' &&
+        payload.conversationId !== props.conversationId
+      ) {
+        return;
+      }
+      const newEv: TimelineEvent = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        time: new Date().toLocaleTimeString(),
+        title: String(payload.title ?? '时序事件'),
+        detail: String(payload.detail ?? ''),
+        status: (payload.status === 'success' || payload.status === 'blocked' || payload.status === 'failed'
+          ? payload.status
+          : 'info') as TimelineEvent['status'],
+      };
+      setTimeline((prev) => [newEv, ...prev].slice(0, 200));
+    });
+
     onCleanup(() => {
       unlistenPromise.then((unlisten) => unlisten());
+      unlistenTimeline.then((unlisten) => unlisten());
     });
   });
 

@@ -1,8 +1,10 @@
-import { Component, For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Component, For, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { listen } from '@tauri-apps/api/event';
 import type { DataContainerPatch, InventoryItem } from '../../src/lib/backend/types';
 import { sessionGameStateGet } from '../../src/lib/backend/game_state';
+import { presetUiLayoutForConversation } from '../../src/lib/backend/ui_layout';
+import { MobileLayoutTree, type MobileHudSnapshot } from './MobileLayoutTree';
 
 interface MobilePersistentHudProps {
   conversationId?: number;
@@ -22,6 +24,18 @@ const MOBILE_HUD_CSS = `
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+.hud-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  background: rgba(244, 63, 94, 0.12);
+  border-bottom: 1px solid rgba(244, 63, 94, 0.35);
+  color: #fda4af;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .mobile-hud {
@@ -209,6 +223,31 @@ export const MobilePersistentHud: Component<MobilePersistentHudProps> = (props) 
   const [flags, setFlags] = createSignal<Record<string, string>>({});
   const [schemaPatches, setSchemaPatches] = createSignal<Record<string, any>>({});
 
+  // 会话绑定的 UI 布局：未绑定时保持内置吸顶条（不是"静默降级"，是产品既定的默认视图）。
+  const [layout] = createResource(
+    () => props.conversationId,
+    async (conversationId: number) => {
+      try {
+        return await presetUiLayoutForConversation(conversationId);
+      } catch {
+        return undefined;
+      }
+    },
+  );
+
+  const layoutError = () => {
+    const err = layout.error;
+    if (!err) return null;
+    return err instanceof Error ? err.message : String(err);
+  };
+
+  const hudSnapshot = (): MobileHudSnapshot => ({
+    stats: stats(),
+    inventory: inventory(),
+    flags: flags(),
+    schemaPatches: schemaPatches(),
+  });
+
   onMount(() => {
     if (hostEl && !hostEl.shadowRoot) {
       const root = hostEl.attachShadow({ mode: 'open' });
@@ -279,7 +318,27 @@ export const MobilePersistentHud: Component<MobilePersistentHudProps> = (props) 
         {(root) => (
           <Portal mount={root()}>
             <style>{MOBILE_HUD_CSS}</style>
+            {/* 布局自带 CSS 同样只在 Shadow DOM 内生效（C4） */}
+            <Show when={layout()?.customCss}>
+              <style>{layout()?.customCss}</style>
+            </Show>
             <div class="mobile-hud">
+              {/* 布局读取失败：显式报错，回退内置吸顶条 */}
+              <Show when={layoutError()}>
+                {(msg) => <div class="hud-error" role="alert">{msg()}</div>}
+              </Show>
+              {/* 绑定了 PC 锚点布局时不适用于移动端：提示，不硬塞 */}
+              <Show when={layout() && !['mobileDrawer', 'mobileBottomSticky'].includes(layout()!.mountType)}>
+                <div class="hud-error" role="alert">
+                  该布局锚点为 {layout()?.mountType}（PC 端），移动端不渲染，改用内置吸顶条。
+                </div>
+              </Show>
+
+              <Show when={layout() && ['mobileDrawer', 'mobileBottomSticky'].includes(layout()!.mountType)}>
+                <div style={{ padding: '8px 12px' }}>
+                  <MobileLayoutTree node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }} snapshot={hudSnapshot()} />
+                </div>
+              </Show>
               {/* 顶部常驻微型状态条 */}
               <div class="hud-bar">
                 <div class="stats-pill-group">

@@ -1,0 +1,15 @@
+- [x] 所有未提交的 Letta 相关改动已回退到最新 git 提交
+- [x] letta-rs crate 作为本地路径依赖添加到 Cargo.toml，cargo check 通过
+- [x] letta_client.rs 已删除，所有调用改为 letta-rs API
+- [x] letta_sidecar.rs 使用 run_letta.py 脚本启动，不再使用 `letta server` CLI
+- [x] letta_sidecar.rs 缓存路径动态解析（exe 同级目录 / app_data_dir），无硬编码 D:\software_cache
+- [x] letta_stream.rs 使用 letta-rs MessageApi::create_stream() 替代手写 SSE 解析
+- [x] letta_setup 安装 letta==0.8.8（版本锁定，兼容 letta-rs 0.1.3）
+- [x] letta_setup 安装 setuptools/wheel/aiosqlite（Python embeddable 必需依赖）
+- [x] run_letta.py 脚本内嵌为 Rust 常量，启动时自动写入缓存目录
+- [x] Windows UNC 路径（\\?\ 前缀）已规范化处理
+- [x] 所有跨 IPC 错误消息中路径反斜杠已替换为正斜杠
+- [x] AppState.letta_sidecar 使用 LettaSidecar::new(&app_handle) 初始化
+- [x] 前端 Letta 相关类型和函数签名不变，SettingsArea LettaSettingsPanel 正常
+- [x] cargo check 通过
+- [x] npm run build 通过

@@ -1,0 +1,21 @@
+# Checklist
+
+- [x] `RoomMessage` enum 新增 `StreamRetry` variant，字段含 `conversation_id`、`round_id`、`message_id`、`error`（network/mod.rs:65-70）
+- [x] `RoomMessage` enum 新增 `MessageReset` variant，字段含 `conversation_id`、`round_id`、`message_id`（network/mod.rs:71-75）
+- [x] 新增 `RoomStreamRetryPayload`、`RoomMessageResetPayload` flat 结构，使用 `#[serde(rename_all = "camelCase")]`（network/mod.rs）
+- [x] `network/mod.rs` 的 `event_name()` 与 `event_payload()` 中补充 `StreamRetry`、`MessageReset` 的 Tauri event 转发（`room:stream_retry`、`room:message_reset`）
+- [x] `stream_processor.rs` `spawn_stream_task` 重试分支在 `app.emit("llm-stream-retry")` 后广播 `RoomMessage::StreamRetry` 到房间客户端（stream_processor.rs:231-248）
+- [x] `chat_service.rs` 新增 `broadcast_room_message_reset` 辅助函数，参考 `broadcast_room_player_message` 模式（chat_service.rs:1059-1081）
+- [x] `retry_failed_round` 在 `emit_message_reset_event` 后调用 `broadcast_room_message_reset`（chat_service.rs:964）
+- [x] `regenerate_round` 经确认不调用 `emit_message_reset_event`，无需添加广播
+- [x] 所有广播逻辑在 `host_server = None` 时静默跳过，不影响单人模式（`if let Some(server)` 模式）
+- [x] `backend.ts` 新增 `RoomStreamRetryEvent`、`RoomMessageResetEvent` 接口（camelCase 字段）
+- [x] `backend.ts` 新增 `listenRoomStreamRetry`、`listenRoomMessageReset` 监听函数（事件名 `room:stream_retry`、`room:message_reset`）
+- [x] `App.tsx` 注册 `listenRoomStreamRetry`，校验 `conversationId` 与 `activeRoomClientSession()`，调用 `upsertStreamingAssistant` + `updateMessageContent(() => ({ content: '', isStreaming: true }))`（App.tsx:1653-1662）
+- [x] `App.tsx` 注册 `listenRoomMessageReset`，校验 `conversationId` 与 `activeRoomClientSession()`，调用 `updateMessageContent(() => ({ content: '', isStreaming: true }))`（App.tsx:1664-1673）
+- [x] `App.tsx` 的两个新监听器在清理区补充 `unlisten` 调用（App.tsx:1787-1788）
+- [x] 房主前端跳过 `room:stream_retry` 和 `room:message_reset` 事件（`activeRoomClientSession()` 为假时 return，与 `listenRoomStreamChunk` 一致）
+- [x] `cargo build` 后端编译通过（exit code 0，仅 pre-existing warnings）
+- [x] 前端修改文件零诊断错误（backend.ts、App.tsx 均无诊断；pre-existing tsc 错误均在无关文件中）
+- [x] 单人模式（single）行为完全不变（无 `host_server` 时广播路径跳过）
+- [x] 审计结论表（spec.md 中"审计结论"部分）所列 9 条核心路径未被本次修改触碰

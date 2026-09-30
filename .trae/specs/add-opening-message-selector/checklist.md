@@ -1,0 +1,9 @@
+- [x] 后端 `conversations_create` 接受 `opening_message_index` 参数
+- [x] 后端在 round 1 中正确插入 assistant 开场消息并标记 round 为 completed
+- [x] 后端创建 round 2（collecting 状态）供后续对话使用
+- [x] `CreateConversationPayload` 类型包含 `openingMessageIndex` 字段
+- [x] NewChatModal Step 2 展示角色卡的开场消息选择列表
+- [x] 默认选中第一条开场消息，支持选择"不发送"
+- [x] 单人模式创建会话后聊天界面显示开场消息
+- [x] 联机模式创建会话后聊天界面显示开场消息，后续发言从 round 2 开始
+- [x] 选择"不发送开场消息"时行为与修改前一致

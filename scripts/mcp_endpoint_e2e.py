@@ -46,6 +46,7 @@ EXPECTED_TOOLS = {
     "nv_tool_call_execute",
     "nv_session_state_reset",
     "nv_messages_list",
+    "nv_screenshot",
 }
 
 # models/game_state.rs::impl Default for DataContainer
@@ -276,7 +277,7 @@ def main() -> int:
     status, body = client.rpc("tools/list")
     tools = (body or {}).get("result", {}).get("tools", [])
     names = {tool.get("name") for tool in tools}
-    report.check("C01 tools/list 返回 7 个工具", len(tools) == 7, f"实际 {len(tools)}")
+    report.check("C01 tools/list 返回 8 个工具", len(tools) == 8, f"实际 {len(tools)}")
     report.check("C02 工具名与契约一致", names == EXPECTED_TOOLS,
                  f"多出={names - EXPECTED_TOOLS} 缺失={EXPECTED_TOOLS - names}")
     report.check("C03 每个工具都带 inputSchema",
