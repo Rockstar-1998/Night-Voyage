@@ -18,7 +18,7 @@ pub async fn preset_schemas_list(
     preset_id: i64,
 ) -> Result<Vec<SchemaDefinition>, String> {
     let rows = sqlx::query(
-        "SELECT id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at \
+        "SELECT id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at \
          FROM preset_schemas \
          WHERE preset_id = ? \
          ORDER BY updated_at DESC, id ASC",
@@ -37,7 +37,7 @@ pub async fn preset_schema_get(
     schema_id: String,
 ) -> Result<SchemaDefinition, String> {
     let row = sqlx::query(
-        "SELECT id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at \
+        "SELECT id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at \
          FROM preset_schemas \
          WHERE id = ?",
     )
@@ -84,17 +84,24 @@ pub async fn preset_schema_save(
 
     let fields_json = serde_json::to_string(&schema.fields)
         .map_err(|e| format!("Failed to serialize fields: {}", e))?;
+    let card_json = schema
+        .card
+        .as_ref()
+        .map(|card| serde_json::to_string(card))
+        .transpose()
+        .map_err(|e| format!("Failed to serialize card: {}", e))?;
 
     let retention_depth_i64 = schema.retention_depth.map(|d| d as i64);
 
     sqlx::query(
-        "INSERT INTO preset_schemas (id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+        "INSERT INTO preset_schemas (id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             description = excluded.description, \
             retention_depth = excluded.retention_depth, \
             fields_json = excluded.fields_json, \
+            card_json = excluded.card_json, \
             updated_at = excluded.updated_at",
     )
     .bind(&schema.id)
@@ -103,6 +110,7 @@ pub async fn preset_schema_save(
     .bind(&schema.description)
     .bind(retention_depth_i64)
     .bind(&fields_json)
+    .bind(&card_json)
     .bind(schema.created_at)
     .bind(schema.updated_at)
     .execute(&state.db)

@@ -3,7 +3,7 @@ import { MessageItem, ChatMessage } from './MessageItem';
 import { TokenIsland } from './TokenIsland';
 import { animate } from '../lib/animate';
 import type { MessageFormatConfig } from '../lib/messageFormatter';
-import type { CapabilityProfile, MemoryBackendErrorEvent, TokenUsageReport } from '../lib/backend';
+import type { CapabilityProfile, MemoryBackendErrorEvent, TokenUsageReport, SchemaDefinition } from '../lib/backend';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -23,6 +23,8 @@ interface ChatAreaProps {
   onChoiceSelect?: (key: string, value: string) => void;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   structuredOutputDisplay?: string;
+  /** 当前会话预设的 Schema 资产（M5 产物卡渲染） */
+  presetSchemas?: SchemaDefinition[];
   /** Memory backend errors for the current conversation — displayed as a red banner. */
   memoryErrors?: MemoryBackendErrorEvent[];
   /** Room guest token usage report (host-side data). When present, TokenIsland renders host data. */
@@ -253,6 +255,8 @@ export const ChatArea: Component<ChatAreaProps> = (props) => {
                 onChoiceSelect={props.onChoiceSelect}
                 onSchemaToggle={props.onSchemaToggle}
                 structuredOutputDisplay={props.structuredOutputDisplay}
+                presetSchemas={props.presetSchemas}
+                conversationId={props.conversationId}
               />
             )}
           </For>

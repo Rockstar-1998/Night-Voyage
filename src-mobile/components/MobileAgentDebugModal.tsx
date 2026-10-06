@@ -6,6 +6,7 @@ import {
   sessionGameStateReset,
   sessionToolCallExecute,
   agentDiceRoll,
+  agentValidateBannedWords,
 } from '../../src/lib/backend/game_state';
 
 interface MobileAgentDebugModalProps {
@@ -31,8 +32,9 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
   const [toolResult, setToolResult] = createSignal<string | null>(null);
   const [diceResult, setDiceResult] = createSignal<DiceRollResult | null>(null);
 
-  const [toolName, setToolName] = createSignal('buy_item');
-  const [toolArgs, setToolArgs] = createSignal('{"item_id": "health_potion", "count": 1, "cost": 50, "weight": 2}');
+  // C11：不预填演示参数——契约名与参数由使用者输入
+  const [toolName, setToolName] = createSignal('');
+  const [toolArgs, setToolArgs] = createSignal('');
 
   const [skill, setSkill] = createSignal('感知');
   const [dc, setDc] = createSignal(12);
@@ -149,6 +151,38 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
       setTimeline((prev) => [newEv, ...prev]);
     } catch (e: any) {
       setErrorMessage(String(e));
+    }
+  };
+
+  const [bannedTestText, setBannedTestText] = createSignal('');
+  const [bannedResult, setBannedResult] = createSignal<string | null>(null);
+
+  const handleBannedWords = async () => {
+    if (!props.conversationId) {
+      setBannedResult('🚫 无会话上下文，无法加载蓝图禁词库');
+      return;
+    }
+    try {
+      await agentValidateBannedWords(props.conversationId, bannedTestText());
+      setBannedResult('✅ 校验通过：未命中任何安全与违规词库');
+      const newEv: TimelineEvent = {
+        id: String(Date.now()),
+        time: new Date().toLocaleTimeString(),
+        title: '禁词门禁校验 (通过)',
+        detail: `校验文本: "${bannedTestText().slice(0, 30)}"`,
+        status: 'success',
+      };
+      setTimeline((prev) => [newEv, ...prev]);
+    } catch (e: any) {
+      setBannedResult(`🚫 校验阻断：${e}`);
+      const newEv: TimelineEvent = {
+        id: String(Date.now()),
+        time: new Date().toLocaleTimeString(),
+        title: '禁词门禁校验 (阻断)',
+        detail: `校验文本: "${bannedTestText().slice(0, 30)}" - ${e}`,
+        status: 'blocked',
+      };
+      setTimeline((prev) => [newEv, ...prev]);
     }
   };
 
@@ -308,6 +342,24 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
                 </div>
 
                 <div class="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1">
+                  <div class="font-bold text-violet-400">Flags</div>
+                  <Show when={Object.keys(container()?.flags || {}).length > 0} fallback={
+                    <div class="text-mist-solid/30 text-[11px]">（无状态标志）</div>
+                  }>
+                    <div class="grid grid-cols-1 gap-1.5 font-mono text-[11px]">
+                      <For each={Object.entries(container()?.flags || {})}>
+                        {([k, v]) => (
+                          <div class="flex justify-between bg-white/[0.02] p-1.5 rounded">
+                            <span class="text-mist-solid/60">{k}</span>
+                            <span class="text-white">{v}</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+
+                <div class="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1">
                   <div class="font-bold text-amber-400">Inventory ({container()?.inventory.length || 0})</div>
                   <div class="space-y-1 font-mono text-[11px]">
                     <For each={container()?.inventory || []}>
@@ -394,6 +446,27 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
                         {diceResult()?.summary}
                       </span>
                     </div>
+                  </Show>
+                </div>
+
+                {/* 禁词门禁测试器（对齐 PC 端，词库来自蓝图 BannedWordsConfig） */}
+                <div class="p-3 rounded-lg bg-black/30 border border-white/5 space-y-2">
+                  <div class="font-bold text-rose-400">禁词门禁测试器</div>
+                  <textarea
+                    value={bannedTestText()}
+                    onInput={(e) => setBannedTestText(e.currentTarget.value)}
+                    placeholder="输入待校验文本…（词库来自蓝图 BannedWordsConfig 节点）"
+                    rows={3}
+                    class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-white"
+                  />
+                  <button
+                    onClick={handleBannedWords}
+                    class="w-full py-1.5 bg-rose-500/20 text-rose-300 font-bold rounded"
+                  >
+                    扫描
+                  </button>
+                  <Show when={bannedResult()}>
+                    <div class="p-2 rounded bg-black/50 text-[11px]">{bannedResult()}</div>
                   </Show>
                 </div>
               </div>

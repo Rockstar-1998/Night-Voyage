@@ -75,6 +75,10 @@ pub enum LayoutNode {
 pub struct LayoutContainer {
     pub id: String,
     pub kind: ContainerKind,
+    /// 排版模式（计划 §4.1 RootCanvas）：`absolute`（子元素按 x/y 自由坐标）/
+    /// `flex`（纵向流式，缺省）/ `grid`（网格，列数取 style.columns）
+    #[serde(default = "default_layout_mode")]
+    pub layout_mode: String,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -83,6 +87,10 @@ pub struct LayoutContainer {
     pub style: HashMap<String, String>,
     #[serde(default)]
     pub children: Vec<LayoutNode>,
+}
+
+fn default_layout_mode() -> String {
+    "flex".to_string()
 }
 
 /// 完整 UI 模板定义
@@ -112,6 +120,7 @@ impl Default for UILayoutDefinition {
             root_container: LayoutContainer {
                 id: "root_canvas".to_string(),
                 kind: ContainerKind::RootCanvas,
+                layout_mode: "flex".to_string(),
                 x: 0.0,
                 y: 0.0,
                 width: 320.0,

@@ -63,7 +63,7 @@ pub async fn mem0_init_status(
     Ok(Mem0InitStatusResponse { available, error })
 }
 
-/// Set the per-conversation memory mode ('stateless', 'legacy', or 'mem0').
+/// Set the per-conversation memory mode ('legacy' or 'mem0').
 /// Note: UI does not expose mode switching after creation; this command is
 /// retained for debugging and initial creation flows.
 #[tauri::command]
@@ -73,8 +73,8 @@ pub async fn memory_mode_set(
     mode: String,
 ) -> Result<String, String> {
     let normalized = match mode.as_str() {
-        "stateless" | "legacy" | "mem0" => mode,
-        _ => return Err("memory_mode 必须是 'stateless', 'legacy' 或 'mem0'".to_string()),
+        "legacy" | "mem0" => mode,
+        _ => return Err("memory_mode 必须是 'legacy' 或 'mem0'".to_string()),
     };
     sqlx::query("UPDATE conversations SET memory_mode = ?, updated_at = ? WHERE id = ?")
         .bind(&normalized)
@@ -93,7 +93,7 @@ pub async fn mem0_set_enabled(
     conversation_id: i64,
     enabled: bool,
 ) -> Result<bool, String> {
-    let mode = if enabled { "mem0" } else { "stateless" };
+    let mode = if enabled { "mem0" } else { "legacy" };
     memory_mode_set(state, conversation_id, mode.to_string()).await?;
     Ok(enabled)
 }

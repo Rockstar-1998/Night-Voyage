@@ -42,6 +42,9 @@
 - 哪些模块之间如何协作
 - 实际工程里该如何继续实现
 
+### 不可知化核心重构（M1–M5）验收功能全览
+- [`docs/agnostic-core-m1-m5-features.md`](docs/agnostic-core-m1-m5-features.md) —— 已验收新功能的完整文档：契约解释器（Inspector/Querier）、buy_item 全回路、编排节点资产化、M4 动作通道（ActionButton + 白名单）、M5 产物通道（Schema 产物卡），含定义载体、编辑器操作、数据契约、验收判据与证据索引。
+
 ### 注入与编译实现总结
 - [`docs/prompt-compiler-and-injection-summary.md`](docs/prompt-compiler-and-injection-summary.md)
 

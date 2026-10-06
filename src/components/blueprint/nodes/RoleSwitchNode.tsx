@@ -7,7 +7,7 @@
  * knows which downstream branch each port maps to.
  *
  * RoleSwitch is the orthogonal axis to ModeSwitch: ModeSwitch branches on
- * memory mode (legacy/mem0/stateless), RoleSwitch branches on conversation
+ * memory mode (legacy/mem0), RoleSwitch branches on conversation
  * type (single/online). The two nodes are composed in-graph via serial
  * connection to realise the 6 permutation paths.
  *

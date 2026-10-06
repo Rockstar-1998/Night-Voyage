@@ -3,8 +3,9 @@ import { RefreshCw, RotateCcw, Pencil, GitFork, ChevronLeft, ChevronRight, Check
 import { parseMessageContent, parseStructuredResponse, DEFAULT_FORMAT_CONFIG, type MessageFormatConfig, type StructuredField } from '../lib/messageFormatter';
 import { clearStreamingRenderCache, MessageFormatRenderer } from './MessageFormatRenderer';
 import { NativeThinkingBlock } from './NativeThinkingBlock';
-import type { CapabilityProfile } from '../lib/backend/types';
+import type { CapabilityProfile, SchemaDefinition } from '../lib/backend/types';
 import { showConfirm } from './Toast';
+import { SchemaCardView } from './SchemaCardView';
 
 export interface ChatMessage {
   id: string;
@@ -44,6 +45,10 @@ interface MessageItemProps {
   onChoiceSelect?: (key: string, value: string) => void;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
   structuredOutputDisplay?: string;
+  /** 预设的 Schema 资产（含 card 配置）——命中时结构化输出按产物卡渲染（M5） */
+  presetSchemas?: SchemaDefinition[];
+  /** 动作执行所需会话上下文 */
+  conversationId?: number;
 }
 
 export const MessageItem: Component<MessageItemProps> = (props) => {
@@ -106,6 +111,32 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
     const content = props.message.content;
     if (!content || !content.trimStart().startsWith('{')) return null;
     return parseStructuredResponse(content, displayConfig);
+  });
+
+  // M5 产物卡匹配：结构化输出的字段名集合与某个配置了 card 的 Schema 资产完全一致时，
+  // 按该资产渲染产物卡（字段物理排序即卡片顺序）。资产未配置 card → 走通用渲染。
+  const schemaCard = createMemo(() => {
+    const sr = structuredResponse();
+    if (!sr || !props.presetSchemas?.length) return null;
+    const keys = Object.keys(sr.fields).sort();
+    if (keys.length === 0) return null;
+    for (const schema of props.presetSchemas) {
+      if (!schema.card) continue;
+      const schemaKeys = schema.fields.map((f) => f.name).sort();
+      if (schemaKeys.length !== keys.length || schemaKeys.some((k, i) => k !== keys[i])) continue;
+      const values: Record<string, string> = {};
+      let filled = 0;
+      for (const [key, field] of Object.entries(sr.fields)) {
+        if (field.kind === 'string') values[key] = String(field.value);
+        else if (field.kind === 'object') values[key] = JSON.stringify(field.value);
+        else if (field.kind === 'array') values[key] = JSON.stringify(field.value);
+        else values[key] = String((field as any).value ?? '');
+        filled += 1;
+      }
+      if (filled === 0) return null;
+      return { schema, values };
+    }
+    return null;
   });
 
   const defaultExpanded = createMemo(() =>
@@ -181,8 +212,11 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
             fallback={
               <div class="text-mist-solid/80 leading-relaxed text-[15px] whitespace-pre-wrap font-sans break-words">
                 <Show
-                  when={structuredResponse()}
+                  when={schemaCard()}
                   fallback={
+                    <Show
+                      when={structuredResponse()}
+                      fallback={
                     <MessageFormatRenderer
                       nodes={parseMessageContent(
                         props.message.content,
@@ -198,21 +232,32 @@ export const MessageItem: Component<MessageItemProps> = (props) => {
                       worldBookKeywords={props.worldBookKeywords}
                     />
                   }
-                >
-                  {(sr) => (
-                    <MessageFormatRenderer
-                      nodes={[sr()]}
-                      defaultExpanded={defaultExpanded()}
-                      onChoiceSelect={props.onChoiceSelect}
-                      onSchemaToggle={props.onSchemaToggle}
-                      isStreaming={props.message.isStreaming}
-                      toggleScope={`${props.message.id}:structured`}
-                      streamKey={`${props.message.id}:structured`}
-                      formatConfig={props.formatConfig}
-                      worldBookKeywords={props.worldBookKeywords}
-                    />
-                  )}
-                </Show>
+                  >
+                    {(sr) => (
+                      <MessageFormatRenderer
+                        nodes={[sr()]}
+                        defaultExpanded={defaultExpanded()}
+                        onChoiceSelect={props.onChoiceSelect}
+                        onSchemaToggle={props.onSchemaToggle}
+                        isStreaming={props.message.isStreaming}
+                        toggleScope={`${props.message.id}:structured`}
+                        streamKey={`${props.message.id}:structured`}
+                        formatConfig={props.formatConfig}
+                        worldBookKeywords={props.worldBookKeywords}
+                      />
+                    )}
+                  </Show>
+                    }
+                  >
+                    {(cardMatch) => (
+                      <SchemaCardView
+                        card={cardMatch().schema.card!}
+                        fields={cardMatch().schema.fields}
+                        values={cardMatch().values}
+                        conversationId={props.conversationId}
+                      />
+                    )}
+                  </Show>
                 <Show when={props.message.isStreaming}>
                   <span class="inline-block w-[2px] h-[1em] bg-accent/70 ml-0.5 align-middle animate-pulse" />
                 </Show>

@@ -31,6 +31,7 @@ import {
 import { showToast } from './Toast';
 import { SchemaEditorModal } from './schema/SchemaEditorModal';
 import { UiDesignerModal } from './ui-designer/UiDesignerModal';
+import { PresetActionWhitelistModal } from './preset/PresetActionWhitelistModal';
 
 // ─── Props ───
 
@@ -184,6 +185,7 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [schemaModalOpen, setSchemaModalOpen] = createSignal(false);
   const [uiDesignerOpen, setUiDesignerOpen] = createSignal(false);
+  const [whitelistModalOpen, setWhitelistModalOpen] = createSignal(false);
 
   const refreshAll = async () => {
     setLoading(true);
@@ -269,6 +271,15 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
           </button>
           <button
             type="button"
+            class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-colors flex items-center gap-1.5 shadow-sm"
+            onClick={() => setWhitelistModalOpen(true)}
+            title="管理本预设动作件 / 产物卡按钮 / Querier 可调用的命令白名单"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            动作白名单
+          </button>
+          <button
+            type="button"
             class="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-mist-solid/80 border border-white/10 transition-colors flex items-center gap-1.5"
             onClick={props.onEditBlueprint}
             title="打开蓝图编辑器（幕后）"
@@ -345,6 +356,12 @@ export const PresetDetailView: Component<PresetDetailViewProps> = (props) => {
         isOpen={uiDesignerOpen()}
         sessionId={props.sessionId}
         onClose={() => setUiDesignerOpen(false)}
+      />
+
+      <PresetActionWhitelistModal
+        presetId={props.preset.id}
+        isOpen={whitelistModalOpen()}
+        onClose={() => setWhitelistModalOpen(false)}
       />
     </div>
   );

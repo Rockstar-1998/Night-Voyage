@@ -73,7 +73,7 @@ pub fn chat_debug_log(app: &AppHandle, message: &str) {
 /// Extraction only runs when the conversation has `memory_mode = 'mem0'` and a
 /// memory backend is registered in `AppState`. The submitted content is the
 /// current round's aggregated user input + assistant reply, scoped to
-/// `user_id = conversation_id` and `agent_id = character_id`.
+/// `user_id = 全局固定值`（跨会话共享） and `agent_id = character_id`.
 pub fn spawn_memory_extraction_task(
     app: AppHandle,
     db: SqlitePool,
@@ -125,7 +125,7 @@ async fn run_memory_extraction_task(
     .fetch_optional(db)
     .await
     .map_err(|err| err.to_string())?
-    .unwrap_or_else(|| "stateless".to_string());
+    .unwrap_or_else(|| "legacy".to_string());
     if mode != "mem0" {
         return Ok(());
     }
@@ -182,7 +182,9 @@ async fn run_memory_extraction_task(
         MemoryMessage::user(user_content),
         MemoryMessage::assistant(assistant_content),
     ];
-    let user_id = conversation_id.to_string();
+    // 计划 §1.1 MEM0："跨会话、跨轮次进行语义相关性检索注入"——user_id 为全局
+    // 固定值（不再是 conversation_id），使所有 mem0 会话共享同一个记忆池。
+    let user_id = crate::services::prompt_compiler::MEM0_GLOBAL_USER_ID.to_string();
     let agent_id = character_id.to_string();
 
     // Build a loggable representation of the mem0 add request.
@@ -626,6 +628,8 @@ impl ChatService {
                 &db,
                 &app,
                 conversation_id,
+                round_id,
+                false,
                 &skeleton.tool_name,
                 &arguments_json,
                 tool_plans.get(&skeleton.tool_name),

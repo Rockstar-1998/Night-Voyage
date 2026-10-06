@@ -200,7 +200,7 @@ function applyRegexRule(
 
 export function parseStructuredResponse(
   jsonContent: string,
-  displayConfig?: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }>
+  displayConfig?: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number; hidden?: boolean }>
 ): StructuredResponseNode | null {
   try {
     const parsed = JSON.parse(jsonContent);

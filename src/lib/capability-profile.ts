@@ -6,13 +6,13 @@ import type { CapabilityProfile, ConversationMode } from './backend/types';
  * 矩阵来源：spec capability-matrix-completion
  * | # | 模式                    | edit | regen | fork | delete | submit_abort | send | rewind |
  * |---|-------------------------|------|-------|------|--------|--------------|------|--------|
- * | 0 | single/stateless        | Y    | Y     | Y    | Y      | Y            | Y    | Y      |
+ * | 0 | single/legacy        | Y    | Y     | Y    | Y      | Y            | Y    | Y      |
  * | 1 | single/legacy           | Y    | Y     | Y    | Y      | Y            | Y    | Y      |
  * | 2 | single/mem0             | N    | 受限  | 受限 | N      | Y            | Y    | 受限   |
- * | 3 | online/stateless/host   | Y    | Y     | N    | Y      | Y            | Y    | Y      |
+ * | 3 | online/legacy/host   | Y    | Y     | N    | Y      | Y            | Y    | Y      |
  * | 4 | online/legacy/host      | Y    | Y     | N    | Y      | Y            | Y    | Y      |
  * | 5 | online/mem0/host        | N    | 受限  | N    | N      | Y            | Y    | 受限   |
- * | 6 | online/stateless/guest  | N    | N     | N    | N      | N            | Y    | N      |
+ * | 6 | online/legacy/guest  | N    | N     | N    | N      | N            | Y    | N      |
  * | 7 | online/legacy/guest     | N    | N     | N    | N      | N            | Y    | N      |
  * | 8 | online/mem0/guest       | N    | N     | N    | N      | N            | Y    | N      |
  *

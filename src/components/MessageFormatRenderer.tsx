@@ -234,7 +234,7 @@ export const CollapsibleTag: Component<CollapsibleTagProps> = (props) => {
 
 const StructuredResponseRenderer: Component<{
   fields: Record<string, StructuredField>;
-  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number }>;
+  displayConfig: Record<string, { defaultCollapsed: boolean; hideLabel?: boolean; body?: boolean; order?: number; hidden?: boolean }>;
   defaultExpanded: boolean;
   onChoiceSelect?: (key: string, value: string) => void;
   onSchemaToggle?: (toggleKey: string, expanded: boolean) => void;
@@ -245,11 +245,15 @@ const StructuredResponseRenderer: Component<{
   worldBookKeywords: string[];
 }> = (props) => {
   const sortedFieldEntries = () => {
-    return Object.entries(props.fields).sort(([keyA], [keyB]) => {
-      const orderA = props.displayConfig[keyA]?.order ?? 0;
-      const orderB = props.displayConfig[keyB]?.order ?? 0;
-      return orderA - orderB;
-    });
+    return Object.entries(props.fields)
+      // display_target=PersistentHUD 的字段（hidden=true）只走常驻 HUD 增量补丁，
+      // 气泡流不渲染——计划 §3.2/§4.3"零尾随卡片"（验收指标 4）。
+      .filter(([key]) => !props.displayConfig[key]?.hidden)
+      .sort(([keyA], [keyB]) => {
+        const orderA = props.displayConfig[keyA]?.order ?? 0;
+        const orderB = props.displayConfig[keyB]?.order ?? 0;
+        return orderA - orderB;
+      });
   };
   const parseFieldContent = (value: string) =>
     parseMessageContent(value, props.formatConfig, props.worldBookKeywords);

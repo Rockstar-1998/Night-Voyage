@@ -1,30 +1,54 @@
 use std::collections::HashMap;
 use sqlx::{Row, SqlitePool};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::game_state::{DataContainer, DataContainerPatch};
 
 /// 从数据库读取指定会话的 DataContainer 状态。若尚未创建则返回默认初始状态。
+///
+/// **回合内缓存优先**（计划 §2.1"单次结算持久化"）：若该会话存在未 flush 的
+/// 回合内工作副本（AppState.session_state_cache），以缓存为准——回合内的多次
+/// ToolCall 变动只落在内存，正文定稿后由 `flush_session_state_cache` 单次写库。
+pub async fn load_session_state_cached(
+    db: &SqlitePool,
+    app: &tauri::AppHandle,
+    session_id: i64,
+) -> Result<DataContainer, String> {
+    {
+        let app_state = app.state::<crate::AppState>();
+        let guard = app_state.session_state_cache.lock().await;
+        if let Some(cached) = guard.get(&session_id) {
+            return Ok(cached.clone());
+        }
+    }
+    load_session_state(db, session_id).await
+}
+
+/// 直读数据库版本（MCP / 调试台等无回合上下文的调用）。
 pub async fn load_session_state(db: &SqlitePool, session_id: i64) -> Result<DataContainer, String> {
     let row_opt = sqlx::query("SELECT state_json FROM session_states WHERE session_id = ?")
         .bind(session_id)
         .fetch_optional(db)
         .await
-        .map_err(|e| format!("查询 session_states 失败: {}", e).replace('\\', "/"))?;
+        .map_err(|e| format!("查询 session_states 失败: {}", e).replace(BACKSLASH, "/"))?;
 
     if let Some(row) = row_opt {
         let json_str: String = row
             .try_get("state_json")
-            .map_err(|e| format!("读取 session_state.state_json 失败: {}", e).replace('\\', "/"))?;
+            .map_err(|e| format!("读取 session_state.state_json 失败: {}", e).replace(BACKSLASH, "/"))?;
         let state: DataContainer = serde_json::from_str(&json_str)
-            .map_err(|e| format!("解析 session_state 数据失败: {}", e).replace('\\', "/"))?;
+            .map_err(|e| format!("解析 session_state 数据失败: {}", e).replace(BACKSLASH, "/"))?;
         Ok(state)
     } else {
         Ok(DataContainer::default())
     }
 }
 
-/// 将会话的 DataContainer 状态持久化写入 SQLite
+/// 反斜杠字符（Windows 路径分隔符归一化用；该字面量在代码生成中易被吞掉，提为常量）。
+const BACKSLASH: char = '\\';
+
+/// 将会话的 DataContainer 状态持久化写入 SQLite（**立即落库**：MCP / 调试台 /
+/// 重置等回合外操作路径）。
 pub async fn save_session_state(
     db: &SqlitePool,
     session_id: i64,
@@ -47,6 +71,38 @@ pub async fn save_session_state(
     .map_err(|e| format!("持久化 session_state 失败: {}", e).replace('\\', "/"))?;
 
     Ok(())
+}
+
+/// 把回合内工作副本写入缓存（**不落库**——计划 §2.1：回合内变动全在内存瞬时执行，
+/// 正文定稿后由 `flush_session_state_cache` 单次持久化）。
+pub fn stage_session_state(app: &AppHandle, session_id: i64, state: &DataContainer) {
+    let app = app.clone();
+    let state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        let app_state = app.state::<crate::AppState>();
+        let mut guard = app_state.session_state_cache.lock().await;
+        guard.insert(session_id, state);
+    });
+}
+
+/// 回合末单次持久化（计划 §2.1）：缓存中的工作副本写 session_states 并清除。
+/// 无缓存条目 = 无回合内变动，no-op。
+pub async fn flush_session_state_cache(db: &SqlitePool, app: &AppHandle, session_id: i64) {
+    let cached = {
+        let app_state = tauri::Manager::state::<crate::AppState>(app);
+        let mut guard = app_state.session_state_cache.lock().await;
+        guard.remove(&session_id)
+    };
+    if let Some(state) = cached {
+        if let Err(err) = save_session_state(db, session_id, &state).await {
+            crate::dbg_eprintln!(
+                "[agent_runtime] flush_session_state_cache failed: {}（缓存已回填，下次回合重试）",
+                err
+            );
+            // 落库失败不能丢数据：回填缓存，等下一回合末重试。
+            stage_session_state(app, session_id, &state);
+        }
+    }
 }
 
 /// 重置会话状态为初始状态
@@ -150,7 +206,7 @@ pub async fn resolve_tool_plan(
     .map_err(|e| format!("查询会话失败: {}", e).replace('\\', "/"))?;
     let (conversation_type, memory_mode) = match conv {
         Some(row) => (row.conversation_type, row.memory_mode),
-        None => ("single".to_string(), "stateless".to_string()),
+        None => ("single".to_string(), "legacy".to_string()),
     };
 
     let mut gate_selections: HashMap<String, crate::models::blueprint::GateSelection> =
@@ -194,27 +250,18 @@ pub async fn resolve_tool_plan(
 
     let mut preset_schemas: HashMap<String, crate::models::schema::SchemaDefinition> =
         HashMap::new();
-    if let Ok(rows) = sqlx::query(
+    // C2：装载失败上抛（静默空 map 会让所有 InvokeSchema 哑火）；坏行硬错不跳过。
+    let schema_rows = sqlx::query(
         "SELECT id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at \
          FROM preset_schemas WHERE preset_id = ?",
     )
     .bind(preset_id)
     .fetch_all(db)
     .await
-    {
-        for row in rows {
-            match crate::models::schema::SchemaDefinition::from_row(&row) {
-                Ok(schema) => {
-                    preset_schemas.insert(schema.id.clone(), schema);
-                }
-                Err(err) => {
-                    dbg_eprintln!(
-                        "[agent-runtime] 解析 preset_schema 行失败（跳过）: {}",
-                        err
-                    );
-                }
-            }
-        }
+    .map_err(|err| format!("加载预设 Schema 资产失败: {}", err))?;
+    for row in schema_rows {
+        let schema = crate::models::schema::SchemaDefinition::from_row(&row)?;
+        preset_schemas.insert(schema.id.clone(), schema);
     }
 
     let exec_context = crate::models::blueprint::BlueprintExecutionContext {
@@ -237,6 +284,8 @@ pub async fn execute_tool_call_with_plan(
     db: &SqlitePool,
     app: &AppHandle,
     session_id: i64,
+    round_id: i64,
+    persist_immediately: bool,
     tool_name: &str,
     arguments_json: &str,
     plan: Option<&crate::models::tool_plan::ToolPlan>,
@@ -271,7 +320,7 @@ pub async fn execute_tool_call_with_plan(
         crate::models::tool_plan::validate_args_against_schema(&args, schema, tool_name)?;
     }
 
-    let mut state = load_session_state(db, session_id).await?;
+    let mut state = load_session_state_cached(db, app, session_id).await?;
     // Querier 跨域读：经 action_bridge 白名单校验后代理既有命令（spec §2A.5）。
     // 回调返回 boxed future 由 async run_tool_plan 原生 await——在 tokio worker 内
     // 禁止 block_on（会 panic，见本轮实机抓到的崩溃），故不做跨 runtime 阻塞。
@@ -287,13 +336,92 @@ pub async fn execute_tool_call_with_plan(
     let outcome =
         crate::models::tool_plan::run_tool_plan(&mut state, plan, &args, &query_exec).await?;
 
+    // 门禁判定轨迹 → 时序泳道（计划 §9.3"门禁"环；后端事实发射，前端不再推断）。
+    for trace in &outcome.gate_trace {
+        crate::services::agent::timeline::emit(
+            app,
+            session_id,
+            round_id,
+            crate::services::agent::timeline::TimelineKind::Gate,
+            if outcome.is_blocked {
+                crate::services::agent::timeline::TimelineStatus::Blocked
+            } else {
+                crate::services::agent::timeline::TimelineStatus::Success
+            },
+            format!("门禁判定: {tool_name}"),
+            trace.clone(),
+        );
+    }
+
     if outcome.is_blocked {
         // 被拦截：不落库、不广播，理由原样上抛给编排层回注。
         return Err(outcome.text);
     }
 
-    save_session_state(db, session_id, &state).await?;
+    // 持久化模式（计划 §2.1"单次结算持久化"）：
+    // - 回合内（模型 ToolCall 回路）：只 stage 进内存工作副本，正文定稿后回合末单写；
+    // - 手动路径（调试台 / MCP，round_id=0）：立即落库——否则回合外操作永不持久。
+    stage_session_state(app, session_id, &state);
+    if persist_immediately {
+        flush_session_state_cache(db, app, session_id).await;
+    }
     broadcast_hud_patch(app, session_id, &state, None);
+
+    // 不可篡改检定卡广播（计划 §6.3）：d20 门禁的骰值以专用事件广播，
+    // 前端据此渲染检定卡（结果由 OS CSPRNG 产出，非模型可操纵）。
+    if let Some(roll) = outcome.dice_roll {
+        let dc = plan
+            .steps
+            .iter()
+            .find_map(|step| match step {
+                crate::models::tool_plan::ToolStep::Gate(cfg)
+                    if cfg.gate_type == "d20" =>
+                {
+                    cfg.expression.trim().parse::<f64>().ok()
+                }
+                _ => None,
+            })
+            .map(|v| v as i64)
+            .unwrap_or(0);
+        let modifier = args.get("modifier").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+        if let Err(err) = app.emit(
+            "session:dice_roll",
+            serde_json::json!({
+                "sessionId": session_id,
+                "roundId": round_id,
+                "roll": roll,
+                "modifier": modifier,
+                "dc": dc,
+                "passed": roll as f64 + modifier >= dc as f64,
+                "tool": tool_name,
+            }),
+        ) {
+            crate::dbg_eprintln!("[agent_runtime] dice_roll broadcast failed: {}", err);
+        }
+        crate::services::agent::timeline::emit(
+            app,
+            session_id,
+            round_id,
+            crate::services::agent::timeline::TimelineKind::Gate,
+            if outcome.is_blocked {
+                crate::services::agent::timeline::TimelineStatus::Blocked
+            } else {
+                crate::services::agent::timeline::TimelineStatus::Success
+            },
+            format!("D20 检定: {roll} vs DC {dc}"),
+            format!("工具 {tool_name} 的 d20 门禁判定"),
+        );
+    }
+
+    crate::services::agent::timeline::emit(
+        app,
+        session_id,
+        round_id,
+        crate::services::agent::timeline::TimelineKind::HudPatch,
+        crate::services::agent::timeline::TimelineStatus::Success,
+        format!("数据容器变更: {tool_name}"),
+        outcome.text.clone(),
+    );
     Ok(outcome.text)
 }
 
@@ -312,8 +440,17 @@ pub async fn execute_tool_call(
     let plan = resolve_tool_plan(db, session_id, tool_name).await?;
     match plan {
         Some(plan) => {
-            execute_tool_call_with_plan(db, app, session_id, tool_name, arguments_json, Some(&plan))
-                .await
+            execute_tool_call_with_plan(
+                db,
+                app,
+                session_id,
+                0,
+                true,
+                tool_name,
+                arguments_json,
+                Some(&plan),
+            )
+            .await
         }
         None => Err(format!(
             "蓝图未定义契约「{tool_name}」——当前会话预设的蓝图中没有该 ToolDefinition 链\

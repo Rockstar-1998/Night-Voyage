@@ -312,8 +312,16 @@ export const MobilePersistentHud: Component<MobilePersistentHudProps> = (props) 
   const flagEntries = () => Object.entries(flags());
   const patchEntries = () => Object.entries(schemaPatches());
 
+  // 锚点分支（计划 §4 挂载锚点）：mobileBottomSticky 时外壳贴底（输入框上方微型条），
+  // mobileDrawer 保持顶部吸顶抽屉。此前 BottomSticky 被画进顶部 = 锚点被无视。
+  const isBottomSticky = () => layout()?.mountType === 'mobileBottomSticky';
+
   return (
-    <div ref={hostEl} class={props.className || 'w-full shrink-0 z-20'}>
+    <div
+      ref={hostEl}
+      class={props.className || (isBottomSticky() ? 'fixed left-0 right-0 z-30' : 'w-full shrink-0 z-20')}
+      style={isBottomSticky() ? { bottom: '64px' } : undefined}
+    >
       <Show when={shadowRoot()}>
         {(root) => (
           <Portal mount={root()}>
@@ -334,13 +342,18 @@ export const MobilePersistentHud: Component<MobilePersistentHudProps> = (props) 
                 </div>
               </Show>
 
-              <Show when={layout() && ['mobileDrawer', 'mobileBottomSticky'].includes(layout()!.mountType)}>
+              <Show when={layout() && layout()!.mountType === 'mobileDrawer'}>
                 <div style={{ padding: '8px 12px' }}>
-                  <MobileLayoutTree node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }} snapshot={hudSnapshot()} />
+                  <MobileLayoutTree node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }} snapshot={hudSnapshot()} conversationId={props.conversationId} />
                 </div>
               </Show>
-              {/* 顶部常驻微型状态条 */}
-              <div class="hud-bar">
+              <Show when={layout() && layout()!.mountType === 'mobileBottomSticky'}>
+                <div style={{ padding: '4px 12px' }}>
+                  <MobileLayoutTree node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }} snapshot={hudSnapshot()} conversationId={props.conversationId} />
+                </div>
+              </Show>
+              {/* 顶部常驻微型状态条（bottomSticky 布局时由布局树贴底承载，不双重渲染） */}
+              <div class="hud-bar" style={isBottomSticky() ? { display: 'none' } : undefined}>
                 <div class="stats-pill-group">
                   <For each={statEntries().slice(0, 4)}>
                     {([k, v]) => (

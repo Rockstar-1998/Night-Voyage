@@ -14,7 +14,7 @@
 //! 设计细节与约束合规见 `.trae/specs/nv-mcp-dev-endpoint/spec.md`。
 
 mod protocol;
-mod tools;
+pub mod tools;
 
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};

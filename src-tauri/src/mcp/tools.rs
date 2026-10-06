@@ -852,3 +852,17 @@ pub fn tool_names() -> String {
         .collect::<Vec<&str>>()
         .join(", ")
 }
+
+/// MCP 工具清单（调试台展示用，C10：面板可选值来自真实数据源）。
+#[tauri::command]
+pub fn mcp_tool_names() -> Vec<serde_json::Value> {
+    all_tools()
+        .iter()
+        .map(|tool| {
+            serde_json::json!({
+                "name": tool.name(),
+                "description": tool.description(),
+            })
+        })
+        .collect()
+}

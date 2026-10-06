@@ -46,6 +46,8 @@ pub enum NodeType {
     ToolReturn,
     /// 容器读原语节点（工具链步骤）：按 inspect_kind 读取 DataContainer 片段
     Inspector,
+    /// 容器写原语节点（工具链步骤）：把模板渲染结果写入工作区（scratchpad）
+    Writer,
     /// 跨域读原语节点（工具链步骤）：代理调用白名单内的既有命令
     Querier,
     /// 禁词词库与 Nudge 参数节点（编排资产，计划 §6.3）
@@ -106,6 +108,7 @@ pub enum NodeConfig {
     ToolReturn(ToolReturnConfig),
     /// 容器读原语节点（工具链步骤）
     Inspector(InspectorConfig),
+    Writer(WriterConfig),
     /// 跨域读原语节点（工具链步骤）
     Querier(QuerierConfig),
     /// 禁词词库与 Nudge 参数节点（编排资产）
@@ -146,6 +149,7 @@ impl NodeConfig {
             Self::ConditionGate(_) => NodeType::ConditionGate,
             Self::ToolReturn(_) => NodeType::ToolReturn,
             Self::Inspector(_) => NodeType::Inspector,
+            Self::Writer(_) => NodeType::Writer,
             Self::Querier(_) => NodeType::Querier,
             Self::BannedWordsConfig(_) => NodeType::BannedWordsConfig,
             Self::ScriptwriterPipeline(_) => NodeType::ScriptwriterPipeline,
@@ -419,6 +423,10 @@ pub struct FieldDisplayConfig {
     /// 在视觉上明确区分。由蓝图编译器在缺少正文基线时注入。
     #[serde(default)]
     pub body: bool,
+    /// 是否从消息气泡中隐藏（display_target=PersistentHUD 的字段：数据只走常驻 HUD
+    /// 增量补丁，气泡流不渲染——计划 §3.2/验收指标 4"零尾随卡片"）。
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 fn default_true() -> bool { true }
@@ -472,7 +480,7 @@ fn default_calc_mode() -> String {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConditionGateConfig {
-    /// 门禁类型: "gold", "weight", "slots", "custom"
+    /// 门禁类型: "gold"（金币≥阈值）/ "weight"（总重+增量≤阈值）/ "slots"（槽位数）
     pub gate_type: String,
     /// 判定对比值或表达式
     pub expression: String,
@@ -511,6 +519,22 @@ pub struct ToolReturnConfig {
 /// / `"item"`（单件详情，`key_expr` 解析出 item_id）/ `"scratchpad"`（工作区变量，
 /// `key_expr` 解析出变量名）。读取结果写入链上下文 `inspect`，供 ToolReturn 模板
 /// 以 `{inspect.<字段>}` 引用（数组/对象按通用 JSON 渲染，spec §2.0）。
+/// Writer 节点配置（工具链步骤）：把 `value_template` 渲染结果写入工作区变量。
+///
+/// 工作区 = DataContainer.scratchpad（纯内存 HashMap，计划 §2.2：零磁盘 I/O，
+/// 回合结束随生命周期释放）。`key_expr` / `value_template` 均支持 `{表达式}` 占位
+/// （上下文栈同 ToolReturn：args / stats / inspect / query）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WriterConfig {
+    /// 工作区变量名（支持 {表达式} 渲染）
+    pub key_expr: String,
+    /// 写入值模板（支持 {表达式} 渲染）
+    #[serde(default)]
+    pub value_template: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InspectorConfig {
     pub inspect_kind: String,

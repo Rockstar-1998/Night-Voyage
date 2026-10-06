@@ -89,6 +89,7 @@ mod tests {
             name: "rpg_summary".into(),
             description: String::new(),
             retention_depth: depth,
+            card: None,
             fields: field_names
                 .iter()
                 .map(|name| SchemaFieldDefinition {

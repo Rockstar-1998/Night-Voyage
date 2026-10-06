@@ -14,6 +14,22 @@ import type {
   StreamRetryEvent,
 } from './types';
 
+export interface DiceRollEvent {
+  sessionId: number;
+  roundId: number;
+  roll: number;
+  modifier: number;
+  dc: number;
+  passed: boolean;
+  tool: string;
+}
+
+export async function listenDiceRoll(
+  handler: (payload: DiceRollEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<DiceRollEvent>('session:dice_roll', (event) => handler(event.payload));
+}
+
 export async function listenStreamChunk(
   handler: (payload: StreamChunkEvent) => void,
 ): Promise<UnlistenFn> {

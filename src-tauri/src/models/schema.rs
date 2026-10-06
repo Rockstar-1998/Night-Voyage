@@ -131,11 +131,21 @@ impl SchemaDefinition {
         let retention_depth_i64: Option<i64> = row.try_get("retention_depth").map_err(|e| e.to_string())?;
         let retention_depth = retention_depth_i64.map(|v| v as u32);
         let fields_json: String = row.try_get("fields_json").map_err(|e| e.to_string())?;
+        let card_json: Option<String> = row
+            .try_get("card_json")
+            .map_err(|e| format!("preset_schemas 缺少 card_json 列（迁移 0049 未执行？）: {e}"))?;
         let created_at: i64 = row.try_get("created_at").map_err(|e| e.to_string())?;
         let updated_at: i64 = row.try_get("updated_at").map_err(|e| e.to_string())?;
 
         let fields: Vec<SchemaFieldDefinition> = serde_json::from_str(&fields_json)
             .map_err(|e| format!("Failed to parse schema fields JSON: {}", e))?;
+        let card = match card_json {
+            Some(raw) => Some(
+                serde_json::from_str::<SchemaCardConfig>(&raw)
+                    .map_err(|e| format!("Failed to parse schema card JSON: {e}"))?,
+            ),
+            None => None,
+        };
 
         Ok(Self {
             id,
@@ -144,7 +154,7 @@ impl SchemaDefinition {
             description,
             retention_depth,
             fields,
-            card: None,
+            card,
             created_at,
             updated_at,
         })

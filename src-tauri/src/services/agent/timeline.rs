@@ -47,13 +47,19 @@ pub struct TimelineEvent {
     pub status: TimelineStatus,
     pub title: String,
     pub detail: String,
+    /// 事件发生的毫秒级 Unix 时间戳（计划 §9.3"毫秒级回放"；emit_timeline 自动填充）
+    #[serde(rename = "tsMs")]
+    pub ts_ms: i64,
 }
 
 /// 发一条时序事件。
 ///
 /// 发射失败只记录 debug 日志——事件是**观测手段**，它失败不该影响推理主链路；
 /// 但也不静默：日志里能看到哪条事件没发出去。
-pub fn emit_timeline(app: &AppHandle, event: TimelineEvent) {
+pub fn emit_timeline(app: &AppHandle, mut event: TimelineEvent) {
+    if event.ts_ms == 0 {
+        event.ts_ms = crate::utils::now_ts_millis();
+    }
     if let Err(err) = app.emit(AGENT_TIMELINE_EVENT, &event) {
         crate::dbg_eprintln!(
             "[agent-timeline] emit failed: {} | title={}",
@@ -78,6 +84,7 @@ pub fn emit(
         app,
         TimelineEvent {
             conversation_id,
+            ts_ms: crate::utils::now_ts_millis(),
             round_id,
             kind,
             status,

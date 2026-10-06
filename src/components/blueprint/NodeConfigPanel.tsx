@@ -54,6 +54,7 @@ import type {
   ToolReturnConfig,
   InspectorConfig,
   QuerierConfig,
+  WriterConfig,
   BannedWordsConfig,
   ScriptwriterPipelineConfig,
   AgentModeSwitchConfig,
@@ -127,6 +128,7 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   tool_return: 'Tool Return',
   inspector: 'Inspector（容器读）',
   querier: 'Querier（跨域读）',
+  writer: 'Writer（工作区写）',
   banned_words_config: 'Banned Words Config',
   scriptwriter_pipeline: 'Scriptwriter Pipeline',
   agent_mode_switch: 'Agent Mode Switch',
@@ -480,6 +482,22 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                       placeholder="query_world_book_entries"
                     />
                     <p class="text-xs text-mist-solid/40">args_template 经蓝图 JSON 编辑（当前: {JSON.stringify((node().config as QuerierConfig).args_template)}）</p>
+                  </div>
+                </Match>
+                <Match when={node().type === 'writer'}>
+                  <div class="space-y-3">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Key Expr（工作区变量名，支持 {'{表达式}'}）</label>
+                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
+                      value={(node().config as WriterConfig).key_expr}
+                      onChange={(e) => updateNode(node().id, { key_expr: e.currentTarget.value })}
+                      placeholder="draft"
+                    />
+                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Value Template（支持 {'{表达式}'}）</label>
+                    <textarea class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white" rows={3}
+                      value={(node().config as WriterConfig).value_template}
+                      onChange={(e) => updateNode(node().id, { value_template: e.currentTarget.value })}
+                      placeholder="写入工作区变量的值模板"
+                    />
                   </div>
                 </Match>
                 <Match when={node().type === 'banned_words_config'}>

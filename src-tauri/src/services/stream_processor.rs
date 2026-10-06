@@ -202,13 +202,11 @@ async fn run_multi_agent_round(
         }
     };
 
-    let final_text = match final_text {
-        Ok(text) => text,
-        Err(err) => return fail(format!("{}执行失败: {}", pipeline.label(), err)).await,
-    };
-
     // 禁词门禁同样作用于流水线终稿：流水线不豁免内容合规。
     // 词库来自蓝图 BannedWordsConfig 节点资产（spec §2A.3，D-6）。
+    // 命中 → 注入 Nudge 改写指令重跑流水线末段，最多 2 次（计划 §6.3"命中则阻断提交
+    // （最多重试 2 次），注入高优先级合成 Critic Nudge 改写指令"——A14 整改：
+    // 此前流水线路径直接作废不重试）。
     let banned_config = match crate::services::agent_runtime::load_blueprint_configs_for_conversation(
         db,
         conversation_id,
@@ -218,26 +216,94 @@ async fn run_multi_agent_round(
         Ok(configs) => configs.banned_words,
         Err(err) => return fail(format!("加载蓝图编排配置失败: {}", err)).await,
     };
-    match crate::services::agent_guards::BannedWordsFilter::from_words(
+    let filter_result = crate::services::agent_guards::BannedWordsFilter::from_words(
         &banned_config.map(|cfg| cfg.words).unwrap_or_default(),
-    ) {
+    );
+    let mut final_text = match final_text {
+        Ok(text) => text,
+        Err(err) => return fail(format!("{}执行失败: {}", pipeline.label(), err)).await,
+    };
+    match filter_result {
         Ok(filter) => {
-            if let Err(violation) = filter.validate(&final_text) {
-                let reason = format!(
-                    "剧本流水线终稿命中禁词（{}），本轮内容作废：{}",
-                    violation.matched_words.join("、"),
-                    violation.feedback_instruction
-                );
-                crate::services::agent::timeline::emit(
-                    app,
-                    conversation_id,
-                    round_id,
-                    crate::services::agent::timeline::TimelineKind::NudgeRetry,
-                    crate::services::agent::timeline::TimelineStatus::Failed,
-                    "剧本流水线终稿被禁词门禁拦截".to_string(),
-                    reason.clone(),
-                );
-                return fail(reason).await;
+            const MAX_NUDGE_RETRIES: usize = 2;
+            let mut nudge_attempts: usize = 0;
+            loop {
+                match filter.validate(&final_text) {
+                    Ok(()) => break,
+                    Err(violation) => {
+                        if nudge_attempts >= MAX_NUDGE_RETRIES {
+                            let reason = format!(
+                                "剧本流水线终稿 {} 次自纠后仍命中禁词（{}），本轮内容作废：{}",
+                                nudge_attempts,
+                                violation.matched_words.join("、"),
+                                violation.feedback_instruction
+                            );
+                            crate::services::agent::timeline::emit(
+                                app,
+                                conversation_id,
+                                round_id,
+                                crate::services::agent::timeline::TimelineKind::NudgeRetry,
+                                crate::services::agent::timeline::TimelineStatus::Failed,
+                                "剧本流水线终稿自纠失败".to_string(),
+                                reason.clone(),
+                            );
+                            return fail(reason).await;
+                        }
+                        nudge_attempts += 1;
+                        // Nudge 改写：把禁词驳回意见作为指令重跑流水线末段
+                        //（Scriptwriter → 只重跑润色段；DirectorActor → 重跑装配缝合段）。
+                        crate::services::agent::timeline::emit(
+                            app,
+                            conversation_id,
+                            round_id,
+                            crate::services::agent::timeline::TimelineKind::NudgeRetry,
+                            crate::services::agent::timeline::TimelineStatus::Blocked,
+                            format!("禁词命中，第 {}/{} 次自纠", nudge_attempts, MAX_NUDGE_RETRIES),
+                            violation.matched_words.join("、"),
+                        );
+                        let nudge_instruction = format!(
+                            "{}
+
+【禁词自纠指令（第 {} 次重写）】
+上一版终稿命中禁词（{}）。                             请在保持剧情走向与已完成事实不变的前提下重写完整正文，彻底消除上述禁词，只输出重写后的正文。
+
+【上一版终稿】
+{{}}",
+                            violation.feedback_instruction,
+                            nudge_attempts,
+                            violation.matched_words.join("、")
+                        );
+                        let rewrite_input = nudge_instruction.replace("{}", &final_text);
+                        let rewritten = match pipeline {
+                            crate::services::agent::orchestrator::AgentPipeline::Scriptwriter => {
+                                crate::services::agent::orchestrator::run_scriptwriter_nudge_pass(
+                                    app, db, conversation_id, round_id, &provider, &system,
+                                    &rewrite_input,
+                                )
+                                .await
+                            }
+                            crate::services::agent::orchestrator::AgentPipeline::DirectorActor => {
+                                crate::services::agent::director_actor::run_director_nudge_pass(
+                                    app, db, conversation_id, round_id, &provider, &system,
+                                    &rewrite_input,
+                                )
+                                .await
+                            }
+                            crate::services::agent::orchestrator::AgentPipeline::Single => {
+                                return fail("内部错误：单模型流水线不应进入多智能体执行路径".to_string()).await
+                            }
+                        };
+                        match rewritten {
+                            Ok(text) if !text.trim().is_empty() => final_text = text,
+                            Ok(_) => {
+                                return fail("流水线自纠返回空内容，本轮作废".to_string()).await
+                            }
+                            Err(err) => {
+                                return fail(format!("禁词自纠重写失败: {}", err)).await
+                            }
+                        }
+                    }
+                }
             }
         }
         Err(err) => return fail(err).await,
@@ -749,19 +815,41 @@ async fn spawn_post_round_tasks(
                     .map(|(key, value)| (key.clone(), value.clone()))
                     .collect();
                 if !patches.is_empty() {
-                    let current_state = crate::services::agent_runtime::load_session_state(db, conversation_id)
-                        .await
-                        .unwrap_or_default();
+                    // 回合内缓存优先（计划 §2.1）：ToolCall 的变动此刻可能还在内存工作副本里。
+                    let current_state =
+                        crate::services::agent_runtime::load_session_state_cached(db, app, conversation_id)
+                            .await
+                            .unwrap_or_default();
+                    let detail_keys: Vec<String> = {
+                        let mut keys: Vec<String> = patches.keys().cloned().collect();
+                        keys.sort();
+                        keys
+                    };
                     crate::services::agent_runtime::broadcast_hud_patch(
                         app,
                         conversation_id,
                         &current_state,
                         Some(patches),
                     );
+                    // Schema 补丁 → 时序泳道（计划 §9.3"Schema 流式解析→HUD 补丁"环）
+                    crate::services::agent::timeline::emit(
+                        app,
+                        conversation_id,
+                        round_id,
+                        crate::services::agent::timeline::TimelineKind::SchemaPatch,
+                        crate::services::agent::timeline::TimelineStatus::Success,
+                        "Schema 补丁 → 常驻 HUD",
+                        format!("字段: {}", detail_keys.join(", ")),
+                    );
                 }
             }
         }
     }
+
+    // 回合末单次持久化（计划 §2.1"单次结算持久化"）：正文已定稿，此刻把回合内
+    // 多次 ToolCall 变动的内存工作副本单次写入 session_states 并清除。传统模式
+    // / 无回合内变动 = 无缓存条目，no-op。
+    crate::services::agent_runtime::flush_session_state_cache(db, app, conversation_id).await;
 
     let memory_mode =
         crate::services::prompt_compiler::load_memory_mode(db, conversation_id).await;
@@ -958,6 +1046,7 @@ async fn stream_llm_response(
         provider_kind: provider.provider_kind.clone(),
         model_name: provider.model_name.clone(),
         include_streaming_seed: false,
+        max_context_tokens: provider.max_context_tokens,
         budget: PromptBudget {
             max_total_tokens: None,
             reserve_output_tokens: effective_max_tokens

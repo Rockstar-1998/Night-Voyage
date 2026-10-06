@@ -52,8 +52,10 @@ pub async fn session_tool_call_execute(
     app: AppHandle,
 ) -> Result<String, String> {
     let plan = resolve_tool_plan(&state.db, session_id, &tool_name).await?;
-    execute_tool_call_with_plan(&state.db, &app, session_id, &tool_name, &arguments_json, plan.as_ref())
-        .await
+    execute_tool_call_with_plan(
+        &state.db, &app, session_id, 0, true, &tool_name, &arguments_json, plan.as_ref(),
+    )
+    .await
 }
 
 /// 执行确定性 D20 骰点检定

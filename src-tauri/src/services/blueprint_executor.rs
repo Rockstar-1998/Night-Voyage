@@ -11,7 +11,7 @@ use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
     AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
     InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
-    ToolDefinitionConfig, ToolReturnConfig,
+    ToolDefinitionConfig, ToolReturnConfig, WriterConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -44,7 +44,7 @@ pub enum BlueprintError {
     DuplicateFieldName(String),
     /// Two Prompt nodes share the same identifier.
     DuplicateIdentifier(String),
-    /// A ModeSwitch node is missing one of out_legacy/out_mem0/out_stateless.
+    /// A ModeSwitch node is missing out_mem0, or both out_legacy and out_stateless.
     MissingModeSwitchPort(String, String),
     /// A RoleSwitch node is missing one of out_single/out_online.
     MissingRoleSwitchPort(String, String),
@@ -92,6 +92,9 @@ pub enum BlueprintError {
     ToolChainInvalidStep { node: String, node_type: String },
     /// 工具链专属节点（Inspector / Querier）出现在主执行流上。
     ChainOnlyNodeOnMainFlow { node: String, node_type: String },
+    /// InvokeSchema 引用的 schema_id 在 preset_schemas 资产中不存在（I2：显式报错，
+    /// 不静默空跑——此前仅 eprintln 后继续，蓝图带空 schema 静默完成）。
+    InvokeSchemaNotFound { schema_id: String },
     /// 同类编排资产节点（BannedWordsConfig / ScriptwriterPipeline）在图中出现多次。
     DuplicateOrchestrationNode { node_type: &'static str, id: String },
     /// 演员定义节点的 actor_name 重复。
@@ -193,6 +196,10 @@ impl std::fmt::Display for BlueprintError {
                 f,
                 "node {node} of type `{node_type}` is a tool-chain step; it must sit on a \
                  ToolDefinition chain, not on the main execution flow"
+            ),
+            Self::InvokeSchemaNotFound { schema_id } => write!(
+                f,
+                "InvokeSchema 引用的 Schema 资产不存在: `{schema_id}`（未在预设 Schema 管理中定义，或已被删除）"
             ),
             Self::DuplicateOrchestrationNode { node_type, id } => write!(
                 f,
@@ -537,6 +544,13 @@ fn traverse(
                 node_type: "querier".to_string(),
             });
         }
+        NodeConfig::Writer(cfg) => {
+            let _ = cfg;
+            return Err(BlueprintError::ChainOnlyNodeOnMainFlow {
+                node: node_id.to_string(),
+                node_type: "writer".to_string(),
+            });
+        }
         // 编排资产节点在主流程中是惰性占位：语义由 extract_orchestration_configs
         // 全图扫描读取（与执行流无关），这里只要求它接有出边以保持图连通。
         NodeConfig::BannedWordsConfig(_)
@@ -565,7 +579,7 @@ fn traverse(
                 }
             })?;
             let passed = gs
-                .evaluate_condition(&cfg.gate_type, cost_val)
+                .evaluate_condition(&cfg.gate_type, cost_val, &serde_json::Value::Null, &mut None)
                 .map_err(|_| BlueprintError::UnknownGateType {
                     node: node_id.to_string(),
                     gate_type: cfg.gate_type.clone(),
@@ -626,7 +640,20 @@ fn traverse(
             traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::ModeSwitch(_) => {
-            let port = format!("out_{}", context.memory_mode);
+            // 2026-10-06 stateless 并入 legacy：legacy 模式优先走 out_legacy，
+            // 旧图只有 out_stateless 分支时回退到该端口（资产兼容，不要求重画）。
+            let port = match context.memory_mode.as_str() {
+                "legacy" => {
+                    if target_of(graph, node_id, "out_legacy").is_ok() {
+                        "out_legacy".to_string()
+                    } else if target_of(graph, node_id, "out_stateless").is_ok() {
+                        "out_stateless".to_string()
+                    } else {
+                        "out_legacy".to_string()
+                    }
+                }
+                other => format!("out_{other}"),
+            };
             let branch_target = target_of(graph, node_id, &port)?;
             traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
@@ -746,17 +773,27 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
     // 6. ModeSwitch three ports connected
     for node in &graph.nodes {
         if matches!(node.config, NodeConfig::ModeSwitch(_)) {
-            for port in &["out_legacy", "out_mem0", "out_stateless"] {
-                let has_edge = graph
-                    .edges
-                    .iter()
-                    .any(|e| e.source == node.id && e.source_port == *port);
-                if !has_edge {
-                    return Err(BlueprintError::MissingModeSwitchPort(
-                        node.id.clone(),
-                        port.to_string(),
-                    ));
-                }
+            // 2026-10-06 stateless 并入 legacy：out_mem0 必连；out_legacy 与
+            // out_stateless（旧图兼容）至少连其一。
+            let has_legacy = graph.edges.iter().any(|e| {
+                e.source == node.id
+                    && (e.source_port == "out_legacy" || e.source_port == "out_stateless")
+            });
+            if !has_legacy {
+                return Err(BlueprintError::MissingModeSwitchPort(
+                    node.id.clone(),
+                    "out_legacy".to_string(),
+                ));
+            }
+            let has_mem0 = graph
+                .edges
+                .iter()
+                .any(|e| e.source == node.id && e.source_port == "out_mem0");
+            if !has_mem0 {
+                return Err(BlueprintError::MissingModeSwitchPort(
+                    node.id.clone(),
+                    "out_mem0".to_string(),
+                ));
             }
         }
     }
@@ -928,7 +965,7 @@ fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usi
             cfg.options.iter().map(|o| format!("out_{}", o.key)).collect()
         }
         NodeConfig::ModeSwitch(_) => {
-            vec!["out_legacy", "out_mem0", "out_stateless"]
+            vec!["out_legacy", "out_stateless", "out_mem0"]
                 .into_iter()
                 .map(String::from)
                 .collect()
@@ -1061,29 +1098,66 @@ fn apply_invoke_schema(
     context: &BlueprintExecutionContext,
     result: &mut BlueprintExecutionResult,
 ) -> Result<(), BlueprintError> {
-    if let Some(schema_def) = context.preset_schemas.get(&cfg.schema_id) {
-        result.active_schemas.push(schema_def.clone());
-        result.structured_output_schema = schema_def.to_json_schema();
-        for field in &schema_def.fields {
-            if let Some(mapping) = &field.db_mapping {
-                if !mapping.is_empty() {
-                    result.db_mappings.insert(field.name.clone(), mapping.clone());
+    let schema_def = context
+        .preset_schemas
+        .get(&cfg.schema_id)
+        .ok_or_else(|| BlueprintError::InvokeSchemaNotFound {
+            schema_id: cfg.schema_id.clone(),
+        })?;
+
+    result.active_schemas.push(schema_def.clone());
+
+    // 多 InvokeSchema 聚合（取代旧 `=` 覆盖语义）：properties/required 合并（后到字段
+    // 覆盖同名字段），与 active_schemas 的 push 语义保持一致——状态不再分裂。
+    {
+        let incoming = schema_def.to_json_schema();
+        let schema = &mut result.structured_output_schema;
+        if let (Some(in_props), Some(props)) = (
+            incoming.get("properties").and_then(|v| v.as_object()),
+            schema.get_mut("properties").and_then(|v| v.as_object_mut()),
+        ) {
+            for (k, v) in in_props {
+                props.insert(k.clone(), v.clone());
+            }
+        }
+        if let (Some(in_req), Some(req)) = (
+            incoming.get("required").and_then(|v| v.as_array()),
+            schema.get_mut("required").and_then(|v| v.as_array_mut()),
+        ) {
+            for name in in_req {
+                if !req.contains(name) {
+                    req.push(name.clone());
                 }
             }
-            let is_inline = field.display_target == crate::models::schema::DisplayTarget::InlineMessage;
-            result.display_config.insert(
-                field.name.clone(),
-                crate::models::blueprint::FieldDisplayConfig {
-                    default_expanded: true,
-                    hide_label: is_inline,
-                    body: is_inline,
-                },
-            );
         }
-    } else {
-        eprintln!(
-            "[blueprint-executor] InvokeSchema: schema_id '{}' not found in context.preset_schemas",
-            cfg.schema_id
+    }
+
+    // 物理顺序：Schema 资产的 fields 顺序 = 编辑器物理排序（§3.4）。
+    // 此前 InvokeSchema 从不写 schema_field_order，导致 order_schema_properties
+    // 全部字段落入字母序兜底——确定性违规。
+    for field in &schema_def.fields {
+        result
+            .schema_field_order
+            .push((field.name.clone(), result.schema_field_order.len() as i32));
+    }
+
+    for field in &schema_def.fields {
+        if let Some(mapping) = &field.db_mapping {
+            if !mapping.is_empty() {
+                result.db_mappings.insert(field.name.clone(), mapping.clone());
+            }
+        }
+        // display_target 双通道（计划 §3.2）：PersistentHUD 字段只走常驻 HUD 增量
+        // 补丁，气泡中隐藏（hidden=true）——"零尾随卡片"（验收指标 4）。
+        let is_inline = field.display_target == crate::models::schema::DisplayTarget::InlineMessage;
+        result.display_config.insert(
+            field.name.clone(),
+            crate::models::blueprint::FieldDisplayConfig {
+                default_expanded: true,
+                hide_label: is_inline,
+                body: is_inline,
+                hidden: !is_inline,
+            },
         );
     }
     Ok(())
@@ -1289,6 +1363,13 @@ fn collect_tool_plan(
             }
             NodeConfig::Querier(cfg) => {
                 steps.push(ToolStep::Query(cfg.clone()));
+                current = match next_node_id(graph, &current, "out") {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+            }
+            NodeConfig::Writer(cfg) => {
+                steps.push(ToolStep::Write(cfg.clone()));
                 current = match next_node_id(graph, &current, "out") {
                     Ok(next) => next,
                     Err(_) => break,
@@ -1502,6 +1583,7 @@ fn evaluate_port(
         | NodeConfig::ConditionGate(_)
         | NodeConfig::ToolReturn(_)
         | NodeConfig::Inspector(_)
+        | NodeConfig::Writer(_)
         | NodeConfig::Querier(_)
         | NodeConfig::BannedWordsConfig(_)
         | NodeConfig::ScriptwriterPipeline(_)

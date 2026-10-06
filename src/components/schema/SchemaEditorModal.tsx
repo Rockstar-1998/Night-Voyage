@@ -33,6 +33,11 @@ export const SchemaEditorModal: Component<SchemaEditorModalProps> = (props) => {
   const [showPreview, setShowPreview] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
 
+  // 产物卡配置（spec §2.4 M5）：字段物理排序即卡片展示顺序，actions 为卡片按钮
+  const [cardEnabled, setCardEnabled] = createSignal(false);
+  const [cardTitleField, setCardTitleField] = createSignal('');
+  const [cardActions, setCardActions] = createSignal<Array<{ label: string; command: string; argsTemplate: Array<[string, string]> }>>([]);
+
   // Validation for retention depth: must be positive integer >= 1
   const retentionError = createMemo(() => {
     if (!enableRetention()) return null;
@@ -87,6 +92,15 @@ export const SchemaEditorModal: Component<SchemaEditorModalProps> = (props) => {
       setRetentionDepthInput('3');
     }
     setFields(JSON.parse(JSON.stringify(schema.fields || [])));
+    if (schema.card) {
+      setCardEnabled(true);
+      setCardTitleField(schema.card.titleField || schema.fields?.[0]?.name || '');
+      setCardActions(JSON.parse(JSON.stringify(schema.card.actions || [])));
+    } else {
+      setCardEnabled(false);
+      setCardTitleField('');
+      setCardActions([]);
+    }
   };
 
   const createNewSchema = () => {
@@ -96,6 +110,9 @@ export const SchemaEditorModal: Component<SchemaEditorModalProps> = (props) => {
     setDescription('');
     setEnableRetention(false);
     setRetentionDepthInput('3');
+    setCardEnabled(false);
+    setCardTitleField('');
+    setCardActions([]);
     setFields([
       {
         name: 'thinking',
@@ -171,6 +188,16 @@ export const SchemaEditorModal: Component<SchemaEditorModalProps> = (props) => {
         description: description().trim(),
         retentionDepth: enableRetention() ? parseInt(retentionDepthInput(), 10) : null,
         fields: fields(),
+        card: cardEnabled()
+          ? {
+              titleField: cardTitleField(),
+              actions: cardActions().map((a) => ({
+                label: a.label,
+                command: a.command,
+                argsTemplate: a.argsTemplate.map(([k, v]) => [k, v] as [string, string]),
+              })),
+            }
+          : null,
         createdAt: 0,
         updatedAt: 0,
       };
@@ -404,6 +431,165 @@ export const SchemaEditorModal: Component<SchemaEditorModalProps> = (props) => {
                     </div>
                   </Show>
                 </div>
+              </div>
+
+              {/* 产物卡配置（spec §2.4 M5） */}
+              <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h3 class="text-xs font-bold text-mist-solid uppercase tracking-wider flex items-center gap-1.5">
+                      产物卡配置（Schema card 扩展）
+                      <span class="text-[9px] uppercase px-1.5 py-0.5 rounded border border-accent/40 bg-accent/10 text-accent">M5</span>
+                    </h3>
+                    <p class="text-[11px] text-mist-solid/40 mt-0.5">
+                      配置后，该 Schema 的结构化输出在消息流中渲染为产物卡；字段物理顺序即卡片展示顺序，卡片按钮经动作白名单代理既有命令。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !cardEnabled();
+                      setCardEnabled(next);
+                      if (next && !cardTitleField()) {
+                        setCardTitleField(fields()[0]?.name ?? '');
+                      }
+                    }}
+                    class={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      cardEnabled() ? 'bg-accent' : 'bg-white/10'
+                    }`}
+                  >
+                    <span
+                      class={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        cardEnabled() ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <Show when={cardEnabled()}>
+                  <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[10px] font-bold text-mist-solid/60 uppercase tracking-wider mb-1">卡片标题字段 (title_field)</label>
+                        <select
+                          value={cardTitleField()}
+                          onChange={(e) => setCardTitleField(e.currentTarget.value)}
+                          class="w-full px-2 py-1.5 text-xs rounded-lg bg-black/40 border border-white/10 text-mist-solid focus:border-accent focus:outline-none"
+                        >
+                          <For each={fields().filter((f) => f.name.trim())}>
+                            {(f) => <option value={f.name.trim()}>{f.name.trim()}</option>}
+                          </For>
+                        </select>
+                      </div>
+                      <div class="flex items-end">
+                        <button
+                          type="button"
+                          onClick={() => setCardActions((prev) => [...prev, { label: '加入到世界书', command: '', argsTemplate: [] }])}
+                          class="px-3 py-1.5 rounded-lg text-xs font-bold bg-accent text-white hover:bg-accent/90 transition-colors flex items-center gap-1"
+                        >
+                          <Plus size={13} />
+                          <span>添加卡片按钮</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <For each={cardActions()}>
+                      {(action, actionIdx) => (
+                        <div class="space-y-2 rounded-lg border border-white/10 bg-black/30 p-3">
+                          <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-mist-solid/50">按钮 {actionIdx() + 1}</span>
+                            <button
+                              type="button"
+                              onClick={() => setCardActions((prev) => prev.filter((_, i) => i !== actionIdx()))}
+                              class="p-1 rounded text-mist-solid/40 hover:text-red-400 transition-colors"
+                              title="删除按钮"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                          <div class="grid grid-cols-2 gap-2">
+                            <div>
+                              <label class="block text-[10px] text-mist-solid/50 mb-1">按钮文案 (label)</label>
+                              <input
+                                type="text"
+                                value={action.label}
+                                onInput={(e) => setCardActions((prev) => prev.map((a, i) => (i === actionIdx() ? { ...a, label: e.currentTarget.value } : a)))}
+                                placeholder="如: 加入到世界书"
+                                class="w-full px-2 py-1 text-xs rounded bg-white/5 border border-white/10 text-mist-solid focus:border-accent focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label class="block text-[10px] text-mist-solid/50 mb-1">命令 (command，须在白名单注册)</label>
+                              <input
+                                type="text"
+                                value={action.command}
+                                onInput={(e) => setCardActions((prev) => prev.map((a, i) => (i === actionIdx() ? { ...a, command: e.currentTarget.value } : a)))}
+                                placeholder="如: create_world_book_entry"
+                                class="w-full px-2 py-1 text-xs rounded bg-white/5 border border-white/10 text-mist-solid font-mono focus:border-accent focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <div class="flex items-center justify-between mb-1">
+                              <label class="block text-[10px] text-mist-solid/50">参数模板（值支持 {'{字段名}'} 占位，取自卡片字段值）</label>
+                              <button
+                                type="button"
+                                onClick={() => setCardActions((prev) => prev.map((a, i) => (i === actionIdx() ? { ...a, argsTemplate: [...a.argsTemplate, ['arg_1', ''] as [string, string]] } : a)))}
+                                class="text-[10px] text-accent hover:text-accent/80"
+                              >
+                                + 参数
+                              </button>
+                            </div>
+                            <For each={action.argsTemplate}>
+                              {([argKey, argTemplate], argIdx) => (
+                                <div class="mb-1 flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={argKey}
+                                    onInput={(e) =>
+                                      setCardActions((prev) =>
+                                        prev.map((a, i) =>
+                                          i === actionIdx()
+                                            ? { ...a, argsTemplate: a.argsTemplate.map((pair, j) => (j === argIdx() ? [e.currentTarget.value, pair[1]] as [string, string] : pair)) }
+                                            : a,
+                                        ),
+                                      )
+                                    }
+                                    placeholder="参数名（如 title）"
+                                    class="w-40 px-2 py-1 text-xs rounded bg-white/5 border border-white/10 text-mist-solid font-mono focus:border-accent focus:outline-none"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={argTemplate}
+                                    onInput={(e) =>
+                                      setCardActions((prev) =>
+                                        prev.map((a, i) =>
+                                          i === actionIdx()
+                                            ? { ...a, argsTemplate: a.argsTemplate.map((pair, j) => (j === argIdx() ? [pair[0], e.currentTarget.value] as [string, string] : pair)) }
+                                            : a,
+                                        ),
+                                      )
+                                    }
+                                    placeholder="模板（如 {name} 或固定文本）"
+                                    class="flex-1 px-2 py-1 text-xs rounded bg-white/5 border border-white/10 text-mist-solid focus:border-accent focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setCardActions((prev) => prev.map((a, i) => (i === actionIdx() ? { ...a, argsTemplate: a.argsTemplate.filter((_, j) => j !== argIdx()) } : a)))}
+                                    class="p-1 rounded text-mist-solid/40 hover:text-red-400 transition-colors"
+                                    title="删除参数"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
 
               {/* Fields Table Header & Action */}

@@ -1,4 +1,4 @@
-import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { Maximize2, Minimize2 } from './lib/icons';
 import { TitleBar } from './components/TitleBar';
@@ -55,6 +55,7 @@ import {
   conversationsDelete,
   conversationsList,
   conversationsUpdateBindings,
+  listenDiceRoll,
   listenLlmStreamEvent,
   listenPlotSummaryError,
   listenPlotSummaryPending,
@@ -154,7 +155,9 @@ import {
   roomLeave,
   listenMemoryError,
   mem0InitStatus,
+  presetSchemasList,
   type MemoryBackendErrorEvent,
+  type SchemaDefinition,
 } from './lib/backend';
 
 const toChatMessage = (
@@ -321,7 +324,7 @@ type DesktopViewProps = {
   characterStateOverlaySummary?: string | null;
   characterStateOverlayStatus?: CharacterStateOverlayUiStatus;
   characterStateOverlayError?: string | null;
-  memoryMode?: 'stateless' | 'legacy' | 'mem0' | string;
+  memoryMode?: 'legacy' | 'mem0' | string;
   mem0SnapshotWindow?: number;
   onSnapshotWindowChange?: (window: number) => Promise<void> | void;
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number; embeddingProviderId?: number | null }) => Promise<void> | void;
@@ -380,6 +383,8 @@ type DesktopViewProps = {
   /** 房主主动更改房间端口的回调。 */
   onUpdateRoomPort?: (port: number) => Promise<void> | void;
   onOpenAgentDebug?: () => void;
+  /** 不可篡改 d20 检定卡（计划 §6.3） */
+  diceCard?: { roll: number; modifier: number; dc: number; passed: boolean; tool: string; at: number } | null;
 };
 
 const AnimatedDesktopView = (props: DesktopViewProps) => {
@@ -391,6 +396,12 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
   const [renamingValue, setRenamingValue] = createSignal('');
   const [presetBusy, setPresetBusy] = createSignal<number | null>(null);
   const activePreset = createMemo(() => props.presetSummaries.find(p => p.id === props.selectedPresetId) ?? null);
+  // M5 产物卡：当前预设的 Schema 资产（含 card 配置），供消息流命中渲染
+  const [presetSchemasResource] = createResource(
+    () => props.selectedPresetId ?? null,
+    async (presetId) => (presetId == null ? [] as SchemaDefinition[] : presetSchemasList(presetId)),
+  );
+  const presetSchemas = createMemo(() => presetSchemasResource() ?? []);
   const effectiveStructuredOutputDisplay = createMemo(() => {
     const preset = activePreset();
     if (!preset) return undefined;
@@ -618,8 +629,45 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                     onOpenDebug={() => props.onOpenAgentDebug?.()}
                                   />
                                 </Show>
+                                {/* 不可篡改 d20 检定卡（计划 §6.3）：OS CSPRNG 骰值广播 */}
+                                <Show when={props.diceCard}>
+                                  {(card) => (
+                                    <div
+                                      class="mx-4 mb-1 flex items-center justify-center gap-4 rounded-xl border px-4 py-2"
+                                      style={{
+                                        'border-color': card().passed
+                                          ? 'rgba(34,197,94,0.5)'
+                                          : 'rgba(239,68,68,0.5)',
+                                        background: card().passed
+                                          ? 'rgba(34,197,94,0.08)'
+                                          : 'rgba(239,68,68,0.08)',
+                                      }}
+                                      data-dice-card
+                                    >
+                                      <span class="text-2xl" title="d20 (OS CSPRNG)">
+                                        🎲
+                                      </span>
+                                      <span
+                                        class="text-3xl font-black"
+                                        style={{ color: card().passed ? '#4ade80' : '#f87171' }}
+                                      >
+                                        {card().roll}
+                                      </span>
+                                      <span class="text-xs text-mist-solid/60">
+                                        + {card().modifier} 修正 vs DC {card().dc}
+                                      </span>
+                                      <span
+                                        class="text-sm font-bold"
+                                        style={{ color: card().passed ? '#4ade80' : '#f87171' }}
+                                      >
+                                        {card().passed ? '检定成功' : '检定失败'}
+                                      </span>
+                                      <span class="text-[10px] text-mist-solid/30">{card().tool}</span>
+                                    </div>
+                                  )}
+                                </Show>
                                 <div class="flex-1 overflow-hidden flex flex-col pt-2">
-                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={effectiveStructuredOutputDisplay()} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
+                                  <ChatArea messages={safeMessages()} conversationId={props.selectedConversationId ?? undefined} onRegenerate={props.isRoomClient ? () => {} : props.onRegenerate} onEdit={props.isRoomClient ? () => {} : props.onEdit} onFork={props.onFork} onDeleteMessage={props.onDeleteMessage} onRetryFailed={props.isRoomClient ? undefined : props.onRetryFailed} onRewind={props.isRoomClient ? undefined : props.onRewind} isRoomClient={props.isRoomClient} profile={props.profile} swipeInfo={props.swipeInfo} onSwitchSwipe={props.onSwitchSwipe} formatConfig={props.formatConfig} worldBookKeywords={props.worldBookKeywords} onChoiceSelect={(_key, value) => props.onSend(value)} onSchemaToggle={props.onSchemaToggle} structuredOutputDisplay={effectiveStructuredOutputDisplay()} presetSchemas={presetSchemas()} memoryErrors={props.memoryErrors} roomTokenUsageReport={props.roomTokenUsageReport} roomContextWindowSize={props.roomContextWindowSize} />
                                 </div>
                                 <div class="w-full shrink-0 px-6 pb-8 pt-2 bg-gradient-to-t from-xuanqing/40 via-xuanqing/20 to-transparent">
                                   <div class="max-w-4xl mx-auto">
@@ -659,7 +707,7 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                           presetSummaries={props.presetSummaries}
                           worldBooks={props.worldBooks}
                           onSaveConversationBindings={props.onSaveConversationBindings}
-                          memoryMode={props.memoryMode ?? 'stateless'}
+                          memoryMode={props.memoryMode ?? 'legacy'}
                           mem0SnapshotWindow={props.mem0SnapshotWindow}
                           onSnapshotWindowChange={props.onSnapshotWindowChange}
                           playerCharacters={props.playerCharacters}
@@ -1039,6 +1087,10 @@ function App() {
   const [abortingRoundId, setAbortingRoundId] = createSignal<number | null>(null);
   const [mem0InitError, setMem0InitError] = createSignal<string | null>(null);
   const [isAgentDebugOpen, setIsAgentDebugOpen] = createSignal(false);
+  // 不可篡改检定卡（计划 §6.3）：最近一次 d20 门禁骰值
+  const [diceCard, setDiceCard] = createSignal<{
+    roll: number; modifier: number; dc: number; passed: boolean; tool: string; at: number;
+  } | null>(null);
   const [memoryBackendErrors, setMemoryBackendErrors] = createStore<MemoryBackendErrorEvent[]>([]);
   const [conversationMode, setConversationMode] = createSignal<ConversationMode | null>(null);
   // Auto-retry toast: shown whenever the backend emits llm-stream-retry.
@@ -2701,6 +2753,11 @@ function App() {
       }));
     });
 
+    // 不可篡改检定卡广播（计划 §6.3）：d20 门禁骰值 → 聊天流上方浮动检定卡
+    const diceUnlisten = await listenDiceRoll((payload) => {
+      setDiceCard({ ...payload, at: Date.now() });
+    });
+
     // 全局 Ctrl+Shift+D：切换 Agent 调试抽屉（原先只有抽屉内部监听，未打开时按无效）
     const handleDebugHotkey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
@@ -2715,6 +2772,7 @@ function App() {
       chunkUnlisten();
       errorUnlisten();
       retryUnlisten();
+      diceUnlisten();
       messageResetUnlisten();
       roundUnlisten();
       plotSummaryUpdatedUnlisten();
@@ -2860,6 +2918,7 @@ function App() {
         )}
       </Show>
       <AnimatedDesktopView
+        diceCard={diceCard()}
         onOpenAgentDebug={() => setIsAgentDebugOpen(true)}
         messages={visibleMessages()}
         activeWorkspace={activeWorkspace()}
@@ -2922,7 +2981,7 @@ function App() {
         characterStateOverlaySummary={characterStateOverlaySummary()}
         characterStateOverlayStatus={characterStateOverlayStatus()}
         characterStateOverlayError={characterStateOverlayError()}
-        memoryMode={selectedConversation()?.memoryMode ?? 'stateless'}
+        memoryMode={selectedConversation()?.memoryMode ?? 'legacy'}
         mem0SnapshotWindow={selectedConversation()?.mem0SnapshotWindow}
         onSnapshotWindowChange={handleSnapshotWindowChange}
         onSaveConversationBindings={handleSaveConversationBindings}

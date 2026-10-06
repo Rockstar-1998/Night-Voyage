@@ -25,9 +25,8 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
 
-  // 运行模式分类架构：传统对话（stateless / legacy）与 Agent 智能体（director_actor / scriptwriter）
+  // 运行模式分类架构：传统对话（legacy）与 Agent 智能体（director_actor / scriptwriter）
   const [dialogueCategory, setDialogueCategory] = createSignal<'classic' | 'agent'>('classic');
-  const [classicSubMode, setClassicSubMode] = createSignal<'stateless' | 'legacy'>('stateless');
   const [agentSubMode, setAgentSubMode] = createSignal<'director_actor' | 'scriptwriter'>('director_actor');
   // MEM0 长期记忆系统：作为独立二元开关（开启 vs 关闭）
   const [mem0Enabled, setMem0Enabled] = createSignal<boolean>(false);
@@ -66,7 +65,6 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setSelectedPresetId(undefined);
     setSelectedOpeningIndex(0);
     setDialogueCategory('classic');
-    setClassicSubMode('stateless');
     setAgentSubMode('director_actor');
     setMem0Enabled(false);
   };
@@ -91,9 +89,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
 
     const isAgent = dialogueCategory() === 'agent';
     const effectiveChatMode: ChatMode = isAgent ? 'director_agents' : 'classic';
-    const effectiveMemoryMode: 'stateless' | 'legacy' | 'mem0' = mem0Enabled()
+    const effectiveMemoryMode: 'legacy' | 'mem0' = mem0Enabled()
       ? 'mem0'
-      : (isAgent ? 'stateless' : classicSubMode());
+      : 'legacy';
 
     const payload: CreateConversationPayload = {
       conversationType: conversationType()!,
@@ -391,31 +389,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
               </span>
 
               <Show when={dialogueCategory() === 'classic'}>
-                <div class="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setClassicSubMode('stateless')}
-                    class={`p-2.5 rounded-xl border text-left transition-all ${
-                      classicSubMode() === 'stateless'
-                        ? 'border-accent/40 bg-accent/15 text-white'
-                        : 'border-white/5 bg-black/20 text-mist-solid/60'
-                    }`}
-                  >
-                    <div class="text-xs font-bold">无状态</div>
-                    <div class="text-[10px] text-mist-solid/40 mt-0.5">纯多轮对话</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setClassicSubMode('legacy')}
-                    class={`p-2.5 rounded-xl border text-left transition-all ${
-                      classicSubMode() === 'legacy'
-                        ? 'border-accent/40 bg-accent/15 text-white'
-                        : 'border-white/5 bg-black/20 text-mist-solid/60'
-                    }`}
-                  >
-                    <div class="text-xs font-bold">传统</div>
-                    <div class="text-[10px] text-mist-solid/40 mt-0.5">剧情总结+变量</div>
-                  </button>
+                <div class="p-2.5 rounded-xl border border-accent/40 bg-accent/15">
+                  <div class="text-xs font-bold text-white">传统 (Legacy)</div>
+                  <div class="text-[10px] text-mist-solid/40 mt-0.5">剧情总结 + 世界变量（2026-10-06 起唯一传统模式）</div>
                 </div>
               </Show>
 

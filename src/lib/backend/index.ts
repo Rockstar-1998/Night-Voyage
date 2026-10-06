@@ -4,6 +4,9 @@
 // Types
 export * from './types';
 
+// Action bridge (M4/M5: ActionButton + Schema card actions)
+export * from './actionBridge';
+
 // Window
 export * from './window';
 

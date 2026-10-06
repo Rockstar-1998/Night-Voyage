@@ -42,7 +42,7 @@ export const ConstantNode: Component<NodeConfigComponentProps<ConstantConfig>> =
           onChange={(e) => update({ source: e.currentTarget.value })}
         >
           <option value="conversation_type">conversation_type（single / online）</option>
-          <option value="memory_mode">memory_mode（stateless / legacy / mem0）</option>
+          <option value="memory_mode">memory_mode（legacy / mem0）</option>
           <option value="protocol">protocol（anthropic / chat_completions）</option>
         </select>
         <p class="text-[10px] text-mist-solid/35 mt-1">

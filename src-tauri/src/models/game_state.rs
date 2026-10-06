@@ -167,7 +167,17 @@ impl DataContainer {
     }
 
     /// 确定性门禁判定
-    pub fn evaluate_condition(&self, gate_type: &str, target_value: f64) -> Result<bool, String> {
+    ///
+    /// `d20`：expression = DC 难度等级；投掷 = CSPRNG d20（`agent_guards::random_d20`），
+    /// 判定 = `roll + modifier >= dc`。`modifier` 取调用参数 `modifier`（缺省 0）。
+    /// 返回值同时通过 `roll_out` 回传实际骰值（供不可篡改检定卡广播）。
+    pub fn evaluate_condition(
+        &self,
+        gate_type: &str,
+        target_value: f64,
+        args: &serde_json::Value,
+        roll_out: &mut Option<i64>,
+    ) -> Result<bool, String> {
         match gate_type {
             "gold" => {
                 let current_gold = self.get_stat("gold");
@@ -181,6 +191,12 @@ impl DataContainer {
             "slots" => {
                 let current_slots = self.inventory.len() as f64;
                 Ok(current_slots < target_value)
+            }
+            "d20" => {
+                let roll = crate::services::agent_guards::random_d20()?;
+                let modifier = args.get("modifier").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                *roll_out = Some(roll);
+                Ok((roll as f64 + modifier) >= target_value)
             }
             other => Err(format!("未知的门禁判定类型: {}", other)),
         }

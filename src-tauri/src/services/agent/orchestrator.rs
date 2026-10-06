@@ -118,6 +118,7 @@ pub async fn assemble_context(
         provider_kind: provider_kind.to_string(),
         model_name: model_name.to_string(),
         include_streaming_seed: false,
+        max_context_tokens: None,
         budget: PromptBudget {
             max_total_tokens: None,
             reserve_output_tokens: None,
@@ -165,6 +166,34 @@ pub async fn run_scriptwriter_pipeline(
         "蓝图缺少 ScriptwriterPipeline 节点，无法运行剧本流水线（请在该预设蓝图中添加）".to_string()
     })?;
 
+    // 阶段提示词消费蓝图 ScriptwriterStage 资产（B7：资产驱动，消除硬编码旁路）；
+    // stages 数组按序执行（stage 名 = drafter/critic/refiner 时与既有行为对齐）。
+    let default_stages = [
+        ("drafter", "初稿", "你是剧本初稿作者。请按设定与用户输入写出这一段的完整正文，只输出正文本身。"),
+        ("critic", "批注", "你是严格的剧本批注者。指出初稿在人物一致性、节奏、逻辑连贯与用词机械感上的具体问题，         逐条给出可执行的修改方向；不要重写正文。"),
+        ("refiner", "润色", "你是剧本润色者。你要在不改变事实与走向的前提下提升文笔，并彻底消除机械感套话。"),
+    ];
+    let stages: Vec<(String, String, String)> = if pipeline_cfg.stages.is_empty() {
+        default_stages
+            .iter()
+            .map(|(stage, label, prompt)| (stage.to_string(), label.to_string(), prompt.to_string()))
+            .collect()
+    } else {
+        pipeline_cfg
+            .stages
+            .iter()
+            .map(|stage| (stage.stage.clone(), format!("阶段 {}", stage.stage), stage.prompt.clone()))
+            .collect()
+    };
+    if stages.len() < 2 {
+        return Err(format!(
+            "ScriptwriterPipeline.stages 至少需要 2 个阶段（当前 {} 个）：draft→critique→refiner 的接力语义无法成立",
+            stages.len()
+        ));
+    }
+
+    // 阶段一：产出初稿（工作区变量 draft，计划 §6.2）
+    let draft_stage = &stages[0];
     let draft = stage_call(
         app,
         db,
@@ -173,26 +202,30 @@ pub async fn run_scriptwriter_pipeline(
         round_id,
         provider,
         system,
-        "初稿",
-        "你是剧本初稿作者。请按设定与用户输入写出这一段的完整正文，只输出正文本身。",
+        &draft_stage.1,
+        &draft_stage.2,
         user_input,
     )
     .await?;
 
-    let critique = stage_call(
-        app,
-        db,
-        run_id,
-        conversation_id,
-        round_id,
-        provider,
-        system,
-        "批注",
-        "你是严格的剧本批注者。指出初稿在人物一致性、节奏、逻辑连贯与用词机械感上的具体问题，\
-         逐条给出可执行的修改方向；不要重写正文。",
-        &draft,
-    )
-    .await?;
+    // 中间阶段（critique 等）：逐阶段接力，上一阶段产出作为下一阶段输入
+    let mut critique = String::new();
+    if stages.len() > 2 {
+        let mid_stage = &stages[1];
+        critique = stage_call(
+            app,
+            db,
+            run_id,
+            conversation_id,
+            round_id,
+            provider,
+            system,
+            &mid_stage.1,
+            &mid_stage.2,
+            &draft,
+        )
+        .await?;
+    }
 
     // 尾锚：只保留初稿末尾 N 字（节点资产 anchor_tail_chars），头部用涂黑标记
     // （节点资产 blackout_marker），避免润色时重写既有事实。
@@ -201,13 +234,23 @@ pub async fn run_scriptwriter_pipeline(
         let start = chars.len().saturating_sub(pipeline_cfg.anchor_tail_chars as usize);
         chars[start..].iter().collect()
     };
-    let refine_user = format!(
-        "{}\n{tail_anchor}\n\n\
-         【批注意见】\n{critique}\n\n\
-         请依据批注重写这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。",
+    let mut refine_user = format!(
+        "{}
+{tail_anchor}
+
+",
         pipeline_cfg.blackout_marker
     );
+    if !critique.is_empty() {
+        refine_user.push_str(&format!("【批注意见】
+{critique}
 
+"));
+    }
+    refine_user.push_str("请依据批注重写这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。");
+
+    // 末阶段：润色定稿
+    let last_stage = &stages[stages.len() - 1];
     let final_text = stage_call(
         app,
         db,
@@ -216,14 +259,45 @@ pub async fn run_scriptwriter_pipeline(
         round_id,
         provider,
         system,
-        "润色",
-        "你是剧本润色者。你要在不改变事实与走向的前提下提升文笔，并彻底消除机械感套话。",
+        &last_stage.1,
+        &last_stage.2,
         &refine_user,
     )
     .await?;
 
     record_run_finish(db, run_id, "completed").await?;
     Ok(final_text)
+}
+
+/// 禁词 Nudge 单趟重写（计划 §6.3）：以驳回意见为指令，单模型调用重写整段终稿。
+/// 仅重写正文——不重跑整个多阶段流水线（成本/时延约束），语义等价于"注入合成
+/// Critic Nudge 后的重写指令"。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_scriptwriter_nudge_pass(
+    app: &AppHandle,
+    db: &SqlitePool,
+    conversation_id: i64,
+    round_id: i64,
+    provider: &ApiProvider,
+    system: &[String],
+    rewrite_input: &str,
+) -> Result<String, String> {
+    let run_id = record_run_start(db, conversation_id, round_id, "scriptwriter_nudge").await?;
+    let text = stage_call(
+        app,
+        db,
+        run_id,
+        conversation_id,
+        round_id,
+        provider,
+        system,
+        "禁词自纠",
+        "你是剧本润色者。上一版终稿被禁词门禁驳回，请按指令重写完整正文，只输出重写后的正文。",
+        rewrite_input,
+    )
+    .await;
+    let _ = record_run_finish(db, run_id, if text.is_ok() { "completed" } else { "failed" }).await;
+    text
 }
 
 /// 单阶段子角色调用 + 落 `agent_drafts` + 发时序事件。

@@ -215,6 +215,7 @@ pub async fn load_blueprint_gates(
             NodeConfig::ConditionGate(_) => None,
             NodeConfig::ToolReturn(_) => None,
             NodeConfig::Inspector(_) => None,
+            NodeConfig::Writer(_) => None,
             NodeConfig::Querier(_) => None,
             NodeConfig::BannedWordsConfig(_) => None,
             NodeConfig::ScriptwriterPipeline(_) => None,
@@ -290,7 +291,7 @@ pub async fn preview_blueprint_with_session(
         )
     })?;
 
-    let mut memory_mode = "stateless".to_string();
+    let mut memory_mode = "legacy".to_string();
     let mut conversation_type = "single".to_string();
     let mut protocol = "chat_completions".to_string();
     let mut char_name: Option<String> = None;
@@ -444,6 +445,9 @@ pub async fn preview_blueprint_with_session(
                     }
                     crate::models::tool_plan::ToolStep::Query(cfg) => {
                         format!("query: {} (白名单命令)", cfg.command)
+                    }
+                    crate::models::tool_plan::ToolStep::Write(cfg) => {
+                        format!("write: {} <= {}", cfg.key_expr, cfg.value_template)
                     }
                 })
                 .collect(),

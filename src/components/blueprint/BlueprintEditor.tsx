@@ -248,6 +248,8 @@ function defaultConfigForType(type: NodeType): NodeConfig {
       return { type: 'inspector', config: { inspect_kind: 'inventory', key_expr: '', is_locked: false } };
     case 'querier':
       return { type: 'querier', config: { command: '', args_template: {}, is_locked: false } };
+    case 'writer':
+      return { type: 'writer', config: { key_expr: '', value_template: '', is_locked: false } };
     case 'banned_words_config':
       return { type: 'banned_words_config', config: { words: [], max_nudge_retries: 2, nudge_instruction_template: '', is_locked: false } };
     case 'scriptwriter_pipeline':

@@ -2,7 +2,7 @@
  * ModeSwitch node config editor (Task 9).
  *
  * Edits a ModeSwitchConfig: just `label`. The three outlet ports
- * (out_legacy / out_mem0 / out_stateless) are fixed by the node type and
+ * (out_legacy / out_mem0 / out_stateless[deprecated]) are fixed by the node type and
  * cannot be edited here — they are listed as a read-only reference so the
  * user knows which downstream branch each port maps to.
  *
@@ -23,7 +23,7 @@ const LABEL_CLASS = 'text-[10px] text-mist-solid/40 uppercase tracking-widest';
 const PORTS: ReadonlyArray<{ port: string; desc: string }> = [
   { port: 'out_legacy', desc: '传统模式（完整历史拼接）' },
   { port: 'out_mem0', desc: 'MEM0 模式（外部记忆检索）' },
-  { port: 'out_stateless', desc: '无状态模式（不注入历史）' },
+  { port: 'out_stateless', desc: '（已并入 legacy，旧图兼容）' },
 ];
 
 export const ModeSwitchNode: Component<NodeConfigComponentProps<ModeSwitchConfig>> = (props) => {

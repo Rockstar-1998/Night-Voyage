@@ -896,7 +896,7 @@ async fn load_conversation_summary(
             .unwrap_or_else(|_| "shared_host_provider".to_string()),
         memory_mode: row
             .try_get("memory_mode")
-            .unwrap_or_else(|_| "stateless".to_string()),
+            .unwrap_or_else(|_| "legacy".to_string()),
         mem0_snapshot_window: row
             .try_get("mem0_snapshot_window")
             .unwrap_or(20),

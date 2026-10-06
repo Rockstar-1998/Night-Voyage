@@ -9,7 +9,7 @@ setlocal
 :: All resource limits removed for maximum build speed.
 :: ========================================
 
-set "ROOT=D:\data\Night Voyage"
+set "ROOT=%~dp0.."
 set "CACHE_DIR=%ROOT%\.cache"
 set "CARGO_HOME=%CACHE_DIR%\.cargo"
 :: Expose cargo/rustc binaries to PATH so `tauri build` (which spawns

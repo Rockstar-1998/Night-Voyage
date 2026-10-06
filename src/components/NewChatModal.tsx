@@ -28,9 +28,8 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
   const [selectedOpeningIndex, setSelectedOpeningIndex] = createSignal<number>(0);
   const [selectedPresetId, setSelectedPresetId] = createSignal<number | undefined>();
 
-  // 运行模式分类架构：传统对话（stateless / legacy）与 Agent 智能体（director_actor / scriptwriter）
+  // 运行模式分类架构：传统对话（legacy）与 Agent 智能体（director_actor / scriptwriter）
   const [dialogueCategory, setDialogueCategory] = createSignal<'classic' | 'agent'>('classic');
-  const [classicSubMode, setClassicSubMode] = createSignal<'stateless' | 'legacy'>('stateless');
   const [agentSubMode, setAgentSubMode] = createSignal<'director_actor' | 'scriptwriter'>('director_actor');
   // MEM0 长期记忆系统：作为独立二元开关（开启 vs 关闭）
   const [mem0Enabled, setMem0Enabled] = createSignal<boolean>(false);
@@ -88,7 +87,6 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
     setSelectedOpeningIndex(0);
     setSelectedPresetId(undefined);
     setDialogueCategory('classic');
-    setClassicSubMode('stateless');
     setAgentSubMode('director_actor');
     setMem0Enabled(false);
   };
@@ -117,9 +115,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
 
     const isAgent = dialogueCategory() === 'agent';
     const effectiveChatMode: ChatMode = isAgent ? 'director_agents' : 'classic';
-    const effectiveMemoryMode: 'stateless' | 'legacy' | 'mem0' = mem0Enabled()
+    const effectiveMemoryMode: 'legacy' | 'mem0' = mem0Enabled()
       ? 'mem0'
-      : (isAgent ? 'stateless' : classicSubMode());
+      : 'legacy';
 
     const payload: CreateConversationPayload = {
       conversationType: conversationType()!,
@@ -181,9 +179,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
 
       const isAgent = dialogueCategory() === 'agent';
       const effectiveChatMode: ChatMode = isAgent ? 'director_agents' : 'classic';
-      const effectiveMemoryMode: 'stateless' | 'legacy' | 'mem0' = mem0Enabled()
+      const effectiveMemoryMode: 'legacy' | 'mem0' = mem0Enabled()
         ? 'mem0'
-        : (isAgent ? 'stateless' : classicSubMode());
+        : 'legacy';
 
       const payload: CreateConversationPayload = {
         conversationType: conversationType()!,
@@ -545,31 +543,9 @@ export const NewChatModal: Component<NewChatModalProps> = (props) => {
                       </div>
 
                       <Show when={dialogueCategory() === 'classic'}>
-                        <div class="grid grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setClassicSubMode('stateless')}
-                            class={`p-3 rounded-lg border text-left transition-all ${
-                              classicSubMode() === 'stateless'
-                                ? 'border-accent/50 bg-accent/15 text-white'
-                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
-                            }`}
-                          >
-                            <div class="text-xs font-bold">无状态 (Stateless)</div>
-                            <div class="text-[10px] text-mist-solid/40 mt-1">纯多轮对话上下文，轻量快捷</div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setClassicSubMode('legacy')}
-                            class={`p-3 rounded-lg border text-left transition-all ${
-                              classicSubMode() === 'legacy'
-                                ? 'border-accent/50 bg-accent/15 text-white'
-                                : 'border-white/5 bg-white/5 text-mist-solid/60 hover:text-mist-solid'
-                            }`}
-                          >
-                            <div class="text-xs font-bold">传统 (Legacy)</div>
-                            <div class="text-[10px] text-mist-solid/40 mt-1">滑动窗口总结 + 剧情摘要与世界变量</div>
-                          </button>
+                        <div class="p-3 rounded-lg border border-accent/50 bg-accent/15">
+                          <div class="text-xs font-bold text-white">传统 (Legacy)</div>
+                          <div class="text-[10px] text-mist-solid/40 mt-1">经典多轮对话上下文：历史注入 + 剧情摘要与世界变量（2026-10-06 起唯一传统模式）</div>
                         </div>
                       </Show>
 

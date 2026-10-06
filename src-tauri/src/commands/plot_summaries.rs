@@ -38,7 +38,7 @@ pub async fn plot_summaries_upsert_manual(
 
 /// Deprecated: forwards to `memory_mode_set`. Use `memory_mode_set` directly.
 /// DEPRECATED: legacy forwarding from old plot_summary_mode API.
-/// Maps: "disabled" → "stateless", "ai"/"manual" → "legacy".
+/// Maps: "disabled"/"ai"/"manual" → "legacy"（2026-10-06 stateless 并入 legacy）.
 /// No longer called from UI; kept for backward compatibility.
 #[tauri::command]
 pub async fn plot_summaries_update_mode(
@@ -48,11 +48,7 @@ pub async fn plot_summaries_update_mode(
     plot_summary_mode: String,
 ) -> Result<String, String> {
     let normalized_mode = normalize_plot_summary_mode(&plot_summary_mode)?;
-    let memory_mode = if normalized_mode == "disabled" {
-        "stateless"
-    } else {
-        "legacy"
-    };
+    let memory_mode = "legacy";
     crate::commands::mem0::memory_mode_set(state, conversation_id, memory_mode.to_string()).await?;
     Ok(normalized_mode)
 }

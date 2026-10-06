@@ -52,6 +52,8 @@ pub struct PromptCompileInput {
     pub model_name: String,
     pub include_streaming_seed: bool,
     pub budget: PromptBudget,
+    /// API 档案的上下文窗口上限（LEGACY 模式 Token 预算滑动截断的预算来源，计划 §1.1）。
+    pub max_context_tokens: Option<i64>,
     /// Optional log directory for intermediate LLM request logging (e.g. MEM0 search).
     /// When set, intermediate requests are logged to `{log_dir}/llm_debug_logs/`.
     pub log_dir: Option<std::path::PathBuf>,
@@ -510,13 +512,17 @@ const MAX_WORLD_BOOK_TRIGGER_HISTORY_BLOCKS: usize = 6;
 const MAX_WORLD_BOOK_BLOCKS: usize = 8;
 const DEFAULT_MAX_WORLD_BOOK_TOKENS: usize = 512;
 
-pub const MEMORY_MODE_STATELESS: &str = "stateless";
+/// 记忆模式（2026-10-06 合并裁定）：原 stateless 并入 legacy——两者同属
+/// "经典单次对话流"，仅保留 LEGACY 与 MEM0 两态。
+pub const MEMORY_MODE_STATELESS: &str = MEMORY_MODE_LEGACY;
+/// MEM0 全局 user_id（计划 §1.1 "跨会话"语义：所有 mem0 会话共享同一记忆池）
+pub const MEM0_GLOBAL_USER_ID: &str = "night_voyage_global";
 pub const MEMORY_MODE_LEGACY: &str = "legacy";
 pub const MEMORY_MODE_MEM0: &str = "mem0";
 
 /// Load the per-conversation memory mode. Defaults to `stateless` on any error
 /// or missing row so the feature degrades safely.
-/// Recognised values: "mem0", "legacy", anything else → "stateless".
+/// Recognised values: "mem0", "legacy"; anything else（含旧 "stateless"）→ "legacy"。
 pub async fn load_memory_mode(db: &SqlitePool, conversation_id: i64) -> String {
     sqlx::query_scalar::<_, String>(
         "SELECT memory_mode FROM conversations WHERE id = ? LIMIT 1",
@@ -703,18 +709,19 @@ pub async fn compile_prompt(
         .map(|sel| (sel.node_id, GateSelection { keys: sel.selected_keys }))
         .collect();
     let mut preset_schemas = HashMap::new();
-    if let Ok(rows) = sqlx::query(
+    // C2：装载失败上抛而非静默空 map——空 map 会让所有 InvokeSchema 集体哑火；
+    // 单条 schema 反序列化失败同样硬错（坏资产必须被看见）。
+    let schema_rows = sqlx::query(
         "SELECT id, preset_id, name, description, retention_depth, fields_json, created_at, updated_at \
-         FROM preset_schemas WHERE preset_id = ?"
+         FROM preset_schemas WHERE preset_id = ?",
     )
     .bind(preset_id)
     .fetch_all(db)
-    .await {
-        for row in rows {
-            if let Ok(schema_def) = crate::models::schema::SchemaDefinition::from_row(&row) {
-                preset_schemas.insert(schema_def.id.clone(), schema_def);
-            }
-        }
+    .await
+    .map_err(|err| format!("加载预设 Schema 资产失败: {}", err).replace('\\', "/"))?;
+    for row in schema_rows {
+        let schema_def = crate::models::schema::SchemaDefinition::from_row(&row)?;
+        preset_schemas.insert(schema_def.id.clone(), schema_def);
     }
 
     let game_state: Option<crate::models::game_state::DataContainer> = {
@@ -884,6 +891,7 @@ pub async fn compile_prompt(
                         "hideLabel": v.hide_label,
                         "body": v.body,
                         "order": field_order,
+                        "hidden": v.hidden,
                     }),
                 )
             })
@@ -992,11 +1000,13 @@ pub async fn compile_prompt(
         (Vec::new(), HashSet::new())
     };
 
-    // RecentHistory gating:
+    // RecentHistory gating（计划 §1.1 三态记忆）：
     // - mem0: 0-round recent history window (context via RetrievedDetail),
     //         but the opening message is always injected below as foundational scene context
-    // - legacy / stateless: full history (summarized_round_ids empty for stateless)
-    let history_blocks = if mem0_active {
+    // - stateless: 单回合纯净上下文——不读取也不累加任何长程历史消息（开头场次由
+    //         ensure_opening_in_history 单独注入，不属于长程历史）
+    // - legacy: full history + Token 预算滑动截断（apply_budget_trim）
+    let history_blocks = if mem0_active || memory_mode == MEMORY_MODE_STATELESS {
         Vec::new()
     } else {
         dbg_eprintln!(
@@ -1189,7 +1199,16 @@ pub async fn compile_prompt(
     };
 
     result.debug.total_token_estimate_before_trim = total_estimated_tokens(&result);
-    apply_budget_trim(&mut result, &input.budget);
+    // 计划 §1.1 LEGACY"基于 Token 预算的滑动截断"：预算来源 = API 档案的
+    // max_context_tokens（此前恒为 None → 截断死代码，历史全量注入）。
+    // reserve_output_tokens（模型输出上限）与 10% 安全余量由 apply_budget_trim 内扣。
+    let mut effective_budget = input.budget.clone();
+    if effective_budget.max_total_tokens.is_none()
+        && memory_mode == MEMORY_MODE_LEGACY
+    {
+        effective_budget.max_total_tokens = input.max_context_tokens.and_then(|v| usize::try_from(v).ok());
+    }
+    apply_budget_trim(&mut result, &effective_budget);
     result.debug.total_token_estimate_after_trim = total_estimated_tokens(&result);
     result.debug.final_block_order = build_final_block_order(&result);
 
@@ -1221,6 +1240,7 @@ pub async fn compile_token_usage_report(
         provider_kind: provider_kind.clone(),
         model_name: String::new(),
         include_streaming_seed: false,
+        max_context_tokens: None,
         budget: PromptBudget::default(),
         log_dir: None,
         ephemeral_instruction: None,
@@ -2700,7 +2720,8 @@ async fn load_retrieved_detail_blocks(
         .unwrap_or_else(|| detail_query.to_string());
     let plot_query = "近期剧情进展、重要事件、委托状态、场景变化";
 
-    let user_id = conversation_id.to_string();
+    // 计划 §1.1 MEM0"跨会话"：与写入路径同全局 user_id
+    let user_id = MEM0_GLOBAL_USER_ID.to_string();
     let per_strategy_top_k = 3;
 
     let mut all_records = Vec::new();

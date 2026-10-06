@@ -89,7 +89,7 @@ pub async fn conversations_list(
                 .unwrap_or_else(|_| "shared_host_provider".to_string()),
             memory_mode: row
                 .try_get("memory_mode")
-                .unwrap_or_else(|_| "stateless".to_string()),
+                .unwrap_or_else(|_| "legacy".to_string()),
             mem0_snapshot_window: row
                 .try_get("mem0_snapshot_window")
                 .unwrap_or(20),
@@ -900,7 +900,7 @@ async fn conversations_get_by_id(
             .unwrap_or_else(|_| "shared_host_provider".to_string()),
         memory_mode: row
             .try_get("memory_mode")
-            .unwrap_or_else(|_| "stateless".to_string()),
+            .unwrap_or_else(|_| "legacy".to_string()),
         mem0_snapshot_window: row
             .try_get("mem0_snapshot_window")
             .unwrap_or(20),
@@ -1077,9 +1077,9 @@ fn normalize_agent_provider_policy(value: Option<&str>) -> Result<String, String
 }
 
 fn normalize_memory_mode(value: Option<&str>) -> Result<String, String> {
-    match value.unwrap_or("stateless") {
-        "stateless" | "legacy" | "mem0" => Ok(value.unwrap_or("stateless").to_string()),
-        _ => Err("memoryMode 必须是 'stateless', 'legacy' 或 'mem0'".to_string()),
+    match value.unwrap_or("legacy") {
+        "legacy" | "mem0" => Ok(value.unwrap_or("legacy").to_string()),
+        _ => Err("memoryMode 必须是 'legacy' 或 'mem0'".to_string()),
     }
 }
 

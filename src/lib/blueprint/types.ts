@@ -36,6 +36,7 @@ export const NODE_TYPES = [
   'condition_gate',
   'tool_return',
   'inspector',
+  'writer',
   'querier',
   'banned_words_config',
   'scriptwriter_pipeline',
@@ -261,6 +262,12 @@ export interface InspectorConfig {
   is_locked: boolean;
 }
 
+export interface WriterConfig {
+  key_expr: string;
+  value_template: string;
+  is_locked: boolean;
+}
+
 export interface QuerierConfig {
   command: string;
   args_template: Record<string, unknown>;
@@ -329,6 +336,7 @@ export type NodeConfig =
   | { type: 'condition_gate'; config: ConditionGateConfig }
   | { type: 'tool_return'; config: ToolReturnConfig }
   | { type: 'inspector'; config: InspectorConfig }
+  | { type: 'writer'; config: WriterConfig }
   | { type: 'querier'; config: QuerierConfig }
   | { type: 'banned_words_config'; config: BannedWordsConfig }
   | { type: 'scriptwriter_pipeline'; config: ScriptwriterPipelineConfig }
@@ -376,7 +384,7 @@ export interface GateSelection {
 }
 
 export interface BlueprintExecutionContext {
-  memoryMode: 'legacy' | 'mem0' | 'stateless';
+  memoryMode: 'legacy' | 'mem0';
   conversationType: 'single' | 'online';
   protocol: string;
   gateSelections: Record<string, GateSelection>;

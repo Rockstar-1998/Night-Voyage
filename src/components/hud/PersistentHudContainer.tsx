@@ -597,6 +597,7 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
                     <LayoutTreeNode
                       node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }}
                       snapshot={hudSnapshot()}
+                      conversationId={props.sessionId}
                     />
                   </div>
                 </Show>

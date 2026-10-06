@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createEffect, createResource, createSignal } from 'solid-js';
 import type {
   LayoutContainer,
   LayoutMountType,
@@ -13,6 +13,7 @@ import {
   presetUiLayoutList,
   presetUiLayoutSave,
 } from '../../lib/backend/ui_layout';
+import { presetSchemasList } from '../../lib/backend/schema';
 import { LayoutTreeNode } from '../hud/LayoutTreeNode';
 import type { HudSnapshot } from '../../lib/hud/layoutBinding';
 
@@ -42,6 +43,7 @@ const WIDGET_TYPES: Array<{ value: WidgetType; label: string }> = [
   { value: 'inventorySlotGrid', label: '背包网格 InventorySlotGrid' },
   { value: 'badge', label: '徽标 Badge' },
   { value: 'avatarFrame', label: '形象框 AvatarFrame' },
+  { value: 'actionButton', label: '动作按钮 ActionButton' },
 ];
 
 let uid = 0;
@@ -58,7 +60,27 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
   const [message, setMessage] = createSignal<{ text: string; isError: boolean } | null>(null);
   const [busy, setBusy] = createSignal(false);
 
+  // 结果卡 Schema 下拉的真实数据源（C11：可选值来自 preset_schemas 资产，不硬编码）
+  const [schemaOptions] = createResource(
+    () => props.presetId,
+    async (presetId) => {
+      try {
+        return await presetSchemasList(presetId);
+      } catch {
+        return [];
+      }
+    },
+  );
+
   const report = (text: string, isError = false) => setMessage({ text, isError });
+
+  // 打开即加载布局列表（与 SchemaEditorModal 同语义）：否则"已有布局"恒显 0，
+  // 创作者会误以为该预设没有任何定义。
+  createEffect(() => {
+    if (props.isOpen) {
+      void refresh();
+    }
+  });
 
   const refresh = async () => {
     setBusy(true);
@@ -109,37 +131,67 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
 
   const patchChildren = (children: LayoutNode[]) => patchRoot({ children });
 
-  const addContainer = () => {
+  const addContainer = (kind: 'panel' | 'tabs' | 'grid' = 'panel') => {
     const base = current();
     if (!base) return;
     patchChildren([
-      ...base.rootContainer.children,
+      ...(base.rootContainer.children ?? []),
       {
         nodeType: 'container',
-        id: nextId('panel'),
-        kind: 'panel',
+        id: nextId(kind),
+        kind,
+        layoutMode: kind === 'grid' ? 'grid' : 'flex',
         x: 0,
         y: 0,
         width: 200,
         height: 120,
-        style: {},
+        style: kind === 'grid' ? { columns: '2' } : {},
         children: [],
       } as LayoutNode,
     ]);
+  };
+
+  const appendChildInto = (containerIndex: number, newNode: LayoutNode) => {
+    patchChild(containerIndex, (node) => {
+      if (node.nodeType !== 'container') return node;
+      const container = node as LayoutContainer;
+      return {
+        ...container,
+        nodeType: 'container',
+        children: [...(container.children ?? []), newNode],
+      };
+    });
+  };
+
+  const removeNestedChild = (containerIndex: number, childIndex: number) => {
+    patchChild(containerIndex, (node) => {
+      if (node.nodeType !== 'container') return node;
+      const container = node as LayoutContainer;
+      return {
+        ...container,
+        nodeType: 'container',
+        children: (container.children ?? []).filter((_, i) => i !== childIndex),
+      };
+    });
   };
 
   const addWidget = (widgetType: WidgetType) => {
     const base = current();
     if (!base) return;
     patchChildren([
-      ...base.rootContainer.children,
+      ...(base.rootContainer.children ?? []),
       {
         nodeType: 'widget',
         id: nextId('widget'),
         widgetType,
         label: WIDGET_TYPES.find((item) => item.value === widgetType)?.label ?? widgetType,
         dataBinding: widgetType === 'inventorySlotGrid' ? 'inventory' : 'stats.hp',
-        config: widgetType === 'inventorySlotGrid' ? { columns: 4 } : {},
+        config:
+          widgetType === 'inventorySlotGrid'
+            ? { columns: 4 }
+            : widgetType === 'actionButton'
+              ? { command: '', args_template: {}, result_schema_id: '' }
+              : {},
         style: {},
       } as LayoutNode,
     ]);
@@ -148,7 +200,7 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
   const patchChild = (index: number, updater: (node: LayoutNode) => LayoutNode) => {
     const base = current();
     if (!base) return;
-    const next = base.rootContainer.children.slice();
+    const next = (base.rootContainer.children ?? []).slice();
     next[index] = updater(next[index]);
     patchChildren(next);
   };
@@ -156,7 +208,7 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
   const removeChild = (index: number) => {
     const base = current();
     if (!base) return;
-    patchChildren(base.rootContainer.children.filter((_, i) => i !== index));
+    patchChildren((base.rootContainer.children ?? []).filter((_, i) => i !== index));
   };
 
   const save = async () => {
@@ -286,14 +338,43 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
 
                     <div class="grid grid-cols-2 gap-3">
                       <div>
-                        <div class={LABEL}>根画布宽度 (px)</div>
+                        <div class={LABEL}>根画布宽度 (PX)</div>
                         <input type="number" class={INPUT} value={layout().rootContainer.width} onInput={(e) => patchRoot({ width: Number(e.currentTarget.value) })} />
                       </div>
                       <div>
-                        <div class={LABEL}>根画布高度 (px)</div>
+                        <div class={LABEL}>根画布高度 (PX)</div>
                         <input type="number" class={INPUT} value={layout().rootContainer.height} onInput={(e) => patchRoot({ height: Number(e.currentTarget.value) })} />
                       </div>
                     </div>
+
+                    {/* 排版模式 + 自由坐标（计划 §4.1 Absolute 排版） */}
+                    <div class="grid grid-cols-3 gap-3">
+                      <div>
+                        <div class={LABEL}>排版模式 (LAYOUT_MODE)</div>
+                        <select
+                          class={INPUT}
+                          value={layout().rootContainer.layoutMode ?? 'flex'}
+                          onChange={(e) => patchRoot({ layoutMode: e.currentTarget.value })}
+                        >
+                          <option value="flex">flex（纵向流式）</option>
+                          <option value="absolute">absolute（自由坐标）</option>
+                          <option value="grid">grid（网格）</option>
+                        </select>
+                      </div>
+                      <div>
+                        <div class={LABEL}>画布 X (px)</div>
+                        <input type="number" class={INPUT} value={layout().rootContainer.x} onInput={(e) => patchRoot({ x: Number(e.currentTarget.value) })} />
+                      </div>
+                      <div>
+                        <div class={LABEL}>画布 Y (px)</div>
+                        <input type="number" class={INPUT} value={layout().rootContainer.y} onInput={(e) => patchRoot({ y: Number(e.currentTarget.value) })} />
+                      </div>
+                    </div>
+                    <Show when={layout().rootContainer.layoutMode === 'absolute'}>
+                      <p class="text-[10px] text-amber-300/70">
+                        absolute 模式：子元素按各自 x/y 自由坐标定位。子元素需在下方填写 x/y 坐标（缺省 0,0 会叠在左上角）。
+                      </p>
+                    </Show>
 
                     <div>
                       <div class={LABEL}>自定义 CSS（仅在本面板的 Shadow DOM 内生效）</div>
@@ -306,9 +387,15 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                       />
                     </div>
 
-                    <div class="flex items-center gap-2">
-                      <button class="rounded border border-white/15 px-2 py-1 text-[11px] text-mist-solid hover:border-accent" onClick={addContainer}>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button class="rounded border border-white/15 px-2 py-1 text-[11px] text-mist-solid hover:border-accent" onClick={() => addContainer('panel')}>
                         + 容器 Panel
+                      </button>
+                      <button class="rounded border border-white/15 px-2 py-1 text-[11px] text-mist-solid hover:border-accent" onClick={() => addContainer('tabs')} title="标签页容器（角色属性|背包道具|任务日志 分页）">
+                        + 标签页 Tabs
+                      </button>
+                      <button class="rounded border border-white/15 px-2 py-1 text-[11px] text-mist-solid hover:border-accent" onClick={() => addContainer('grid')} title="网格容器（style.columns 控制列数）">
+                        + 网格 Grid
                       </button>
                       <For each={WIDGET_TYPES}>
                         {(widget) => (
@@ -320,7 +407,7 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                     </div>
 
                     <div class="space-y-2">
-                      <div class={LABEL}>根画布下的元素 ({layout().rootContainer.children.length})</div>
+                      <div class={LABEL}>根画布下的元素 ({layout().rootContainer.children?.length ?? 0})</div>
                       <For each={layout().rootContainer.children}>
                         {(child, index) => (
                           <div class="space-y-2 rounded border border-white/10 p-2">
@@ -332,7 +419,7 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                             </div>
 
                             <Show when={child.nodeType === 'container'}>
-                              <div class="grid grid-cols-4 gap-2">
+                              <div class="grid grid-cols-3 gap-2">
                                 <div>
                                   <div class={LABEL}>容器类型</div>
                                   <select
@@ -341,9 +428,42 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                                     onChange={(e) => patchChild(index(), (node) => ({ ...(node as LayoutContainer), kind: e.currentTarget.value as LayoutContainer['kind'], nodeType: 'container' }))}
                                   >
                                     <option value="panel">panel</option>
-                                    <option value="tabs">tabs</option>
-                                    <option value="grid">grid</option>
+                                    <option value="tabs">tabs（标签页）</option>
+                                    <option value="grid">grid（网格）</option>
                                   </select>
+                                </div>
+                                <div>
+                                  <div class={LABEL}>排版模式</div>
+                                  <select
+                                    class={INPUT}
+                                    value={(child as LayoutContainer).layoutMode ?? 'flex'}
+                                    onChange={(e) => patchChild(index(), (node) => ({ ...(node as LayoutContainer), layoutMode: e.currentTarget.value, nodeType: 'container' }))}
+                                  >
+                                    <option value="flex">flex（纵向流式）</option>
+                                    <option value="absolute">absolute（自由坐标）</option>
+                                    <option value="grid">grid（网格）</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <div class={LABEL}>网格列数（grid 模式）</div>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    class={INPUT}
+                                    value={Number((child as LayoutContainer).style?.columns ?? 2)}
+                                    onInput={(e) => patchChild(index(), (node) => {
+                                      const container = node as LayoutContainer;
+                                      return { ...container, nodeType: 'container', style: { ...(container.style ?? {}), columns: e.currentTarget.value } };
+                                    })}
+                                  />
+                                </div>
+                                <div>
+                                  <div class={LABEL}>X (px)</div>
+                                  <input type="number" class={INPUT} value={(child as LayoutContainer).x} onInput={(e) => patchChild(index(), (node) => ({ ...(node as LayoutContainer), x: Number(e.currentTarget.value), nodeType: 'container' }))} />
+                                </div>
+                                <div>
+                                  <div class={LABEL}>Y (px)</div>
+                                  <input type="number" class={INPUT} value={(child as LayoutContainer).y} onInput={(e) => patchChild(index(), (node) => ({ ...(node as LayoutContainer), y: Number(e.currentTarget.value), nodeType: 'container' }))} />
                                 </div>
                                 <div>
                                   <div class={LABEL}>宽</div>
@@ -368,6 +488,33 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                                     <option value="end">end</option>
                                   </select>
                                 </div>
+                              </div>
+
+                              {/* 嵌套子元素编辑（计划 §4.1 多层容器嵌套） */}
+                              <div class="mt-2 space-y-1 rounded border border-white/10 p-2">
+                                <div class="flex items-center justify-between">
+                                  <span class="text-[10px] text-mist-solid/50">嵌套子元素 ({(child as LayoutContainer).children?.length ?? 0})</span>
+                                  <div class="flex gap-1">
+                                    <button class="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-mist-solid hover:border-accent" onClick={() => appendChildInto(index(), { nodeType: 'widget', id: nextId('widget'), widgetType: 'dataLabel', label: '数据标签', dataBinding: 'stats.hp', config: {}, style: {} } as LayoutNode)}>
+                                      + 控件
+                                    </button>
+                                    <button class="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-mist-solid hover:border-accent" onClick={() => appendChildInto(index(), { nodeType: 'container', id: nextId('panel'), kind: 'panel', layoutMode: 'flex', x: 0, y: 0, width: 120, height: 80, style: {}, children: [] } as LayoutNode)}>
+                                      + 容器
+                                    </button>
+                                  </div>
+                                </div>
+                                <For each={(child as LayoutContainer).children ?? []}>
+                                  {(nested, nestedIdx) => (
+                                    <div class="flex items-center gap-2 rounded border border-white/5 px-2 py-1">
+                                      <span class="min-w-0 flex-1 truncate text-[10px] text-mist-solid/60">
+                                        {nested.nodeType === 'container' ? `容器 · ${(nested as LayoutContainer).kind}` : `控件 · ${(nested as WidgetDefinition).widgetType} · ${(nested as WidgetDefinition).label}`}
+                                      </span>
+                                      <button class="text-[10px] text-rose-300 hover:text-rose-200" onClick={() => removeNestedChild(index(), nestedIdx())}>
+                                        删除
+                                      </button>
+                                    </div>
+                                  )}
+                                </For>
                               </div>
                             </Show>
 
@@ -397,6 +544,135 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                                   </select>
                                 </div>
                               </div>
+
+                              {/* 控件保真字段（计划 §4.1 原子控件库） */}
+                              <Show when={(child as WidgetDefinition).widgetType === 'statBar'}>
+                                <div class="mt-2 grid grid-cols-3 gap-2 rounded border border-accent/30 bg-accent/5 p-2">
+                                  <div>
+                                    <div class={LABEL}>进度条颜色</div>
+                                    <input class={INPUT} value={String((child as WidgetDefinition).config?.bar_color ?? '#38bdf8')} onInput={(e) => patchChild(index(), (node) => { const w = node as WidgetDefinition; return { ...w, nodeType: 'widget', config: { ...(w.config ?? {}), bar_color: e.currentTarget.value } }; })} />
+                                  </div>
+                                  <div>
+                                    <div class={LABEL}>条厚/高度 (px)</div>
+                                    <input type="number" class={INPUT} value={Number((child as WidgetDefinition).config?.bar_thickness ?? 5)} onInput={(e) => patchChild(index(), (node) => { const w = node as WidgetDefinition; return { ...w, nodeType: 'widget', config: { ...(w.config ?? {}), bar_thickness: Number(e.currentTarget.value) } }; })} />
+                                  </div>
+                                  <div>
+                                    <div class={LABEL}>方向</div>
+                                    <select class={INPUT} value={String((child as WidgetDefinition).config?.vertical ?? '')} onChange={(e) => patchChild(index(), (node) => { const w = node as WidgetDefinition; return { ...w, nodeType: 'widget', config: { ...(w.config ?? {}), vertical: e.currentTarget.value === 'vertical' } }; })}>
+                                      <option value="">水平</option>
+                                      <option value="vertical">垂直</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              </Show>
+                              <Show when={(child as WidgetDefinition).widgetType === 'badge'}>
+                                <div class="mt-2 grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-2">
+                                  <div>
+                                    <div class={LABEL}>徽标底色</div>
+                                    <input class={INPUT} value={String((child as WidgetDefinition).config?.badge_background ?? 'rgba(56,189,248,0.15)')} onInput={(e) => patchChild(index(), (node) => { const w = node as WidgetDefinition; return { ...w, nodeType: 'widget', config: { ...(w.config ?? {}), badge_background: e.currentTarget.value } }; })} />
+                                  </div>
+                                  <div>
+                                    <div class={LABEL}>徽标文字色</div>
+                                    <input class={INPUT} value={String((child as WidgetDefinition).config?.badge_color ?? '#7dd3fc')} onInput={(e) => patchChild(index(), (node) => { const w = node as WidgetDefinition; return { ...w, nodeType: 'widget', config: { ...(w.config ?? {}), badge_color: e.currentTarget.value } }; })} />
+                                  </div>
+                                </div>
+                              </Show>
+                              <Show when={(child as WidgetDefinition).widgetType === 'avatarFrame'}>
+                                <div class="mt-2 rounded border border-accent/30 bg-accent/5 p-2">
+                                  <div class={LABEL}>Buff 提示：flags 中以 buff_ 开头的键会自动渲染为 Buff 徽标（如 buff_潜行）</div>
+                                </div>
+                              </Show>
+
+                              {/* ActionButton（spec §2.3 M4）：命令 / 参数模板 / 结果卡 Schema 全部是布局资产字段 */}
+                              <Show when={(child as WidgetDefinition).widgetType === 'actionButton'}>
+                                <div class="mt-2 space-y-2 rounded border border-accent/30 bg-accent/5 p-2">
+                                  <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <div class={LABEL}>命令（command，须在白名单注册）</div>
+                                      <input
+                                        class={INPUT}
+                                        value={String((child as WidgetDefinition).config?.command ?? '')}
+                                        onInput={(e) => patchChild(index(), (node) => {
+                                          const widget = node as WidgetDefinition;
+                                          return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), command: e.currentTarget.value } };
+                                        })}
+                                        placeholder="如 get_character_detail"
+                                      />
+                                    </div>
+                                    <div>
+                                      <div class={LABEL}>结果卡 Schema（result_schema_id，可选）</div>
+                                      <select
+                                        class={INPUT}
+                                        value={String((child as WidgetDefinition).config?.result_schema_id ?? '')}
+                                        onChange={(e) => patchChild(index(), (node) => {
+                                          const widget = node as WidgetDefinition;
+                                          return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), result_schema_id: e.currentTarget.value } };
+                                        })}
+                                      >
+                                        <option value="">（无：结果以 JSON 回显）</option>
+                                        <For each={schemaOptions() ?? []}>
+                                          {(schema) => <option value={schema.id}>{schema.name} · {schema.id}</option>}
+                                        </For>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div class={LABEL}>参数模板（args_template，值支持 {'{stats.x}'} / {'{schema.x}'} 占位）</div>
+                                    <For each={Object.entries(((child as WidgetDefinition).config?.args_template ?? {}) as Record<string, string>)}>
+                                      {([argKey, argTemplate]) => (
+                                        <div class="mb-1 flex items-center gap-1">
+                                          <input
+                                            class={`${INPUT} w-32`}
+                                            value={argKey}
+                                            placeholder="参数名"
+                                            onInput={(e) => patchChild(index(), (node) => {
+                                              const widget = node as WidgetDefinition;
+                                              const template = { ...((widget.config?.args_template ?? {}) as Record<string, string>) };
+                                              delete template[argKey];
+                                              template[e.currentTarget.value] = argTemplate;
+                                              return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), args_template: template } };
+                                            })}
+                                          />
+                                          <input
+                                            class={INPUT}
+                                            value={argTemplate}
+                                            placeholder="模板，如 {stats.char_id} 或 5"
+                                            onInput={(e) => patchChild(index(), (node) => {
+                                              const widget = node as WidgetDefinition;
+                                              const template = { ...((widget.config?.args_template ?? {}) as Record<string, string>) };
+                                              template[argKey] = e.currentTarget.value;
+                                              return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), args_template: template } };
+                                            })}
+                                          />
+                                          <button
+                                            class="px-1 text-rose-300 hover:text-rose-200"
+                                            title="删除参数"
+                                            onClick={() => patchChild(index(), (node) => {
+                                              const widget = node as WidgetDefinition;
+                                              const template = { ...((widget.config?.args_template ?? {}) as Record<string, string>) };
+                                              delete template[argKey];
+                                              return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), args_template: template } };
+                                            })}
+                                          >
+                                            ×
+                                          </button>
+                                        </div>
+                                      )}
+                                    </For>
+                                    <button
+                                      class="rounded border border-white/15 px-2 py-0.5 text-[11px] text-mist-solid hover:border-accent"
+                                      onClick={() => patchChild(index(), (node) => {
+                                        const widget = node as WidgetDefinition;
+                                        const template = { ...((widget.config?.args_template ?? {}) as Record<string, string>) };
+                                        template[`arg_${Object.keys(template).length + 1}`] = '';
+                                        return { ...widget, nodeType: 'widget', config: { ...(widget.config ?? {}), args_template: template } };
+                                      })}
+                                    >
+                                      + 参数
+                                    </button>
+                                  </div>
+                                </div>
+                              </Show>
                             </Show>
                           </div>
                         )}

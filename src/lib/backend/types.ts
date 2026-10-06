@@ -1077,8 +1077,25 @@ export interface SchemaDefinition {
   description: string;
   retentionDepth?: number | null;
   fields: SchemaFieldDefinition[];
+  /** 产物卡片配置（spec §2.4 M5）：null/undefined 表示不渲染卡片 */
+  card?: SchemaCardConfig | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** 产物卡片动作按钮（spec §2.4 M5：点击经 action_bridge 白名单代理既有命令） */
+export interface SchemaCardAction {
+  label: string;
+  command: string;
+  /** 参数模板：值支持 `{字段名}` 占位（从卡片 JSON 取值） */
+  argsTemplate: Array<[string, string]>;
+}
+
+/** 产物卡片配置（spec §2.4 M5：Schema 资产的 card 扩展字段） */
+export interface SchemaCardConfig {
+  /** 卡片标题取哪个字段的值 */
+  titleField: string;
+  actions: SchemaCardAction[];
 }
 
 // ─── Game State & Data Container ───
@@ -1134,7 +1151,7 @@ export type LayoutMountType =
   | 'mobileBottomSticky';
 
 export type ContainerKind = 'rootCanvas' | 'panel' | 'tabs' | 'grid';
-export type WidgetType = 'statBar' | 'inventorySlotGrid' | 'dataLabel' | 'badge' | 'avatarFrame';
+export type WidgetType = 'statBar' | 'inventorySlotGrid' | 'dataLabel' | 'badge' | 'avatarFrame' | 'actionButton';
 
 export interface WidgetDefinition {
   id: string;
@@ -1154,6 +1171,8 @@ export type LayoutNode =
 export interface LayoutContainer {
   id: string;
   kind: ContainerKind;
+  /** 排版模式（计划 §4.1）：absolute（子元素按 x/y 自由坐标）/ flex（纵向流式，缺省）/ grid */
+  layoutMode?: 'absolute' | 'flex' | 'grid' | string;
   x: number;
   y: number;
   width: number;

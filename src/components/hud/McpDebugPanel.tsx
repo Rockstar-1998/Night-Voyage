@@ -1,4 +1,5 @@
-import { Component, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createResource, createSignal } from 'solid-js';
+import { invoke } from '@tauri-apps/api/core';
 import { conversationsList } from '../../lib/backend/conversations';
 import { messagesList } from '../../lib/backend/messages';
 import {
@@ -29,6 +30,15 @@ export const McpDebugPanel: Component<McpDebugPanelProps> = (props) => {
   const [outputIsError, setOutputIsError] = createSignal(false);
   const [toolName, setToolName] = createSignal('');
   const [argumentsJson, setArgumentsJson] = createSignal('');
+
+  // MCP 工具清单（真实数据源：mcp_tool_names 命令，C11）——点击即填入契约名。
+  const [mcpTools, { refetch: refetchMcpTools }] = createResource(async () => {
+    try {
+      return await invoke<Array<{ name: string; description: string }>>('mcp_tool_names');
+    } catch {
+      return null;
+    }
+  });
 
   const showResult = (label: string, result: unknown) => {
     setOutputIsError(false);
@@ -133,6 +143,43 @@ export const McpDebugPanel: Component<McpDebugPanelProps> = (props) => {
                 title="重置为默认状态并广播 HUD——上方状态面板会当场刷新">
                 重置状态 (HUD)
               </button>
+            </div>
+
+            {/* MCP 工具清单（C10/C11：真实数据源 + 一键填入） */}
+            <div class="space-y-1">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-bold text-mist-solid/60 uppercase tracking-wider">
+                  MCP 工具清单 {mcpTools() ? `(${mcpTools()!.length})` : ''}
+                </div>
+                <button
+                  type="button"
+                  class="text-[10px] text-accent hover:text-accent/80"
+                  onClick={() => void refetchMcpTools()}
+                >
+                  刷新
+                </button>
+              </div>
+              <Show when={mcpTools()}>
+                {(tools) => (
+                  <div class="max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-black/30 divide-y divide-white/5 custom-scrollbar">
+                    <For each={tools()}>
+                      {(tool) => (
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-1.5 hover:bg-white/5 transition-colors"
+                          title={tool.description}
+                          onClick={() => {
+                            setToolName(tool.name);
+                            setArgumentsJson('{}');
+                          }}
+                        >
+                          <span class="text-xs font-mono text-accent">{tool.name}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </Show>
             </div>
 
             {/* ToolCall 契约执行 */}

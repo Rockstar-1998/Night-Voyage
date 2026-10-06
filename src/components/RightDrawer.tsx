@@ -14,7 +14,7 @@ interface RightDrawerProps {
   presetSummaries: PresetSummary[];
   worldBooks: WorldBookSummary[];
   onSaveConversationBindings: (payload: { presetId?: number; worldBookId?: number; providerId?: number; embeddingProviderId?: number | null }) => Promise<void> | void;
-  memoryMode: 'stateless' | 'legacy' | 'mem0' | string;
+  memoryMode: 'legacy' | 'mem0' | string;
   mem0SnapshotWindow?: number;
   onSnapshotWindowChange?: (window: number) => Promise<void> | void;
   playerCharacters: CharacterCard[];

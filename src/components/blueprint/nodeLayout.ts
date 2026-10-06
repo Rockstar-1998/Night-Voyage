@@ -116,6 +116,7 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   tool_return: '#10b981',
   inspector: '#22d3ee',
   querier: '#818cf8',
+  writer: '#f59e0b',
   banned_words_config: '#f87171',
   scriptwriter_pipeline: '#a78bfa',
   agent_mode_switch: '#34d399',
@@ -144,6 +145,7 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'tool_definition':
     case 'calculator':
     case 'inspector':
+    case 'writer':
     case 'querier':
     case 'banned_words_config':
     case 'scriptwriter_pipeline':
@@ -172,7 +174,7 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
       return [
         { port: 'out_legacy', label: 'Legacy', kind: 'bool', direction: 'output' },
         { port: 'out_mem0', label: 'MEM0', kind: 'bool', direction: 'output' },
-        { port: 'out_stateless', label: 'Stateless', kind: 'bool', direction: 'output' },
+        { port: 'out_stateless', label: 'Legacy（旧图兼容）', kind: 'bool', direction: 'output' },
       ];
     case 'role_switch':
       return [
@@ -236,6 +238,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'condition_gate':
     case 'tool_return':
     case 'inspector':
+    case 'writer':
     case 'querier':
     case 'banned_words_config':
     case 'scriptwriter_pipeline':
@@ -265,6 +268,7 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'condition_gate':
     case 'tool_return':
     case 'inspector':
+    case 'writer':
     case 'querier':
     case 'banned_words_config':
     case 'scriptwriter_pipeline':
@@ -338,6 +342,10 @@ function computeNodeTitle(node: BlueprintNode): string {
       return 'Director';
     case 'actor_definition':
       return node.config.actor_name ? `Actor: ${node.config.actor_name}` : 'Actor Definition';
+    case 'writer':
+      return 'Writer';
+    case 'writer':
+      return '工具链写原语（工作区）';
     case 'ui_layout_config':
       return node.config.mount_type ? `HUD: ${node.config.mount_type}` : 'UI Layout';
   }
@@ -345,6 +353,8 @@ function computeNodeTitle(node: BlueprintNode): string {
 
 function computeNodeSubtitle(node: BlueprintNode): string | null {
   switch (node.type) {
+    case 'writer':
+      return '工作区写原语';
     case 'prompt':
       return node.config.block_type;
     case 'schema_field':

@@ -32,6 +32,10 @@ pub struct AppState {
     /// construction (errors are reported per-conversation at build time);
     /// retained for API compatibility with `mem0_init_status`.
     pub mem0_init_error: Option<String>,
+    /// 回合内数据容器的内存工作副本（计划 §2.1"单次结算持久化"）：
+    /// Agent 模式回合内的多次 ToolCall 变动先落在内存，回合末（正文定稿后）
+    /// 由 `flush_session_state_cache` 单次写入 session_states 并清除。
+    pub session_state_cache: Mutex<HashMap<i64, crate::models::game_state::DataContainer>>,
 }
 
 #[tauri::command]
@@ -57,6 +61,7 @@ pub fn run() {
                 room_client: Mutex::new(None),
                 memory_service: Mutex::new(HashMap::new()),
                 mem0_init_error: None,
+                session_state_cache: Mutex::new(HashMap::new()),
             });
 
             let cleanup_pool = pool.clone();
@@ -141,10 +146,12 @@ pub fn run() {
             commands::game_state::session_game_state_save,
             commands::game_state::session_game_state_reset,
             commands::game_state::session_tool_call_execute,
+            mcp::tools::mcp_tool_names,
             commands::game_state::agent_dice_roll,
             commands::game_state::agent_validate_banned_words,
             commands::action_bridge::action_bridge_whitelist_get,
             commands::action_bridge::action_bridge_whitelist_set,
+            commands::action_bridge::action_bridge_invoke,
             commands::ui_layout::preset_ui_layout_list,
             commands::ui_layout::preset_ui_layout_get,
             commands::ui_layout::preset_ui_layout_save,

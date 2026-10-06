@@ -17,6 +17,7 @@ use serde_json::Value;
 use crate::models::blueprint::{
     CalculatorConfig, ConditionGateConfig, InspectorConfig, QuerierConfig, ToolReturnConfig,
 };
+use crate::models::blueprint::WriterConfig;
 use crate::models::game_state::{DataContainer, InventoryItem};
 
 /// 步骤链里的一步。
@@ -31,6 +32,8 @@ pub enum ToolStep {
     Inspect(InspectorConfig),
     /// 跨域读原语：白名单命令代理，结果写入链上下文 `query`
     Query(QuerierConfig),
+    /// 工作区写原语（计划 §2.2）：模板渲染结果写入 scratchpad
+    Write(WriterConfig),
 }
 
 /// 一条 ToolCall 契约的完整执行计划。
@@ -272,15 +275,19 @@ pub struct ToolOutcome {
     pub text: String,
     /// 是否被门禁拦截。拦截时数据容器**必须**保持未被本次调用修改。
     pub is_blocked: bool,
+    /// 门禁判定轨迹（供时序泳道回放：门禁 → 表达式 → 结果）
+    pub gate_trace: Vec<String>,
+    /// 最近一次 d20 骰值（Some = 本链路含 d20 门禁；供不可篡改检定卡广播）
+    pub dice_roll: Option<i64>,
 }
 
 impl ToolOutcome {
-    pub fn blocked(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_blocked: true }
+    pub fn success(text: impl Into<String>) -> Self {
+        Self { text: text.into(), is_blocked: false, gate_trace: Vec::new(), dice_roll: None }
     }
 
-    pub fn success(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_blocked: false }
+    pub fn blocked(text: impl Into<String>) -> Self {
+        Self { text: text.into(), is_blocked: true, gate_trace: Vec::new(), dice_roll: None }
     }
 }
 
@@ -315,10 +322,18 @@ pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Resul
     }
 
     let arg_number = |key: &str| args.get(key).and_then(Value::as_f64);
+    let required_arg = |key: &str| -> Result<f64, String> {
+        arg_number(key).ok_or_else(|| {
+            format!(
+                "参数 `{}` 缺失或不是数值——请在契约 parameters_schema.required 中声明，并在调用时提供（C2 拒绝静默取 0/1）",
+                key
+            )
+        })
+    };
     match expr {
-        "count" => Ok(arg_number("count").unwrap_or(1.0)),
-        "total_cost" => Ok(arg_number("unit_price").unwrap_or(0.0) * arg_number("count").unwrap_or(1.0)),
-        "added_weight" => Ok(arg_number("unit_weight").unwrap_or(0.0) * arg_number("count").unwrap_or(1.0)),
+        "count" => required_arg("count"),
+        "total_cost" => Ok(required_arg("unit_price")? * required_arg("count")?),
+        "added_weight" => Ok(required_arg("unit_weight")? * required_arg("count")?),
         other => {
             let (prefix, key) = other
                 .split_once('.')
@@ -412,6 +427,7 @@ where
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>,
 {
     let mut ctx = StepContext::default();
+    let mut outcome = ToolOutcome::success(String::new());
     for step in &plan.steps {
         match step {
             ToolStep::Calculate(config) => apply_calculator(state, config, args)?,
@@ -419,16 +435,39 @@ where
                 let threshold = resolve_operand(&config.expression, args, state).map_err(|err| {
                     format!("门禁 `{}` 的判定表达式无法求值: {}", config.express_label(), err)
                 })?;
-                let passed = state.evaluate_condition(&config.gate_type, threshold).map_err(|err| {
-                    format!("门禁 `{}` 判定失败: {}", config.gate_type, err)
-                })?;
+                let mut dice_roll: Option<i64> = None;
+                let passed = state
+                    .evaluate_condition(&config.gate_type, threshold, args, &mut dice_roll)
+                    .map_err(|err| {
+                        format!("门禁 `{}` 判定失败: {}", config.gate_type, err)
+                    })?;
+                if let Some(roll) = dice_roll {
+                    let modifier = args.get("modifier").and_then(Value::as_f64).unwrap_or(0.0);
+                    outcome.dice_roll = Some(roll);
+                    outcome.gate_trace.push(format!(
+                        "D20 检定: roll={} + modifier={} vs DC {} → {}",
+                        roll,
+                        modifier,
+                        threshold,
+                        if passed { "成功" } else { "失败" }
+                    ));
+                }
+                outcome.gate_trace.push(format!(
+                    "门禁[{}] 表达式 `{}` 阈值 {} → {}",
+                    config.gate_type,
+                    config.expression,
+                    threshold,
+                    if passed { "放行" } else { "拦截" }
+                ));
                 if !passed {
                     let reason = if config.block_reason.trim().is_empty() {
                         format!("【门禁拦截 - {}】判定未通过（阈值 {}）", config.gate_type, threshold)
                     } else {
                         config.block_reason.clone()
                     };
-                    return Ok(ToolOutcome::blocked(reason));
+                    outcome.text = reason;
+                    outcome.is_blocked = true;
+                    return Ok(outcome);
                 }
             }
             ToolStep::Inspect(config) => {
@@ -441,22 +480,42 @@ where
                     .map_err(|err| format!("跨域读 `{}` 执行失败: {}", config.command, err))?;
                 ctx.query = Some(value);
             }
+            ToolStep::Write(config) => {
+                let key = render_return_template(&config.key_expr, args, state, &ctx)?
+                    .trim()
+                    .to_string();
+                if key.is_empty() {
+                    return Err("Writer 节点的 key_expr 渲染结果为空，拒绝写入（C2）".to_string());
+                }
+                let value = render_return_template(&config.value_template, args, state, &ctx)?;
+                state.scratchpad.insert(key, value);
+            }
         }
     }
 
-    let text = match &plan.success_return {
-        Some(config) if !config.return_template.trim().is_empty() => {
-            render_return_template(&config.return_template, args, state, &ctx)?
+    if let Some(config) = &plan.success_return {
+        if !config.return_template.trim().is_empty() {
+            outcome.text = render_return_template(&config.return_template, args, state, &ctx)?;
+            return Ok(outcome);
         }
-        _ => format!(
-            "【{}】执行成功。当前金币: {}G，当前负重: {}/{}kg",
-            plan.tool_name,
-            state.get_stat("gold"),
-            state.total_weight(),
-            state.get_stat("max_weight")
-        ),
-    };
-    Ok(ToolOutcome::success(text))
+    }
+    if plan.steps.is_empty() {
+        // 空链（definition-only，M2："仅校验"）：参数校验已通过，无容器变更——
+        // 显式声明语义，不伪造业务成功数据（C2）。
+        outcome.text = format!(
+            "【{}】参数校验通过（空链契约：仅注册校验，无容器变更）",
+            plan.tool_name
+        );
+        return Ok(outcome);
+    }
+    outcome.text = format!(
+        "【{}】执行成功。当前金币: {}G，当前负重: {}/{}kg",
+        plan.tool_name,
+        state.get_stat("gold"),
+        state.total_weight(),
+        state.get_stat("max_weight")
+    );
+    Ok(outcome)
 }
 
 /// 执行容器读原语，产出结构化 JSON 片段。

@@ -78,10 +78,84 @@ async fn dispatch(
 ) -> Result<Value, String> {
     match command {
         "query_world_book_entries" => query_world_book_entries(db, conversation_id, args).await,
+        "get_character_detail" => get_character_detail(db, args).await,
+        "create_world_book_entry" => create_world_book_entry(db, conversation_id, args).await,
         other => Err(format!(
             "命令 `{other}` 已在白名单但没有后端分发实现；请检查白名单与注册表一致性"
         )),
     }
+}
+
+/// `get_character_detail`：按 `character_id` 读取角色卡档案
+/// （spec §2.3 示例命令；`args_template` 用 `{stats.char_id}` 等占位注入）。
+/// `character_id` 接受数值或数值字符串（模板注入以字符串为主）。
+async fn get_character_detail(db: &SqlitePool, args: &Value) -> Result<Value, String> {
+    let character_id = args
+        .get("character_id")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+        .ok_or_else(|| "get_character_detail 缺少数值参数 character_id".to_string())?;
+    let card = crate::commands::characters::character_card_get(db, character_id).await?;
+    serde_json::to_value(card).map_err(|err| err.to_string())
+}
+
+/// `create_world_book_entry`：向会话绑定的世界书写入一条启用的普通条目
+/// （spec §2.4 示例命令：产物卡"加入到世界书"动作的持久化终点）。
+async fn create_world_book_entry(
+    db: &SqlitePool,
+    conversation_id: i64,
+    args: &Value,
+) -> Result<Value, String> {
+    let world_book_id: Option<i64> =
+        sqlx::query_scalar("SELECT world_book_id FROM conversations WHERE id = ? LIMIT 1")
+            .bind(conversation_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| err.to_string())?
+            .flatten();
+    let Some(world_book_id) = world_book_id else {
+        return Err("会话未绑定世界书，无法创建条目".to_string());
+    };
+
+    let title = args
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "create_world_book_entry 缺少 title 参数".to_string())?;
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "create_world_book_entry 缺少 content 参数".to_string())?;
+
+    let now = crate::utils::now_ts();
+    let result = sqlx::query(
+        "INSERT INTO world_book_entries (
+            world_book_id, title, content, trigger_mode,
+            is_enabled, sort_order, created_at, updated_at
+         ) VALUES (?, ?, ?, 'any', 1, 0, ?, ?)",
+    )
+    .bind(world_book_id)
+    .bind(title)
+    .bind(content)
+    .bind(now)
+    .bind(now)
+    .execute(db)
+    .await
+    .map_err(|err| err.to_string())?;
+    let entry_id = result.last_insert_rowid();
+
+    Ok(serde_json::json!({
+        "entryId": entry_id,
+        "worldBookId": world_book_id,
+        "title": title,
+        "content": content,
+    }))
 }
 
 /// `query_world_book_entries`：按会话绑定的世界书检索条目

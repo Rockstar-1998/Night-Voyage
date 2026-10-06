@@ -11,6 +11,9 @@ import {
 import type { UiMessage, LlmStreamEventPayload, StreamErrorEvent, StreamRetryEvent } from '../../src/lib/backend/types';
 import { parseStructuredResponse, parseStreamingFields, type StructuredDisplayConfig, deriveStructuredOutputDisplayFromGraphJson } from '../lib/structured';
 import { MobileStructuredRenderer } from './MobileStructuredRenderer';
+import { MobileSchemaCard } from './MobileSchemaCard';
+import { presetSchemasList } from '../../src/lib/backend/schema';
+import type { SchemaDefinition } from '../../src/lib/backend/types';
 import { MobileNativeThinkingBlock } from './MobileNativeThinkingBlock';
 import { MobilePersistentHud } from './MobilePersistentHud';
 import { MobileAgentDebugModal } from './MobileAgentDebugModal';
@@ -42,6 +45,7 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
   const [inputText, setInputText] = createSignal('');
   const [replyStatus, setReplyStatus] = createSignal<'idle' | 'connecting' | 'responding'>('idle');
   const [presetDisplayConfig, setPresetDisplayConfig] = createSignal<Record<string, StructuredDisplayConfig>>({});
+  const [presetSchemas, setPresetSchemas] = createSignal<SchemaDefinition[]>([]);
   const [isDebugOpen, setIsDebugOpen] = createSignal(false);
   let scrollRef: HTMLDivElement | undefined;
 
@@ -279,6 +283,15 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
     });
   });
 
+  createEffect(() => {
+    const pid = props.presetId;
+    if (!pid) {
+      setPresetSchemas([]);
+      return;
+    }
+    presetSchemasList(pid).then((list) => setPresetSchemas(list)).catch(() => setPresetSchemas([]));
+  });
+
   // ─── 单条消息渲染 ───
   const renderAssistantBody = (m: MobileMessage) => {
     const streamingFields = createMemo(() => {
@@ -289,6 +302,27 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
       const content = m.content;
       if (!content || !content.trimStart().startsWith('{')) return null;
       return parseStructuredResponse(content, presetDisplayConfig());
+    });
+
+    // M5 产物卡匹配：字段名集合与某个配置了 card 的 Schema 资产一致时按卡渲染
+    const cardMatch = createMemo(() => {
+      const fields = streamingFields() ?? fullResponse()?.fields ?? null;
+      if (!fields) return null;
+      const keys = Object.keys(fields).sort();
+      if (keys.length === 0) return null;
+      for (const schema of presetSchemas()) {
+        if (!schema.card) continue;
+        const schemaKeys = schema.fields.map((f) => f.name).sort();
+        if (schemaKeys.length !== keys.length || schemaKeys.some((k, i) => k !== keys[i])) continue;
+        const values: Record<string, string> = {};
+        for (const [key, field] of Object.entries(fields)) {
+          values[key] = field.kind === 'string'
+            ? String(field.value)
+            : JSON.stringify((field as any).value ?? '');
+        }
+        return { schema, values };
+      }
+      return null;
     });
 
     return (
@@ -302,10 +336,21 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
         <Show
           when={!streamingFields() && !fullResponse()}
           fallback={
-            <Show when={streamingFields()} fallback={
-              <MobileStructuredRenderer response={fullResponse()!} onChoiceSelect={(_i, v) => handleSend(v)} />
+            <Show when={cardMatch()} fallback={
+              <Show when={streamingFields()} fallback={
+                <MobileStructuredRenderer response={fullResponse()!} onChoiceSelect={(_i, v) => handleSend(v)} />
+              }>
+                {(sf) => <MobileStructuredRenderer response={{ fields: sf(), displayConfig: presetDisplayConfig() }} onChoiceSelect={(_i, v) => handleSend(v)} />}
+              </Show>
             }>
-              {(sf) => <MobileStructuredRenderer response={{ fields: sf(), displayConfig: presetDisplayConfig() }} onChoiceSelect={(_i, v) => handleSend(v)} />}
+              {(cm) => (
+                <MobileSchemaCard
+                  card={cm().schema.card!}
+                  fields={cm().schema.fields}
+                  values={cm().values}
+                  conversationId={props.conversationId}
+                />
+              )}
             </Show>
           }
         >

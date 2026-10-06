@@ -23,3 +23,15 @@ pub async fn action_bridge_whitelist_set(
 ) -> Result<(), String> {
     action_bridge::save_whitelist(&state.db, &commands).await
 }
+
+/// 前端动作件（HUD ActionButton / 产物卡按钮）点击入口：
+/// 白名单校验 + 后端分发，返回结果 JSON（供 `result_schema_id` 资产渲染产物卡）。
+#[tauri::command]
+pub async fn action_bridge_invoke(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    command: String,
+    args: Value,
+) -> Result<Value, String> {
+    action_bridge::invoke(&state.db, conversation_id, &command, &args).await
+}
