@@ -1158,7 +1158,13 @@ export interface WidgetDefinition {
   widgetType: WidgetType;
   label: string;
   dataBinding: string;
-  config?: Record<string, any>;
+  /** x/y 坐标（absolute 排版模式下生效，计划 §4.1） */
+  x: number;
+  y: number;
+  /** 宽高（0 = 自适应内容） */
+  width: number;
+  height: number;
+  config?: Record<string, unknown>;
   style?: Record<string, string>;
 }
 

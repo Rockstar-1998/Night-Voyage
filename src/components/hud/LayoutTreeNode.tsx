@@ -40,9 +40,11 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
   const [activeTab, setActiveTab] = createSignal(0);
 
   const containerStyle = (): Record<string, string> => {
+    const mode = layoutMode();
     const style: Record<string, string> = {
-      position: 'relative',
-      display: 'flex',
+      // absolute 模式下容器自身用 absolute 定位（读取 x/y）；flex/grid 用 relative 流式
+      position: mode === 'absolute' ? 'absolute' : 'relative',
+      display: mode === 'grid' ? 'grid' : 'flex',
       'flex-direction': 'column',
       gap: `${Number(props.container.style?.gap ?? 8)}px`,
       padding: `${Number(props.container.style?.padding ?? 8)}px`,
@@ -50,6 +52,11 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
       border: props.container.style?.border ?? '1px solid rgba(255,255,255,0.06)',
       'border-radius': props.container.style?.radius ?? '10px',
     };
+    // absolute 模式：容器自身按 x/y 定位（根容器 x/y=0 时等效于 relative 起点）
+    if (mode === 'absolute') {
+      style.left = `${props.container.x}px`;
+      style.top = `${props.container.y}px`;
+    }
     if (props.container.width > 0) style.width = `${props.container.width}px`;
     if (props.container.height > 0) style.height = `${props.container.height}px`;
     return style;
@@ -112,13 +119,15 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
       >
         <For each={props.container.children ?? []}>
           {(child) => {
-            // absolute 模式：子元素按 x/y 自由坐标定位（计划 §4.1 Absolute 排版）
+            // absolute 模式：子元素（容器或控件）按 x/y 自由坐标定位（计划 §4.1 Absolute 排版）
             const style =
               layoutMode() === 'absolute'
                 ? ({
                     position: 'absolute',
-                    left: `${child.nodeType === 'container' ? child.x : 0}px`,
-                    top: `${child.nodeType === 'container' ? child.y : 0}px`,
+                    left: `${child.x}px`,
+                    top: `${child.y}px`,
+                    ...(child.width > 0 ? { width: `${child.width}px` } : {}),
+                    ...(child.height > 0 ? { height: `${child.height}px` } : {}),
                   } as Record<string, string>)
                 : {};
             return (

@@ -55,6 +55,16 @@ pub struct WidgetDefinition {
     pub label: String,
     /// 数据绑定路径 (例如 "stats.hp", "stats.gold", "inventory", "schema.hp")
     pub data_binding: String,
+    /// x/y 坐标（absolute 排版模式下生效，计划 §4.1）
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    /// 宽高（0 = 自适应内容）
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
     #[serde(default)]
     pub config: HashMap<String, serde_json::Value>,
     #[serde(default)]
@@ -132,6 +142,7 @@ impl Default for UILayoutDefinition {
                         widget_type: WidgetType::StatBar,
                         label: "生命值 (HP)".to_string(),
                         data_binding: "stats.hp".to_string(),
+                        x: 0.0, y: 0.0, width: 0.0, height: 0.0,
                         config: {
                             let mut m = HashMap::new();
                             m.insert("max_stat".to_string(), serde_json::json!("stats.max_hp"));
@@ -145,6 +156,7 @@ impl Default for UILayoutDefinition {
                         widget_type: WidgetType::DataLabel,
                         label: "金币 (Gold)".to_string(),
                         data_binding: "stats.gold".to_string(),
+                        x: 0.0, y: 0.0, width: 0.0, height: 0.0,
                         config: {
                             let mut m = HashMap::new();
                             m.insert("icon".to_string(), serde_json::json!("coin"));
@@ -157,6 +169,7 @@ impl Default for UILayoutDefinition {
                         widget_type: WidgetType::InventorySlotGrid,
                         label: "背包槽位".to_string(),
                         data_binding: "inventory".to_string(),
+                        x: 0.0, y: 0.0, width: 0.0, height: 0.0,
                         config: {
                             let mut m = HashMap::new();
                             m.insert("columns".to_string(), serde_json::json!(4));

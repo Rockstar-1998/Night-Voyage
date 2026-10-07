@@ -140,7 +140,7 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
         nodeType: 'container',
         id: nextId(kind),
         kind,
-        layoutMode: kind === 'grid' ? 'grid' : 'flex',
+        layoutMode: kind === 'grid' ? 'grid' : kind === 'panel' ? 'absolute' : 'flex',
         x: 0,
         y: 0,
         width: 200,
@@ -186,6 +186,10 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
         widgetType,
         label: WIDGET_TYPES.find((item) => item.value === widgetType)?.label ?? widgetType,
         dataBinding: widgetType === 'inventorySlotGrid' ? 'inventory' : 'stats.hp',
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
         config:
           widgetType === 'inventorySlotGrid'
             ? { columns: 4 }
@@ -542,6 +546,26 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                                   >
                                     <For each={WIDGET_TYPES}>{(item) => <option value={item.value}>{item.label}</option>}</For>
                                   </select>
+                                </div>
+                              </div>
+
+                              {/* 控件坐标（absolute 模式下生效，计划 §4.1） */}
+                              <div class="mt-2 grid grid-cols-4 gap-2 rounded border border-accent/20 bg-accent/5 p-2">
+                                <div>
+                                  <div class={LABEL}>X (px)</div>
+                                  <input type="number" class={INPUT} value={(child as WidgetDefinition).x ?? 0} onInput={(e) => patchChild(index(), (node) => ({ ...(node as WidgetDefinition), x: Number(e.currentTarget.value), nodeType: 'widget' }))} />
+                                </div>
+                                <div>
+                                  <div class={LABEL}>Y (px)</div>
+                                  <input type="number" class={INPUT} value={(child as WidgetDefinition).y ?? 0} onInput={(e) => patchChild(index(), (node) => ({ ...(node as WidgetDefinition), y: Number(e.currentTarget.value), nodeType: 'widget' }))} />
+                                </div>
+                                <div>
+                                  <div class={LABEL}>宽 (0=自适应)</div>
+                                  <input type="number" class={INPUT} value={(child as WidgetDefinition).width ?? 0} onInput={(e) => patchChild(index(), (node) => ({ ...(node as WidgetDefinition), width: Number(e.currentTarget.value), nodeType: 'widget' }))} />
+                                </div>
+                                <div>
+                                  <div class={LABEL}>高 (0=自适应)</div>
+                                  <input type="number" class={INPUT} value={(child as WidgetDefinition).height ?? 0} onInput={(e) => patchChild(index(), (node) => ({ ...(node as WidgetDefinition), height: Number(e.currentTarget.value), nodeType: 'widget' }))} />
                                 </div>
                               </div>
 
