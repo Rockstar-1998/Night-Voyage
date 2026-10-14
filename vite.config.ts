@@ -38,7 +38,19 @@ export default defineConfig({
         strictPort: true,
         host: '0.0.0.0',
         watch: {
-            ignored: ['**/src-tauri/**', '**/.cache/**']
+            ignored: [
+                '**/src-tauri/**',
+                '**/.cache/**',
+                '**/target/**',
+                '**/dist/**',
+                '**/sillytavern/**',
+                '**/ST2NV-Converter-Web/**',
+                '**/aisandboxgame-master/**',
+                '**/MEM0/**',
+                '**/node_modules/**',
+                '**/.git/**',
+                '**/Walkthrough/**',
+            ]
         }
     },
     clearScreen: false,
