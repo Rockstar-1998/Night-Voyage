@@ -25,6 +25,7 @@ import { NotificationContainer, showToast, showConfirm } from './components/Toas
 import { SessionHudMount } from './components/hud/SessionHudMount';
 import { AgentDebugDrawer } from './components/debug/AgentDebugDrawer';
 import { McpDebugPanel } from './components/hud/McpDebugPanel';
+import { DiceRollCard } from './components/DiceRollCard';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { setMessageFormatConfig, messagesUpdateContent, messagesSwitchSwipe, messagesDelete, abortRoundStream, conversationsFork, retryFailedRound, rewindToRound, listenMessageReset, getConversationMode } from './lib/backend';
 import { DEFAULT_FORMAT_CONFIG, type MessageFormatConfig } from './lib/messageFormatter';
@@ -405,11 +406,41 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
   const effectiveStructuredOutputDisplay = createMemo(() => {
     const preset = activePreset();
     if (!preset) return undefined;
-    if (preset.structuredOutputDisplay) return preset.structuredOutputDisplay;
-    if (preset.blueprintGraph) {
-      return deriveStructuredOutputDisplayFromGraphJson(preset.blueprintGraph);
+    let baseConfig: Record<string, any> = {};
+    if (preset.structuredOutputDisplay) {
+      try {
+        baseConfig = JSON.parse(preset.structuredOutputDisplay);
+      } catch {}
+    } else if (preset.blueprintGraph) {
+      const derived = deriveStructuredOutputDisplayFromGraphJson(preset.blueprintGraph);
+      if (derived) {
+        try {
+          baseConfig = JSON.parse(derived);
+        } catch {}
+      }
     }
-    return undefined;
+    // 合并 presetSchemas 中的独立 Schema 资产 displayTarget（PersistentHUD 走 HUD，气泡内 hidden）
+    const schemas = presetSchemas();
+    if (schemas.length > 0) {
+      for (const s of schemas) {
+        for (let idx = 0; idx < s.fields.length; idx++) {
+          const f = s.fields[idx];
+          const isInline = f.displayTarget === 'InlineMessage';
+          if (!baseConfig[f.name]) {
+            baseConfig[f.name] = {
+              defaultCollapsed: false,
+              hideLabel: isInline,
+              body: isInline,
+              order: idx,
+              hidden: !isInline,
+            };
+          } else {
+            baseConfig[f.name].hidden = !isInline;
+          }
+        }
+      }
+    }
+    return Object.keys(baseConfig).length > 0 ? JSON.stringify(baseConfig) : undefined;
   });
 
   let presetImportInputRef: HTMLInputElement | undefined;
@@ -632,37 +663,16 @@ const AnimatedDesktopView = (props: DesktopViewProps) => {
                                 {/* 不可篡改 d20 检定卡（计划 §6.3）：OS CSPRNG 骰值广播 */}
                                 <Show when={props.diceCard}>
                                   {(card) => (
-                                    <div
-                                      class="mx-4 mb-1 flex items-center justify-center gap-4 rounded-xl border px-4 py-2"
-                                      style={{
-                                        'border-color': card().passed
-                                          ? 'rgba(34,197,94,0.5)'
-                                          : 'rgba(239,68,68,0.5)',
-                                        background: card().passed
-                                          ? 'rgba(34,197,94,0.08)'
-                                          : 'rgba(239,68,68,0.08)',
-                                      }}
-                                      data-dice-card
-                                    >
-                                      <span class="text-2xl" title="d20 (OS CSPRNG)">
-                                        🎲
-                                      </span>
-                                      <span
-                                        class="text-3xl font-black"
-                                        style={{ color: card().passed ? '#4ade80' : '#f87171' }}
-                                      >
-                                        {card().roll}
-                                      </span>
-                                      <span class="text-xs text-mist-solid/60">
-                                        + {card().modifier} 修正 vs DC {card().dc}
-                                      </span>
-                                      <span
-                                        class="text-sm font-bold"
-                                        style={{ color: card().passed ? '#4ade80' : '#f87171' }}
-                                      >
-                                        {card().passed ? '检定成功' : '检定失败'}
-                                      </span>
-                                      <span class="text-[10px] text-mist-solid/30">{card().tool}</span>
+                                    <div class="max-w-4xl mx-auto w-full px-6">
+                                      <DiceRollCard roll={{
+                                        sessionId: props.selectedConversationId ?? 0,
+                                        roundId: (props.messages[props.messages.length - 1]?.roundId) ?? 1,
+                                        roll: card().roll,
+                                        modifier: card().modifier,
+                                        dc: card().dc,
+                                        passed: card().passed,
+                                        tool: card().tool,
+                                      }} />
                                     </div>
                                   )}
                                 </Show>

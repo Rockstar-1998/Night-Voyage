@@ -143,6 +143,14 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
       case 'sampling_params': return 'SamplingParams（legacy 采样参数）';
       case 'sampling_params_openai': return 'SamplingParams（OpenAI 版）';
       case 'sampling_params_anthropic': return 'SamplingParams（Anthropic 版）';
+      case 'inspector': return 'Inspector（容器读）';
+      case 'querier': return 'Querier（跨域读）';
+      case 'writer': return 'Writer（工作区写）';
+      case 'banned_words_config': return 'BannedWordsConfig（禁词过滤）';
+      case 'scriptwriter_pipeline': return 'ScriptwriterPipeline（剧本流水线）';
+      case 'agent_mode_switch': return 'AgentModeSwitch（智能体架构）';
+      case 'director_config': return 'DirectorConfig（导演参数）';
+      case 'actor_definition': return 'ActorDefinition（角色演员）';
     }
   };
 

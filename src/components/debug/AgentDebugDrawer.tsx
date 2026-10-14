@@ -127,9 +127,12 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
       ) {
         return;
       }
+      const ts = typeof payload.tsMs === 'number' && payload.tsMs > 0 ? new Date(payload.tsMs) : new Date();
+      const ms = String(ts.getMilliseconds()).padStart(3, '0');
+      const timeStr = `${ts.toLocaleTimeString()}.${ms}`;
       const newEv: TimelineEvent = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        time: new Date().toLocaleTimeString(),
+        time: timeStr,
         kind: (payload.kind ?? 'hud_patch') as TimelineEvent['kind'],
         title: String(payload.title ?? '时序事件'),
         detail: String(payload.detail ?? ''),
@@ -488,7 +491,7 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                 <div class="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-3">
                   <div class="flex items-center gap-2 text-xs font-bold text-amber-400">
                     <Calculator size={16} />
-                    <span>确定性 SplitMix64 D20 随机骰点检定</span>
+                    <span>确定性 OS-CSPRNG D20 安全骰点检定</span>
                   </div>
                   <div class="grid grid-cols-3 gap-2">
                     <div>

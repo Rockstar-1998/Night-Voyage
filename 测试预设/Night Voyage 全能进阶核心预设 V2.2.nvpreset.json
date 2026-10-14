@@ -2187,7 +2187,7 @@
           "id": "n_ret_trade_ok",
           "type": "tool_return",
           "config": {
-            "return_template": "【交易结算成功】：已原子扣除金币，获得物品 [微光治疗药剂] x1，负重已更新并实时广播常驻 HUD。",
+            "return_template": "【交易结算成功】：已原子扣除金币 {total_cost}G，获得物品 [{args.name}] x{args.count}，负重 +{added_weight}kg，当前金币 {stats.gold}G，负重已更新并实时广播常驻 HUD。",
             "is_blocked": false,
             "is_locked": false
           },

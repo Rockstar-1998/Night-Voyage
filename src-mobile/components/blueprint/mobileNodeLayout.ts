@@ -119,6 +119,14 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   calculator: '#f59e0b',
   condition_gate: '#ef4444',
   tool_return: '#10b981',
+  inspector: '#22d3ee',
+  querier: '#818cf8',
+  writer: '#f59e0b',
+  banned_words_config: '#f87171',
+  scriptwriter_pipeline: '#a78bfa',
+  agent_mode_switch: '#34d399',
+  director_config: '#fbbf24',
+  actor_definition: '#60a5fa',
   ui_layout_config: '#ec4899',
 };
 
@@ -136,6 +144,14 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'sampling_params_anthropic':
     case 'tool_definition':
     case 'calculator':
+    case 'inspector':
+    case 'writer':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
     case 'condition_gate':
@@ -219,6 +235,14 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'calculator':
     case 'condition_gate':
     case 'tool_return':
+    case 'inspector':
+    case 'writer':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
@@ -238,6 +262,14 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'calculator':
     case 'condition_gate':
     case 'tool_return':
+    case 'inspector':
+    case 'writer':
+    case 'querier':
+    case 'banned_words_config':
+    case 'scriptwriter_pipeline':
+    case 'agent_mode_switch':
+    case 'director_config':
+    case 'actor_definition':
     case 'ui_layout_config':
       return node.config.is_locked;
     case 'start':
@@ -285,6 +317,22 @@ function computeNodeTitle(node: BlueprintNode): string {
       return node.config.gate_type ? `Gate: ${node.config.gate_type}` : 'Condition Gate';
     case 'tool_return':
       return 'Tool Return';
+    case 'inspector':
+      return 'Inspector（容器读）';
+    case 'querier':
+      return 'Querier（跨域读）';
+    case 'writer':
+      return 'Writer（工作区写）';
+    case 'banned_words_config':
+      return 'BannedWords（禁词配置）';
+    case 'scriptwriter_pipeline':
+      return 'Scriptwriter（剧本流水线）';
+    case 'agent_mode_switch':
+      return 'AgentMode（智能体架构）';
+    case 'director_config':
+      return 'Director（导演配置）';
+    case 'actor_definition':
+      return node.config.actor_name ? `Actor: ${node.config.actor_name}` : 'Actor（演员定义）';
     case 'ui_layout_config':
       return 'UI Layout';
     case 'sampling_params':
@@ -331,6 +379,22 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
       return node.config.expression || null;
     case 'tool_return':
       return node.config.is_blocked ? '已阻断' : '正常回执';
+    case 'inspector':
+      return node.config.inspect_kind;
+    case 'querier':
+      return node.config.command || '跨域读取';
+    case 'writer':
+      return node.config.key_expr || '写入变量';
+    case 'banned_words_config':
+      return `${node.config.words.length} 禁词`;
+    case 'scriptwriter_pipeline':
+      return `${node.config.stages.length} 阶段`;
+    case 'agent_mode_switch':
+      return node.config.default_mode;
+    case 'director_config':
+      return `${node.config.tools.length} 工具`;
+    case 'actor_definition':
+      return `${node.config.tools.length} 工具`;
     case 'ui_layout_config':
       return node.config.mount_type || 'RightDock';
   }
@@ -937,6 +1001,62 @@ export function createNode(
           mount_type: 'MobileDrawer',
           is_locked: false,
         },
+      };
+    case 'inspector':
+      return {
+        id: genNodeId('inspector'),
+        type: 'inspector',
+        position,
+        config: { inspect_kind: 'inventory', key_expr: '', is_locked: false },
+      };
+    case 'querier':
+      return {
+        id: genNodeId('querier'),
+        type: 'querier',
+        position,
+        config: { command: '', args_template: {}, is_locked: false },
+      };
+    case 'writer':
+      return {
+        id: genNodeId('writer'),
+        type: 'writer',
+        position,
+        config: { key_expr: '', value_template: '', is_locked: false },
+      };
+    case 'banned_words_config':
+      return {
+        id: genNodeId('banned_words'),
+        type: 'banned_words_config',
+        position,
+        config: { words: [], max_nudge_retries: 2, nudge_instruction_template: '', is_locked: false },
+      };
+    case 'scriptwriter_pipeline':
+      return {
+        id: genNodeId('scriptwriter'),
+        type: 'scriptwriter_pipeline',
+        position,
+        config: { stages: [], anchor_tail_chars: 50, blackout_marker: '【前文背景已锁定】', is_locked: false },
+      };
+    case 'agent_mode_switch':
+      return {
+        id: genNodeId('agent_mode'),
+        type: 'agent_mode_switch',
+        position,
+        config: { default_mode: 'single', max_tool_rounds: 5, is_locked: false },
+      };
+    case 'director_config':
+      return {
+        id: genNodeId('director'),
+        type: 'director_config',
+        position,
+        config: { director_prompt: '', tools: [], is_locked: false },
+      };
+    case 'actor_definition':
+      return {
+        id: genNodeId('actor'),
+        type: 'actor_definition',
+        position,
+        config: { actor_name: '', persona: '', tools: [], is_locked: false },
       };
   }
 }

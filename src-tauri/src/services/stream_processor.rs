@@ -261,19 +261,13 @@ async fn run_multi_agent_round(
                             format!("禁词命中，第 {}/{} 次自纠", nudge_attempts, MAX_NUDGE_RETRIES),
                             violation.matched_words.join("、"),
                         );
-                        let nudge_instruction = format!(
-                            "{}
-
-【禁词自纠指令（第 {} 次重写）】
-上一版终稿命中禁词（{}）。                             请在保持剧情走向与已完成事实不变的前提下重写完整正文，彻底消除上述禁词，只输出重写后的正文。
-
-【上一版终稿】
-{{}}",
+                        let rewrite_input = format!(
+                            "{}\n\n【禁词自纠指令（第 {} 次重写）】\n上一版终稿命中禁词（{}）。请在保持剧情走向与已完成事实不变的前提下重写完整正文，彻底消除上述禁词，只输出重写后的正文。\n\n【上一版终稿】\n{}",
                             violation.feedback_instruction,
                             nudge_attempts,
-                            violation.matched_words.join("、")
+                            violation.matched_words.join("、"),
+                            final_text
                         );
-                        let rewrite_input = nudge_instruction.replace("{}", &final_text);
                         let rewritten = match pipeline {
                             crate::services::agent::orchestrator::AgentPipeline::Scriptwriter => {
                                 crate::services::agent::orchestrator::run_scriptwriter_nudge_pass(
@@ -816,10 +810,13 @@ async fn spawn_post_round_tasks(
                     .collect();
                 if !patches.is_empty() {
                     // 回合内缓存优先（计划 §2.1）：ToolCall 的变动此刻可能还在内存工作副本里。
-                    let current_state =
-                        crate::services::agent_runtime::load_session_state_cached(db, app, conversation_id)
-                            .await
-                            .unwrap_or_default();
+                    let current_state = match crate::services::agent_runtime::load_session_state_cached(db, app, conversation_id).await {
+                        Ok(st) => st,
+                        Err(err) => {
+                            crate::dbg_eprintln!("[stream_processor] 加载 session_state 失败，终止 HUD 补丁广播（C2 拒绝静默空容器兜底）: {}", err);
+                            return;
+                        }
+                    };
                     let detail_keys: Vec<String> = {
                         let mut keys: Vec<String> = patches.keys().cloned().collect();
                         keys.sort();

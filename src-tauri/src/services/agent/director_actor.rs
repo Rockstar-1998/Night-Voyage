@@ -125,20 +125,116 @@ pub async fn run_director_actor_pipeline(
         blocks
     };
 
-    let plan_raw = stage_call(
-        app,
-        db,
-        run_id,
-        conversation_id,
-        round_id,
-        provider,
-        &director_system,
-        "导演·分镜",
-        "请只输出一个 JSON 对象：{\"beats\":[{\"slot_id\":\"b1\",\"character\":\"角色名\",\"focus\":\"这一镜要发生什么\"}]}。\
-         不要输出解释文字。",
-        user_input,
-    )
-    .await?;
+    // 编译蓝图中声明的真实 ToolCall 契约（A12 闭环：使用真实的 parameters_schema 与 description）
+    let tool_defs_by_name: std::collections::HashMap<String, crate::llm::LlmToolDefinition> = configs
+        .declared_tool_definitions
+        .iter()
+        .map(|(tool_name, cfg)| {
+            let schema_json = if cfg.parameters_schema.trim().is_empty() {
+                r#"{"type":"object","properties":{}}"#.to_string()
+            } else {
+                cfg.parameters_schema.clone()
+            };
+            let input_schema: serde_json::Value = serde_json::from_str(&schema_json)
+                .unwrap_or_else(|_| serde_json::json!({"type": "object", "properties": {}}));
+            let description = if cfg.description.trim().is_empty() {
+                Some(format!("蓝图契约 {tool_name}"))
+            } else {
+                Some(cfg.description.clone())
+            };
+            (
+                tool_name.clone(),
+                crate::llm::LlmToolDefinition {
+                    name: tool_name.clone(),
+                    description,
+                    input_schema,
+                },
+            )
+        })
+        .collect();
+
+    let director_tools: Vec<crate::llm::LlmToolDefinition> = director_cfg
+        .tools
+        .iter()
+        .filter_map(|name| tool_defs_by_name.get(name).cloned())
+        .collect();
+
+    let plan_raw = if director_tools.is_empty() {
+        stage_call(
+            app,
+            db,
+            run_id,
+            conversation_id,
+            round_id,
+            provider,
+            &director_system,
+            "导演·分镜",
+            "请只输出一个 JSON 对象：{\"beats\":[{\"slot_id\":\"b1\",\"character\":\"角色名\",\"focus\":\"这一镜要发生什么\"}]}。\
+             不要输出解释文字。",
+            user_input,
+        )
+        .await?
+    } else {
+        let max_rounds = configs
+            .agent_mode_switch
+            .as_ref()
+            .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
+            .unwrap_or(5);
+        let execute = {
+            let db = db.clone();
+            let app = app.clone();
+            move |name: String, args_json: String| {
+                let db = db.clone();
+                let app = app.clone();
+                std::pin::Pin::from(Box::pin(async move {
+                    let plan =
+                        crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
+                            .await?;
+                    crate::services::agent_runtime::execute_tool_call_with_plan(
+                        &db,
+                        &app,
+                        conversation_id,
+                        round_id,
+                        false,
+                        &name,
+                        &args_json,
+                        plan.as_ref(),
+                    )
+                    .await
+                }))
+                    as std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+            }
+        };
+        let runtime = super::subagent::SubAgentToolRuntime {
+            tools: director_tools,
+            max_rounds,
+            execute: &execute,
+        };
+        let mut stage_sys = director_system.clone();
+        stage_sys.push("请只输出一个 JSON 对象：{\"beats\":[{\"slot_id\":\"b1\",\"character\":\"角色名\",\"focus\":\"这一镜要发生什么\"}]}。\
+             不要输出解释文字。".to_string());
+        let res = run_subagent_with_tools(
+            provider,
+            SubAgentRequest {
+                label: "导演·分镜",
+                system: stage_sys,
+                user: user_input.to_string(),
+                temperature: provider.temperature,
+                max_output_tokens: provider.max_tokens,
+            },
+            &runtime,
+        )
+        .await?;
+        record_draft(
+            db,
+            run_id,
+            "director:plan",
+            &res.text,
+            user_input,
+        )
+        .await?;
+        res.text
+    };
 
     let plan = parse_director_plan(&plan_raw)?;
 
@@ -147,26 +243,9 @@ pub async fn run_director_actor_pipeline(
     //    全量共享设定一律不给（此前"persona 追加在全量设定之上"= 全知演员，已修）。
     // ② 旧路径（无蓝图定义）：仅保留名称命中的设定块；未命中也不得全量放行——
     //    只用本镜 focus 出演，并以 Info 事件明示（诚实呈现裁剪结果）。
-    // ③ tools 非空的演员进入工具循环（run_subagent_with_tools）：清单来自蓝图，
+    // ③ tools 非空的演员进入工具循环（run_subagent_with_tools）：真实参数 Schema 来自蓝图，
     //    执行走 execute_tool_call_with_plan 同一条链（白名单→契约→门禁→容器）。
     let mut performed: Vec<(String, String)> = Vec::with_capacity(plan.beats.len());
-    let tool_defs_by_name: std::collections::HashMap<String, crate::llm::LlmToolDefinition> = configs
-        .actors
-        .iter()
-        .flat_map(|a| a.tools.iter().cloned())
-        .map(|tool_name| {
-            // 工具契约的 function-calling 清单（参数 schema 已在 collect_tool_plan
-            // 时随契约校验；执行走 execute_tool_call_with_plan 同一条链）。
-            (
-                tool_name.clone(),
-                crate::llm::LlmToolDefinition {
-                    name: tool_name.clone(),
-                    description: Some(format!("蓝图契约 {tool_name}")),
-                    input_schema: serde_json::Value::Null,
-                },
-            )
-        })
-        .collect();
 
     for (index, beat) in plan.beats.iter().enumerate() {
         let actor_def = beat
@@ -207,10 +286,23 @@ pub async fn run_director_actor_pipeline(
                 }
             }
         }
-        // 本镜台词纸条（导演 focus 指示）永远在场。
+        // 本镜台词纸条约束指示
         actor_system.push(format!(
             "你现在只出演这一镜：{}。只写这一镜的表演，不要替其他角色写戏，不要写总结。",
             beat.focus
+        ));
+
+        // 装配演员用户提示词：前序分镜演出 + 当前分镜任务（台词纸条）+ 玩家输入
+        let mut actor_user_prompt = String::new();
+        if !performed.is_empty() {
+            actor_user_prompt.push_str("【本轮前序分镜演出】\n");
+            for (prev_slot, prev_text) in &performed {
+                actor_user_prompt.push_str(&format!("分镜 {}:\n{}\n\n", prev_slot, prev_text));
+            }
+        }
+        actor_user_prompt.push_str(&format!(
+            "【当前分镜任务（台词纸条）】\n{}\n\n【玩家输入】\n{}",
+            beat.focus, user_input
         ));
 
         // 工具循环：蓝图 tools 非空的演员启用 function-calling 闭环。
@@ -255,7 +347,7 @@ pub async fn run_director_actor_pipeline(
                 SubAgentRequest {
                     label: &format!("演员 {}", beat.slot_id),
                     system: actor_system,
-                    user: user_input.to_string(),
+                    user: actor_user_prompt,
                     temperature: provider.temperature,
                     max_output_tokens: provider.max_tokens,
                 },
@@ -277,7 +369,7 @@ pub async fn run_director_actor_pipeline(
                 SubAgentRequest {
                     label: &format!("演员 {}", beat.slot_id),
                     system: actor_system,
-                    user: user_input.to_string(),
+                    user: actor_user_prompt,
                     temperature: provider.temperature,
                     max_output_tokens: provider.max_tokens,
                 },

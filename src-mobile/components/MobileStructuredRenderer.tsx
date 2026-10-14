@@ -14,11 +14,13 @@ interface MobileStructuredRendererProps {
  */
 export const MobileStructuredRenderer: Component<MobileStructuredRendererProps> = (props) => {
   const sortedFieldEntries = () => {
-    return Object.entries(props.response.fields).sort(([keyA], [keyB]) => {
-      const orderA = props.response.displayConfig[keyA]?.order ?? 0;
-      const orderB = props.response.displayConfig[keyB]?.order ?? 0;
-      return orderA - orderB;
-    });
+    return Object.entries(props.response.fields)
+      .filter(([key]) => !props.response.displayConfig[key]?.hidden)
+      .sort(([keyA], [keyB]) => {
+        const orderA = props.response.displayConfig[keyA]?.order ?? 0;
+        const orderB = props.response.displayConfig[keyB]?.order ?? 0;
+        return orderA - orderB;
+      });
   };
 
   return (

@@ -426,8 +426,23 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
     return { items, empties: new Array(empties).fill(0) };
   };
 
+  const containerClass = () => {
+    if (props.className) return props.className;
+    const mt = layout()?.mountType;
+    if (mt === 'rightDock') {
+      return 'fixed top-12 right-0 bottom-0 w-80 z-40 p-3 overflow-y-auto shadow-2xl';
+    }
+    if (mt === 'topSticky') {
+      return 'sticky top-0 z-30 w-full max-w-4xl mx-auto px-4 mb-2';
+    }
+    if (mt === 'floatingHUD') {
+      return 'fixed bottom-6 right-6 z-40 w-80 max-h-[75vh] overflow-y-auto shadow-2xl';
+    }
+    return 'w-full max-w-4xl mx-auto px-4 mb-2';
+  };
+
   return (
-    <div ref={hostEl} class={props.className || 'w-full max-w-4xl mx-auto px-4 mb-2'}>
+    <div ref={hostEl} class={containerClass()}>
       <Show when={shadowRoot()}>
         {(root) => (
           <Portal mount={root()}>

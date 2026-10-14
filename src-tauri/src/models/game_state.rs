@@ -198,6 +198,16 @@ impl DataContainer {
                 *roll_out = Some(roll);
                 Ok((roll as f64 + modifier) >= target_value)
             }
+            "custom" => {
+                if let Some(stat_key) = args.get("stat").and_then(serde_json::Value::as_str) {
+                    Ok(self.get_stat(stat_key) >= target_value)
+                } else {
+                    Ok(target_value > 0.0)
+                }
+            }
+            stat if self.stats.contains_key(stat) => {
+                Ok(self.get_stat(stat) >= target_value)
+            }
             other => Err(format!("未知的门禁判定类型: {}", other)),
         }
     }

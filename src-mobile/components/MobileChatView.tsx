@@ -6,9 +6,11 @@ import {
   listenLlmStreamEvent,
   listenStreamError,
   listenStreamRetry,
+  listenDiceRoll,
   presetsGet,
 } from '../../src/lib/backend';
 import type { UiMessage, LlmStreamEventPayload, StreamErrorEvent, StreamRetryEvent } from '../../src/lib/backend/types';
+import type { DiceRollEvent } from '../../src/lib/backend/events';
 import { parseStructuredResponse, parseStreamingFields, type StructuredDisplayConfig, deriveStructuredOutputDisplayFromGraphJson } from '../lib/structured';
 import { MobileStructuredRenderer } from './MobileStructuredRenderer';
 import { MobileSchemaCard } from './MobileSchemaCard';
@@ -17,6 +19,7 @@ import type { SchemaDefinition } from '../../src/lib/backend/types';
 import { MobileNativeThinkingBlock } from './MobileNativeThinkingBlock';
 import { MobilePersistentHud } from './MobilePersistentHud';
 import { MobileAgentDebugModal } from './MobileAgentDebugModal';
+import { MobileDiceRollCard } from './MobileDiceRollCard';
 import { showToast } from './Toast';
 
 interface MobileChatViewProps {
@@ -47,34 +50,55 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
   const [presetDisplayConfig, setPresetDisplayConfig] = createSignal<Record<string, StructuredDisplayConfig>>({});
   const [presetSchemas, setPresetSchemas] = createSignal<SchemaDefinition[]>([]);
   const [isDebugOpen, setIsDebugOpen] = createSignal(false);
+  const [diceCard, setDiceCard] = createSignal<DiceRollEvent | null>(null);
   let scrollRef: HTMLDivElement | undefined;
 
   createEffect(() => {
     const pid = props.presetId;
     if (!pid) {
       setPresetDisplayConfig({});
+      setPresetSchemas([]);
       return;
     }
-    presetsGet(pid).then((detail) => {
+    Promise.all([presetsGet(pid), presetSchemasList(pid).catch(() => [])]).then(([detail, schemas]) => {
+      setPresetSchemas(schemas);
+      let baseConfig: Record<string, StructuredDisplayConfig> = {};
       const raw = detail.preset.structuredOutputDisplay;
       if (raw) {
         try {
-          setPresetDisplayConfig(JSON.parse(raw));
-          return;
+          baseConfig = JSON.parse(raw);
         } catch {}
-      }
-      if (detail.preset.blueprintGraph) {
+      } else if (detail.preset.blueprintGraph) {
         const derived = deriveStructuredOutputDisplayFromGraphJson(detail.preset.blueprintGraph);
         if (derived) {
           try {
-            setPresetDisplayConfig(JSON.parse(derived));
-            return;
+            baseConfig = JSON.parse(derived);
           } catch {}
         }
       }
-      setPresetDisplayConfig({});
+      if (schemas.length > 0) {
+        for (const s of schemas) {
+          for (let idx = 0; idx < s.fields.length; idx++) {
+            const f = s.fields[idx];
+            const isInline = f.displayTarget === 'InlineMessage';
+            if (!baseConfig[f.name]) {
+              baseConfig[f.name] = {
+                defaultCollapsed: false,
+                hideLabel: isInline,
+                body: isInline,
+                order: idx,
+                hidden: !isInline,
+              };
+            } else {
+              baseConfig[f.name].hidden = !isInline;
+            }
+          }
+        }
+      }
+      setPresetDisplayConfig(baseConfig);
     }).catch(() => {
       setPresetDisplayConfig({});
+      setPresetSchemas([]);
     });
   });
 
@@ -273,6 +297,10 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
       if (payload.conversationId !== props.conversationId) return;
       showToast(`正在重试（${payload.attemptCount}）：${payload.error}`, 'info');
     });
+    const unlistenDice = await listenDiceRoll((payload: DiceRollEvent) => {
+      if (payload.sessionId !== props.conversationId) return;
+      setDiceCard(payload);
+    });
 
     await loadMessages();
 
@@ -280,6 +308,7 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
       unlistenStream();
       unlistenError();
       unlistenRetry();
+      unlistenDice();
     });
   });
 
@@ -370,6 +399,15 @@ export const MobileChatView: Component<MobileChatViewProps> = (props) => {
           conversationId={props.conversationId}
           onOpenDebug={() => setIsDebugOpen(true)}
         />
+      </Show>
+
+      {/* 不可篡改 d20 检定卡（计划 §6.3）：OS CSPRNG 骰值广播 */}
+      <Show when={diceCard()}>
+        {(card) => (
+          <div class="px-3 pt-2">
+            <MobileDiceRollCard roll={card()} />
+          </div>
+        )}
       </Show>
 
       {/* 消息列表 */}

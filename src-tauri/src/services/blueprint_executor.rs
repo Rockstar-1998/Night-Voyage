@@ -11,7 +11,7 @@ use crate::models::blueprint::{
     BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
     AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
     InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
-    ToolDefinitionConfig, ToolReturnConfig, WriterConfig,
+    ToolDefinitionConfig, ToolReturnConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -1403,10 +1403,7 @@ fn collect_tool_plan(
 pub fn extract_orchestration_configs(
     graph: &BlueprintGraph,
 ) -> Result<crate::models::blueprint::OrchestrationConfigs, BlueprintError> {
-    use crate::models::blueprint::{
-        ActorDefinition, AgentModeSwitchConfig, BannedWordsConfig, DirectorConfig,
-        OrchestrationConfigs, ScriptwriterPipelineConfig,
-    };
+    use crate::models::blueprint::{ActorDefinition, OrchestrationConfigs};
 
     let mut banned = None;
     let mut scriptwriter = None;
@@ -1415,12 +1412,12 @@ pub fn extract_orchestration_configs(
     let mut director = None;
     let mut actors: Vec<ActorDefinition> = Vec::new();
 
-    // 图中声明的全部 ToolCall 契约名（tools 引用校验的合法集）
-    let declared_tools: HashSet<String> = graph
+    // 图中声明的全部 ToolCall 契约（tools 引用校验的合法集与参数定义源）
+    let declared_tools: HashMap<String, crate::models::blueprint::ToolDefinitionConfig> = graph
         .nodes
         .iter()
         .filter_map(|n| match &n.config {
-            NodeConfig::ToolDefinition(cfg) => Some(cfg.tool_name.clone()),
+            NodeConfig::ToolDefinition(cfg) => Some((cfg.tool_name.clone(), cfg.clone())),
             _ => None,
         })
         .collect();
@@ -1477,7 +1474,7 @@ pub fn extract_orchestration_configs(
     // 工具引用校验：导演与每个演员的 tools 引用必须在图中有同名 ToolDefinition
     let validate_tools = |owner: &str, tools: &[String]| -> Result<(), BlueprintError> {
         for tool in tools {
-            if !declared_tools.contains(tool) {
+            if !declared_tools.contains_key(tool) {
                 return Err(BlueprintError::ToolReferenceNotFound {
                     owner: owner.to_string(),
                     tool: tool.clone(),
@@ -1500,6 +1497,7 @@ pub fn extract_orchestration_configs(
         agent_mode_switch_node_id: agent_mode_switch_id,
         director_config: director,
         actors,
+        declared_tool_definitions: declared_tools,
     })
 }
 

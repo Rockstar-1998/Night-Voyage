@@ -700,6 +700,7 @@ pub struct OrchestrationConfigs {
     pub agent_mode_switch_node_id: String,
     pub director_config: Option<DirectorConfig>,
     pub actors: Vec<ActorDefinition>,
+    pub declared_tool_definitions: std::collections::HashMap<String, ToolDefinitionConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

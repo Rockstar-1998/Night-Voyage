@@ -87,7 +87,7 @@ export const SchemaCardView: Component<SchemaCardViewProps> = (props) => {
         </span>
       </div>
 
-      <For each={props.fields}>
+      <For each={props.fields.filter((field) => field.displayTarget !== 'PersistentHUD')}>
         {(field) => (
           <Show when={props.values[field.name] !== undefined}>
             <div class="flex gap-2 text-xs py-0.5">

@@ -168,16 +168,10 @@ pub async fn run_scriptwriter_pipeline(
 
     // 阶段提示词消费蓝图 ScriptwriterStage 资产（B7：资产驱动，消除硬编码旁路）；
     // stages 数组按序执行（stage 名 = drafter/critic/refiner 时与既有行为对齐）。
-    let default_stages = [
-        ("drafter", "初稿", "你是剧本初稿作者。请按设定与用户输入写出这一段的完整正文，只输出正文本身。"),
-        ("critic", "批注", "你是严格的剧本批注者。指出初稿在人物一致性、节奏、逻辑连贯与用词机械感上的具体问题，         逐条给出可执行的修改方向；不要重写正文。"),
-        ("refiner", "润色", "你是剧本润色者。你要在不改变事实与走向的前提下提升文笔，并彻底消除机械感套话。"),
-    ];
     let stages: Vec<(String, String, String)> = if pipeline_cfg.stages.is_empty() {
-        default_stages
-            .iter()
-            .map(|(stage, label, prompt)| (stage.to_string(), label.to_string(), prompt.to_string()))
-            .collect()
+        return Err(
+            "ScriptwriterPipeline.stages 未配置阶段资产（至少需要 2 个阶段，如 draft 与 refiner，C2/C11 严禁代码硬编码兜底）".to_string()
+        );
     } else {
         pipeline_cfg
             .stages

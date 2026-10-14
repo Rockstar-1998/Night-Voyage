@@ -132,8 +132,6 @@ pub fn broadcast_hud_patch(
     }
 }
 
-use crate::dbg_eprintln;
-
 /// 报错文案里用的 JSON 类型名，避免把整段值打进错误信息。
 fn args_type_name(value: &serde_json::Value) -> &'static str {
     match value {
@@ -353,22 +351,9 @@ pub async fn execute_tool_call_with_plan(
         );
     }
 
-    if outcome.is_blocked {
-        // 被拦截：不落库、不广播，理由原样上抛给编排层回注。
-        return Err(outcome.text);
-    }
-
-    // 持久化模式（计划 §2.1"单次结算持久化"）：
-    // - 回合内（模型 ToolCall 回路）：只 stage 进内存工作副本，正文定稿后回合末单写；
-    // - 手动路径（调试台 / MCP，round_id=0）：立即落库——否则回合外操作永不持久。
-    stage_session_state(app, session_id, &state);
-    if persist_immediately {
-        flush_session_state_cache(db, app, session_id).await;
-    }
-    broadcast_hud_patch(app, session_id, &state, None);
-
     // 不可篡改检定卡广播（计划 §6.3）：d20 门禁的骰值以专用事件广播，
     // 前端据此渲染检定卡（结果由 OS CSPRNG 产出，非模型可操纵）。
+    // 无论是否被拦截（检定成功或失败），均必须向前端广播客观骰点事实（C2/A13）。
     if let Some(roll) = outcome.dice_roll {
         let dc = plan
             .steps
@@ -412,6 +397,20 @@ pub async fn execute_tool_call_with_plan(
             format!("工具 {tool_name} 的 d20 门禁判定"),
         );
     }
+
+    if outcome.is_blocked {
+        // 被拦截：不落库、不广播 HUD 补丁，理由原样上抛给编排层回注。
+        return Err(outcome.text);
+    }
+
+    // 持久化模式（计划 §2.1"单次结算持久化"）：
+    // - 回合内（模型 ToolCall 回路）：只 stage 进内存工作副本，正文定稿后回合末单写；
+    // - 手动路径（调试台 / MCP，round_id=0）：立即落库——否则回合外操作永不持久。
+    stage_session_state(app, session_id, &state);
+    if persist_immediately {
+        flush_session_state_cache(db, app, session_id).await;
+    }
+    broadcast_hud_patch(app, session_id, &state, None);
 
     crate::services::agent::timeline::emit(
         app,

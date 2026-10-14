@@ -12,6 +12,7 @@ export interface StructuredDisplayConfig {
   hideLabel?: boolean;
   body?: boolean;
   order?: number;
+  hidden?: boolean;
 }
 
 export interface StructuredResponse {

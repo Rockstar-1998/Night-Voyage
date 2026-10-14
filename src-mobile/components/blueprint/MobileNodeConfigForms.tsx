@@ -1521,5 +1521,21 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
           is_locked: false,
         },
       };
+    case 'inspector':
+      return { type: 'inspector', config: { inspect_kind: 'inventory', key_expr: '', is_locked: false } };
+    case 'querier':
+      return { type: 'querier', config: { command: '', args_template: {}, is_locked: false } };
+    case 'writer':
+      return { type: 'writer', config: { key_expr: '', value_template: '', is_locked: false } };
+    case 'banned_words_config':
+      return { type: 'banned_words_config', config: { words: [], max_nudge_retries: 2, nudge_instruction_template: '', is_locked: false } };
+    case 'scriptwriter_pipeline':
+      return { type: 'scriptwriter_pipeline', config: { stages: [], anchor_tail_chars: 50, blackout_marker: '【前文背景已锁定】', is_locked: false } };
+    case 'agent_mode_switch':
+      return { type: 'agent_mode_switch', config: { default_mode: 'single', max_tool_rounds: 5, is_locked: false } };
+    case 'director_config':
+      return { type: 'director_config', config: { director_prompt: '', tools: [], is_locked: false } };
+    case 'actor_definition':
+      return { type: 'actor_definition', config: { actor_name: '', persona: '', tools: [], is_locked: false } };
   }
 }

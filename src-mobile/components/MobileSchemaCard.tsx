@@ -62,7 +62,7 @@ export const MobileSchemaCard: Component<MobileSchemaCardProps> = (props) => {
           {confirmed() ? '已确认' : '待确认'}
         </span>
       </div>
-      <For each={props.fields}>
+      <For each={props.fields.filter((field) => field.displayTarget !== 'PersistentHUD')}>
         {(field) => (
           <Show when={props.values[field.name] !== undefined}>
             <div class="flex gap-2 text-[11px] py-0.5">
