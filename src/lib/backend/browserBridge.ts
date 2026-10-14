@@ -82,22 +82,33 @@ export function initBrowserBridge(): void {
 
         const data = json.data;
 
-        // 如果是 buy_item 成功执行，即刻发射 HUD 增量广播，触发前台 HUD 原地刷新
-        if (cmd === 'action_bridge_invoke' && args.command === 'buy_item') {
-          try {
-            const stateRes = await fetch('/__sqlite_ipc', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cmd: 'session_state_get', args: { sessionId: args.conversationId } }),
-            });
-            const stateJson = await stateRes.json();
-            if (stateJson.ok && stateJson.data) {
-              void emit('session:hud_state_patch', {
-                sessionId: args.conversationId,
-                state: stateJson.data,
+        // 凡是可能修改游戏状态的指令，成功后通用发射 HUD 增量广播（机制正交，零业务硬编码）
+        const stateMutatingCommands = [
+          'session_tool_call_execute',
+          'session_game_state_save',
+          'session_game_state_reset',
+          'action_bridge_invoke',
+        ];
+        if (stateMutatingCommands.includes(cmd)) {
+          const sId = args.sessionId || args.conversationId;
+          if (sId) {
+            try {
+              const stateRes = await fetch('/__sqlite_ipc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cmd: 'session_state_get', args: { sessionId: sId } }),
               });
-            }
-          } catch (_) {}
+              const stateJson = await stateRes.json();
+              if (stateJson.ok && stateJson.data) {
+                void emit('session:hud_state_patch', {
+                  sessionId: sId,
+                  stats: stateJson.data.stats,
+                  inventory: stateJson.data.inventory,
+                  flags: stateJson.data.flags,
+                });
+              }
+            } catch (_) {}
+          }
         }
 
         return data;

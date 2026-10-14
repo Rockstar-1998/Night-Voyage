@@ -88,6 +88,514 @@ function rowToUiLayoutDef(r) {
   };
 }
 
+// ─── DataContainer Defaults & Helpers (Agnostic Blueprint Engine) ───
+function defaultDataContainer() {
+  return {
+    stats: {
+      hp: 100,
+      max_hp: 100,
+      mp: 50,
+      max_mp: 50,
+      gold: 100,
+      weight: 0,
+      max_weight: 50,
+    },
+    inventory: [],
+    flags: {},
+    scratchpad: {},
+  };
+}
+
+function getStat(state, name) {
+  const key = name.startsWith('stats.') ? name.slice(6) : name;
+  return typeof state.stats[key] === 'number' ? state.stats[key] : (parseFloat(state.stats[key]) || 0);
+}
+
+function setStat(state, name, val) {
+  const key = name.startsWith('stats.') ? name.slice(6) : name;
+  state.stats[key] = val;
+}
+
+function totalWeight(state) {
+  return (state.inventory || []).reduce((sum, item) => sum + (Number(item.count) || 0) * (Number(item.unitWeight) || 0), 0);
+}
+
+function syncWeight(state) {
+  const w = totalWeight(state);
+  setStat(state, 'weight', w);
+  return w;
+}
+
+function splitBinary(expr, ops) {
+  for (let i = expr.length - 1; i >= 1; i--) {
+    const ch = expr[i];
+    if (!ops.includes(ch)) continue;
+    const left = expr.slice(0, i).trimEnd();
+    if (!left) continue;
+    const lastChar = left[left.length - 1];
+    if (!/[a-zA-Z0-9_)]/.test(lastChar)) continue;
+    const right = expr.slice(i + 1).trim();
+    if (!right) continue;
+    return { left, op: ch, right };
+  }
+  return null;
+}
+
+function resolveOperand(expr, args, state) {
+  const trimmed = String(expr).trim();
+  if (!trimmed) throw new Error('操作数表达式为空');
+  const num = Number(trimmed);
+  if (!Number.isNaN(num) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return num;
+  }
+
+  // 二元运算符优先级：先 + -，再 * / %
+  const precedence = [['+', '-'], ['*', '/', '%']];
+  for (const ops of precedence) {
+    const split = splitBinary(trimmed, ops);
+    if (split) {
+      const l = resolveOperand(split.left, args, state);
+      const r = resolveOperand(split.right, args, state);
+      switch (split.op) {
+        case '+': return l + r;
+        case '-': return l - r;
+        case '*': return l * r;
+        case '/':
+          if (r === 0) throw new Error('除数不可为零');
+          return l / r;
+        case '%':
+          if (r === 0) throw new Error('模运算除数不可为零');
+          return l % r;
+        default: throw new Error(`不支持的运算符: ${split.op}`);
+      }
+    }
+  }
+
+  const getArgNum = (k) => {
+    if (args[k] !== undefined && args[k] !== null) {
+      const v = Number(args[k]);
+      if (!Number.isNaN(v)) return v;
+    }
+    return null;
+  };
+
+  if (trimmed === 'count') {
+    const c = getArgNum('count');
+    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
+    return c;
+  }
+  if (trimmed === 'total_cost') {
+    const p = getArgNum('unit_price');
+    if (p === null) throw new Error('参数 `unit_price` 缺失或不是数值');
+    const c = getArgNum('count');
+    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
+    return p * c;
+  }
+  if (trimmed === 'added_weight') {
+    const w = getArgNum('unit_weight');
+    if (w === null) throw new Error('参数 `unit_weight` 缺失或不是数值');
+    const c = getArgNum('count');
+    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
+    return w * c;
+  }
+
+  if (trimmed.startsWith('args.')) {
+    const k = trimmed.slice(5);
+    const val = getArgNum(k);
+    if (val === null) throw new Error(`参数 \`${k}\` 不存在或不是数值`);
+    return val;
+  }
+  if (trimmed.startsWith('stats.')) {
+    const k = trimmed.slice(6);
+    return getStat(state, k);
+  }
+
+  const aVal = getArgNum(trimmed);
+  if (aVal !== null) return aVal;
+  if (state.stats && state.stats[trimmed] !== undefined) {
+    return getStat(state, trimmed);
+  }
+  throw new Error(`不支持的操作数表达式: \`${trimmed}\`（支持 args / stats）`);
+}
+
+function resolveDotted(path, obj) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    const part = p.trim();
+    if (!part || cur === null || cur === undefined) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+function stringifyValue(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (Array.isArray(val)) {
+    return val.map(stringifyValue).join('\n');
+  }
+  if (typeof val === 'object') {
+    return Object.entries(val).map(([k, v]) => `${k}: ${stringifyValue(v)}`).join('\n');
+  }
+  return String(val);
+}
+
+function renderTemplate(template, ctx) {
+  if (!template) return '';
+  return template.replace(/\{([^{}]+)\}/g, (match, key) => {
+    const trimmed = key.trim();
+    const resolved = resolveDotted(trimmed, ctx);
+    if (resolved !== undefined) {
+      return stringifyValue(resolved);
+    }
+    throw new Error(`模板占位符 \`${trimmed}\` 无法解析`);
+  });
+}
+
+function renderArgsTemplate(template, ctx) {
+  if (typeof template === 'string') {
+    return renderTemplate(template, ctx);
+  }
+  if (Array.isArray(template)) {
+    return template.map((item) => renderArgsTemplate(item, ctx));
+  }
+  if (template && typeof template === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(template)) {
+      out[k] = renderArgsTemplate(v, ctx);
+    }
+    return out;
+  }
+  return template;
+}
+
+function validateArgsAgainstSchema(args, schemaStr, toolName) {
+  if (!schemaStr) return;
+  let schema;
+  try {
+    schema = typeof schemaStr === 'string' ? JSON.parse(schemaStr) : schemaStr;
+  } catch (e) {
+    throw new Error(`契约 ${toolName} 的 parameters_schema 不是合法 JSON: ${e.message}`);
+  }
+  if (!schema || typeof schema !== 'object') {
+    throw new Error(`契约 ${toolName} 的 parameters_schema 必须是 JSON 对象`);
+  }
+
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  for (const field of required) {
+    if (args[field] === undefined || args[field] === null) {
+      throw new Error(`ToolCall \`${toolName}\` 缺少必填参数 \`${field}\`（契约 required: ${required.join(', ')}）`);
+    }
+  }
+
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const [field, spec] of Object.entries(schema.properties)) {
+      if (args[field] === undefined || args[field] === null) continue;
+      const val = args[field];
+      const expected = spec.type;
+      let ok = true;
+      if (expected === 'string') ok = typeof val === 'string';
+      else if (expected === 'number') ok = typeof val === 'number' && !Number.isNaN(val);
+      else if (expected === 'integer') ok = Number.isInteger(Number(val));
+      else if (expected === 'boolean') ok = typeof val === 'boolean';
+      else if (expected === 'array') ok = Array.isArray(val);
+      else if (expected === 'object') ok = typeof val === 'object' && val !== null && !Array.isArray(val);
+
+      if (!ok) {
+        throw new Error(`ToolCall \`${toolName}\` 的参数 \`${field}\` 类型应为 ${expected}，实际为 ${typeof val}`);
+      }
+    }
+  }
+}
+
+function getNextNodeId(graph, sourceId, portName) {
+  const edge = (graph.edges || []).find((e) => {
+    const s = e.source || e.source_node_id;
+    const sp = e.sourcePort || e.source_port || e.sourceHandle || e.port;
+    return s === sourceId && (!portName || sp === portName);
+  });
+  return edge ? (edge.target || edge.target_node_id) : null;
+}
+
+function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedArgs) {
+  // 1. 定位 ToolDefinition 节点
+  const defNode = (graph.nodes || []).find((n) => {
+    const cfg = n.config || n;
+    const type = (n.type || cfg.type || '').toLowerCase();
+    const name = cfg.tool_name || cfg.toolName || n.tool_name || n.toolName;
+    return (type === 'tool_definition' || type === 'tooldefinition') && name === toolName;
+  });
+
+  if (!defNode) {
+    throw new Error(`蓝图未定义契约「${toolName}」——当前会话预设的蓝图中没有该 ToolDefinition 链。请在蓝图中定义该契约后重试。`);
+  }
+
+  const defCfg = defNode.config || defNode;
+
+  // 2. 参数 Schema 校验
+  if (defCfg.parameters_schema || defCfg.parametersSchema) {
+    validateArgsAgainstSchema(parsedArgs, defCfg.parameters_schema || defCfg.parametersSchema, toolName);
+  }
+
+  // 3. 收集步骤链
+  const steps = [];
+  let successReturn = null;
+  let curId = getNextNodeId(graph, defNode.id, 'out');
+  let hops = 0;
+  while (curId && hops < 64) {
+    hops++;
+    const node = (graph.nodes || []).find((n) => n.id === curId);
+    if (!node) break;
+    const cfg = node.config || node;
+    const type = (node.type || cfg.type || '').toLowerCase();
+
+    if (type === 'calculator') {
+      steps.push({ kind: 'Calculate', config: cfg });
+      curId = getNextNodeId(graph, curId, 'out');
+    } else if (type === 'condition_gate' || type === 'conditiongate') {
+      steps.push({ kind: 'Gate', config: cfg });
+      curId = getNextNodeId(graph, curId, 'pass');
+    } else if (type === 'inspector') {
+      steps.push({ kind: 'Inspect', config: cfg });
+      curId = getNextNodeId(graph, curId, 'out');
+    } else if (type === 'querier') {
+      steps.push({ kind: 'Query', config: cfg });
+      curId = getNextNodeId(graph, curId, 'out');
+    } else if (type === 'writer') {
+      steps.push({ kind: 'Write', config: cfg });
+      curId = getNextNodeId(graph, curId, 'out');
+    } else if (type === 'tool_return' || type === 'toolreturn') {
+      successReturn = cfg;
+      break;
+    } else {
+      throw new Error(`工具链到达非法节点类型 \`${type}\` (node: ${curId})；工具链仅允许 calculator / condition_gate / inspector / querier / writer / tool_return`);
+    }
+  }
+
+  // 4. 读取会话当前游戏状态
+  const row = database.prepare(`SELECT state_json FROM session_states WHERE session_id = ?`).get(sessionId);
+  let state = defaultDataContainer();
+  if (row && row.state_json) {
+    try {
+      state = JSON.parse(row.state_json);
+      if (!state.stats) state.stats = {};
+      if (!Array.isArray(state.inventory)) state.inventory = [];
+      if (!state.flags) state.flags = {};
+      if (!state.scratchpad) state.scratchpad = {};
+    } catch (_) {
+      state = defaultDataContainer();
+    }
+  }
+
+  const ctx = {
+    args: parsedArgs,
+    stats: state.stats,
+    inspect: null,
+    query: null,
+  };
+
+  // 5. 顺序执行步骤
+  for (const step of steps) {
+    const cfg = step.config;
+    switch (step.kind) {
+      case 'Inspect': {
+        const inspectKind = cfg.inspect_kind || cfg.inspectKind || 'inventory';
+        switch (inspectKind) {
+          case 'inventory': {
+            ctx.inspect = {
+              items: state.inventory,
+              total_weight: totalWeight(state),
+              max_weight: getStat(state, 'max_weight'),
+              gold: getStat(state, 'gold'),
+            };
+            break;
+          }
+          case 'stats': {
+            ctx.inspect = { ...state.stats };
+            break;
+          }
+          case 'item': {
+            const keyExpr = cfg.key_expr || cfg.keyExpr || '';
+            const resolvedKey = renderTemplate(keyExpr, { args: parsedArgs, stats: state.stats, inspect: ctx.inspect, query: ctx.query }) || keyExpr;
+            const found = (state.inventory || []).find((i) => i.id === resolvedKey);
+            if (!found) {
+              throw new Error(`【查看失败】：背包中未找到 ID 为 [${resolvedKey}] 的物品`);
+            }
+            ctx.inspect = {
+              id: found.id,
+              name: found.name,
+              count: found.count,
+              unit_weight: found.unitWeight,
+              unit_price: found.unitPrice,
+            };
+            break;
+          }
+          case 'scratchpad': {
+            const keyExpr = cfg.key_expr || cfg.keyExpr || '';
+            const resolvedKey = renderTemplate(keyExpr, { args: parsedArgs, stats: state.stats, inspect: ctx.inspect, query: ctx.query }) || keyExpr;
+            const content = state.scratchpad ? state.scratchpad[resolvedKey] : undefined;
+            if (content === undefined) {
+              throw new Error(`工作区变量 \`${resolvedKey}\` 不存在`);
+            }
+            ctx.inspect = { key: resolvedKey, content };
+            break;
+          }
+          default:
+            throw new Error(`未知的 inspect_kind \`${inspectKind}\`（支持 inventory / stats / item / scratchpad）`);
+        }
+        break;
+      }
+
+      case 'Query': {
+        const renderedArgs = renderArgsTemplate(cfg.args_template || cfg.argsTemplate || {}, {
+          args: parsedArgs,
+          stats: state.stats,
+          inspect: ctx.inspect,
+          query: ctx.query,
+        });
+        const queryResult = handleCommand('action_bridge_invoke', {
+          command: cfg.command,
+          args: renderedArgs,
+          conversationId: sessionId,
+        });
+        ctx.query = queryResult;
+        break;
+      }
+
+      case 'Gate': {
+        const gateType = cfg.gate_type || cfg.gateType;
+        const expression = cfg.expression || '0';
+        const threshold = resolveOperand(expression, parsedArgs, state);
+        let passed = false;
+
+        if (gateType === 'gold') {
+          passed = getStat(state, 'gold') >= threshold;
+        } else if (gateType === 'weight') {
+          passed = totalWeight(state) + threshold <= getStat(state, 'max_weight');
+        } else if (gateType === 'slots') {
+          passed = (state.inventory || []).length < threshold;
+        } else if (gateType === 'd20') {
+          const d20 = Math.floor(Math.random() * 20) + 1;
+          const modifier = Number(parsedArgs.modifier) || 0;
+          passed = (d20 + modifier) >= threshold;
+        } else if (state.stats && state.stats[gateType] !== undefined) {
+          passed = getStat(state, gateType) >= threshold;
+        } else {
+          throw new Error(`未知的门禁判定类型: ${gateType}`);
+        }
+
+        if (!passed) {
+          const reason = (cfg.block_reason || cfg.blockReason || '').trim() ||
+            `【门禁拦截 - ${gateType}】判定未通过（阈值 ${threshold}）`;
+          throw new Error(reason);
+        }
+        break;
+      }
+
+      case 'Calculate': {
+        const op = cfg.op || 'set';
+        if (op === 'add_item') {
+          const item = {
+            id: String(parsedArgs.item_id || cfg.item_id || ('item_' + Date.now())),
+            name: String(parsedArgs.name || cfg.name || parsedArgs.item_id || '物品'),
+            count: Number(parsedArgs.count ?? cfg.count ?? 1),
+            unitWeight: Number(parsedArgs.unit_weight ?? cfg.unit_weight ?? 0),
+            unitPrice: Number(parsedArgs.unit_price ?? cfg.unit_price ?? 0),
+            icon: cfg.icon || '🗡️',
+            properties: cfg.properties || {},
+          };
+          const existing = state.inventory.find((i) => i.id === item.id);
+          if (existing) {
+            existing.count += item.count;
+          } else {
+            state.inventory.push(item);
+          }
+          syncWeight(state);
+        } else if (op === 'remove_item') {
+          const itemId = String(parsedArgs.item_id || cfg.item_id || '');
+          const count = Math.round(resolveOperand(cfg.operand_a || 'count', parsedArgs, state));
+          const idx = state.inventory.findIndex((i) => i.id === itemId);
+          if (idx === -1) throw new Error(`背包中不存在物品 ID: ${itemId}`);
+          if (state.inventory[idx].count < count) {
+            throw new Error(`物品 [${state.inventory[idx].name}] 数量不足！当前持有: ${state.inventory[idx].count}，尝试扣减: ${count}`);
+          }
+          state.inventory[idx].count -= count;
+          if (state.inventory[idx].count === 0) {
+            state.inventory.splice(idx, 1);
+          }
+          syncWeight(state);
+        } else if (op === 'recompute_weight') {
+          syncWeight(state);
+        } else {
+          const target = (cfg.target || '').replace(/^stats\./, '');
+          const operand = resolveOperand(cfg.operand_a, parsedArgs, state);
+          const cur = getStat(state, target);
+          let newVal;
+          switch (op) {
+            case '+': case 'add': newVal = cur + operand; break;
+            case '-': case 'sub': newVal = cur - operand; break;
+            case '*': case 'mul': newVal = cur * operand; break;
+            case '/':
+              if (operand === 0) throw new Error('除数不可为零');
+              newVal = cur / operand;
+              break;
+            case 'set': newVal = operand; break;
+            default: throw new Error(`不支持的运算操作符: ${op}`);
+          }
+          setStat(state, target, newVal);
+        }
+        break;
+      }
+
+      case 'Write': {
+        const key = renderTemplate(cfg.key_expr || cfg.keyExpr || '', {
+          args: parsedArgs,
+          stats: state.stats,
+          inspect: ctx.inspect,
+          query: ctx.query,
+        }).trim();
+        if (!key) throw new Error('Writer 节点的 key_expr 渲染结果为空，拒绝写入（C2）');
+        const value = renderTemplate(cfg.value_template || cfg.valueTemplate || '', {
+          args: parsedArgs,
+          stats: state.stats,
+          inspect: ctx.inspect,
+          query: ctx.query,
+        });
+        state.scratchpad[key] = value;
+        break;
+      }
+    }
+  }
+
+  // 6. 持久化写回 SQLite
+  database
+    .prepare(
+      `INSERT INTO session_states (session_id, state_json, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at`,
+    )
+    .run(sessionId, JSON.stringify(state), Date.now());
+
+  // 7. 回执装配
+  if (successReturn && (successReturn.return_template || successReturn.returnTemplate)) {
+    const tpl = (successReturn.return_template || successReturn.returnTemplate).trim();
+    if (tpl) {
+      return renderTemplate(tpl, {
+        args: parsedArgs,
+        stats: state.stats,
+        inspect: ctx.inspect,
+        query: ctx.query,
+      });
+    }
+  }
+
+  if (steps.length === 0) {
+    return `【${toolName}】参数校验通过（空链契约：仅注册校验，无容器变更）`;
+  }
+  return `【${toolName}】执行成功。当前金币: ${getStat(state, 'gold')}G，当前负重: ${totalWeight(state)}/${getStat(state, 'max_weight')}kg`;
+}
+
 function handleCommand(cmd, args) {
   const database = getDb();
 
@@ -235,6 +743,18 @@ function handleCommand(cmd, args) {
         )
         .all();
       return rows.map((r) => ({ ...r, tags: [] }));
+    }
+
+    case 'character_card_get': {
+      const charId = args.id || args.characterId;
+      const row = database
+        .prepare(
+          `SELECT id, name, card_type as cardType, image_path as imagePath, description,
+                  created_at as createdAt, updated_at as updatedAt
+           FROM character_cards WHERE id = ?`,
+        )
+        .get(charId);
+      return row || null;
     }
 
     // ─── World Books ───
@@ -563,15 +1083,7 @@ function handleCommand(cmd, args) {
           return JSON.parse(row.state_json);
         } catch (_) {}
       }
-      return {
-        stats: { hp: 100, max_hp: 100, mp: 50, max_mp: 50, gold: 10, weight: 3, max_weight: 50 },
-        inventory: [
-          { id: 'item_1', name: '铁铸长剑', count: 1, unitWeight: 2.5, unitPrice: 50, icon: '🗡️' },
-          { id: 'item_2', name: '微光治疗药剂', count: 2, unitWeight: 0.25, unitPrice: 20, icon: '🧪' },
-        ],
-        flags: {},
-        scratchpad: {},
-      };
+      return defaultDataContainer();
     }
 
     case 'session_game_state_save': {
@@ -589,15 +1101,7 @@ function handleCommand(cmd, args) {
 
     case 'session_game_state_reset': {
       const sessionId = args.sessionId || args.conversationId;
-      const initial = {
-        stats: { hp: 100, max_hp: 100, mp: 50, max_mp: 50, gold: 10, weight: 3, max_weight: 50 },
-        inventory: [
-          { id: 'item_1', name: '铁铸长剑', count: 1, unitWeight: 2.5, unitPrice: 50, icon: '🗡️' },
-          { id: 'item_2', name: '微光治疗药剂', count: 2, unitWeight: 0.25, unitPrice: 20, icon: '🧪' },
-        ],
-        flags: {},
-        scratchpad: {},
-      };
+      const initial = defaultDataContainer();
       database
         .prepare(
           `INSERT INTO session_states (session_id, state_json, updated_at) VALUES (?, ?, ?)
@@ -608,26 +1112,56 @@ function handleCommand(cmd, args) {
     }
 
     case 'session_tool_call_execute': {
-      const sessionId = args.sessionId || 35;
+      const sessionId = args.sessionId || args.conversationId;
+      if (!sessionId) {
+        throw new Error('执行 ToolCall 必须指定 sessionId');
+      }
       const toolName = args.toolName;
+      if (!toolName) {
+        throw new Error('执行 ToolCall 必须指定 toolName');
+      }
       let parsedArgs = {};
+      if (args.argumentsJson) {
+        try {
+          parsedArgs = typeof args.argumentsJson === 'string' ? JSON.parse(args.argumentsJson) : args.argumentsJson;
+        } catch (e) {
+          throw new Error(`ToolCall 参数不是合法 JSON（契约 ${toolName}）: ${e.message}`);
+        }
+      }
+
+      const conv = database.prepare(`SELECT preset_id FROM conversations WHERE id = ?`).get(sessionId);
+      if (!conv || !conv.preset_id) {
+        throw new Error(`蓝图未定义契约「${toolName}」——当前会话 ${sessionId} 未绑定预设`);
+      }
+
+      const preset = database.prepare(`SELECT blueprint_graph FROM presets WHERE id = ?`).get(conv.preset_id);
+      if (!preset || !preset.blueprint_graph) {
+        throw new Error(`蓝图未定义契约「${toolName}」——当前预设 ${conv.preset_id} 未保存蓝图`);
+      }
+
+      let graph;
       try {
-        if (args.argumentsJson) parsedArgs = JSON.parse(args.argumentsJson);
-      } catch (_) {}
-      return handleCommand('action_bridge_invoke', {
-        command: toolName,
-        args: parsedArgs,
-        conversationId: sessionId,
-      });
+        graph = JSON.parse(preset.blueprint_graph);
+      } catch (e) {
+        throw new Error(`预设 ${conv.preset_id} 的蓝图 JSON 损坏: ${e.message}`);
+      }
+
+      return executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedArgs);
     }
 
     case 'mcp_tool_names': {
       return [
-        { name: 'buy_item', description: '向商店购买指定道具（触发金币充足门禁校验与原子扣除）' },
-        { name: 'check_inventory', description: '查看角色背包中的所有物品道具清单、金币与负重' },
-        { name: 'get_character_detail', description: '获取当前NPC角色的详细外貌、身份与背景资料' },
-        { name: 'query_world_book_entries', description: '检索当前世界书中包含的所有设定条目与词条知识' },
-        { name: 'create_world_book_entry', description: '向当前世界书新增一条设定词条并落库' },
+        { name: 'nv_db_info', description: '报告本端点连接的 SQLite 库路径与关键表行数' },
+        { name: 'nv_conversations_list', description: '列出库中全部会话' },
+        { name: 'nv_session_state_raw', description: '读取 session_states.state_json 的原始字符串与长度' },
+        { name: 'nv_session_state_get', description: '调用后端 load_session_state 解析会话状态' },
+        { name: 'nv_tool_call_execute', description: '以指定参数执行一次 ToolCall 契约' },
+        { name: 'nv_preset_gate_select', description: '切换或覆写会话在某个门禁节点上的选中分支' },
+        { name: 'nv_session_state_reset', description: '重置会话状态为默认初始状态并广播' },
+        { name: 'nv_messages_list', description: '读取指定会话的最近消息' },
+        { name: 'nv_blueprint_get', description: '读取预设的蓝图图 JSON' },
+        { name: 'nv_blueprint_save', description: '写回预设的蓝图图 JSON' },
+        { name: 'nv_screenshot', description: '截取当前窗口' },
       ];
     }
 
@@ -691,6 +1225,7 @@ function handleCommand(cmd, args) {
     case 'action_bridge_invoke': {
       const cmdName = args.command;
       const cmdArgs = args.args || {};
+      const conversationId = args.conversationId || args.sessionId;
 
       // 1. 白名单检查（C2 约束：未注册严格显式报错）
       const whitelistRow = database.prepare(`SELECT value FROM settings WHERE key = 'action_bridge.command_whitelist'`).get();
@@ -700,98 +1235,80 @@ function handleCommand(cmd, args) {
       } catch (_) {}
 
       if (!whitelist.includes(cmdName)) {
-        throw new Error(`命令 ${cmdName} 未在动作白名单注册（当前白名单: [${whitelist.join(', ')}]）`);
+        throw new Error(`命令 \`${cmdName}\` 未在动作白名单注册（当前白名单: [${whitelist.join(', ')}]）；请在设置页登记后重试`);
       }
 
-      // 2. 命令路由
-      if (cmdName === 'get_character_detail') {
-        return {
-          name: '老矮人格罗姆',
-          role: '黑铁酒馆掌柜兼传奇锻造大师',
-          desc: '胡子扎着三个精钢铁环，腰间别着沉重的矮人锻造锤。',
-        };
-      }
-
-      if (cmdName === 'create_world_book_entry') {
-        const now = Date.now();
-        const worldBookId = 1;
-        const info = database
-          .prepare(
-            `INSERT INTO world_book_entries (world_book_id, title, content, is_enabled, trigger_mode, created_at, updated_at)
-             VALUES (?, ?, ?, 1, 'any', ?, ?)`,
-          )
-          .run(worldBookId, cmdArgs.title || '新人物档案', cmdArgs.content || '', now, now);
-        return { entryId: Number(info.lastInsertRowid), title: cmdArgs.title, status: 'created' };
-      }
-
-      if (cmdName === 'query_world_book_entries') {
-        const rows = database.prepare(`SELECT id, title, content FROM world_book_entries LIMIT 10`).all();
-        return rows;
-      }
-
-      if (cmdName === 'buy_item') {
-        const sessionId = args.conversationId || 35;
-        const row = database.prepare(`SELECT state_json FROM session_states WHERE session_id = ?`).get(sessionId);
-        let state = {
-          stats: { hp: 100, max_hp: 100, mp: 50, max_mp: 50, gold: 10, weight: 3, max_weight: 50 },
-          inventory: [],
-          flags: {},
-          scratchpad: {},
-        };
-        if (row && row.state_json) {
-          try {
-            state = JSON.parse(row.state_json);
-          } catch (_) {}
+      // 2. 真实后端分发（真实查表，杜绝写死业务数据）
+      switch (cmdName) {
+        case 'get_character_detail': {
+          let charId = cmdArgs.character_id;
+          if (charId == null && conversationId) {
+            const conv = database.prepare(`SELECT host_character_id FROM conversations WHERE id = ?`).get(conversationId);
+            if (conv) charId = conv.host_character_id;
+          }
+          if (charId == null) {
+            throw new Error('get_character_detail 缺少数值参数 character_id');
+          }
+          const card = database.prepare(`SELECT id, name, card_type as cardType, image_path as imagePath, description, created_at as createdAt, updated_at as updatedAt FROM character_cards WHERE id = ?`).get(charId);
+          if (!card) {
+            throw new Error(`未找到角色卡 (id: ${charId})`);
+          }
+          return card;
         }
 
-        const unitPrice = parseFloat(cmdArgs.unit_price ?? '50');
-        const count = parseInt(cmdArgs.count ?? '1', 10);
-        const totalCost = unitPrice * count;
-        const unitWeight = parseFloat(cmdArgs.unit_weight ?? '2');
+        case 'create_world_book_entry': {
+          if (!conversationId) {
+            throw new Error('会话未绑定，无法创建条目');
+          }
+          const conv = database.prepare(`SELECT world_book_id FROM conversations WHERE id = ?`).get(conversationId);
+          if (!conv || !conv.world_book_id) {
+            throw new Error('会话未绑定世界书，无法创建条目');
+          }
+          const title = (cmdArgs.title || '').trim();
+          const content = (cmdArgs.content || '').trim();
+          if (!title) throw new Error('create_world_book_entry 缺少 title 参数');
+          if (!content) throw new Error('create_world_book_entry 缺少 content 参数');
 
-        // ConditionGate 金币充足门禁（确定性判定）
-        if (state.stats.gold < totalCost) {
-          throw new Error(`交易失败: 金币不足！需要 ${totalCost} 金币，当前仅有 ${state.stats.gold} 金币`);
+          const now = Date.now();
+          const info = database
+            .prepare(
+              `INSERT INTO world_book_entries (world_book_id, title, content, trigger_mode, is_enabled, sort_order, created_at, updated_at)
+               VALUES (?, ?, ?, 'any', 1, 0, ?, ?)`,
+            )
+            .run(conv.world_book_id, title, content, now, now);
+          return {
+            entryId: Number(info.lastInsertRowid),
+            worldBookId: conv.world_book_id,
+            title,
+            content,
+          };
         }
 
-        // 放行：原子扣款与加道具
-        state.stats.gold -= totalCost;
-        state.stats.weight = (state.stats.weight || 0) + unitWeight * count;
-        state.inventory.push({
-          id: cmdArgs.item_id || 'item_' + Date.now(),
-          name: cmdArgs.name || cmdArgs.item_id || '新道具',
-          count,
-          unitWeight,
-          unitPrice,
-          icon: '🗡️',
-          properties: {},
-        });
-
-        // 真实写回 SQLite
-        database
-          .prepare(
-            `INSERT INTO session_states (session_id, state_json, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(session_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at`,
-          )
-          .run(sessionId, JSON.stringify(state), Date.now());
-
-        return `购买成功！扣除 ${totalCost} 金币，已获得道具*${count}，当前金币: ${state.stats.gold}G，当前负重: ${state.stats.weight}/${state.stats.max_weight}kg`;
-      }
-
-      if (cmdName === 'check_inventory') {
-        const sessionId = args.conversationId || 35;
-        const row = database.prepare(`SELECT state_json FROM session_states WHERE session_id = ?`).get(sessionId);
-        let state = { stats: {}, inventory: [] };
-        if (row && row.state_json) {
-          try {
-            state = JSON.parse(row.state_json);
-          } catch (_) {}
+        case 'query_world_book_entries': {
+          if (!conversationId) {
+            throw new Error('会话未绑定，无法检索条目');
+          }
+          const conv = database.prepare(`SELECT world_book_id FROM conversations WHERE id = ?`).get(conversationId);
+          if (!conv || !conv.world_book_id) {
+            throw new Error('会话未绑定世界书，无法检索条目');
+          }
+          const keyword = (cmdArgs.keyword || '').trim();
+          let rows;
+          if (keyword) {
+            rows = database.prepare(
+              `SELECT id, title, content FROM world_book_entries WHERE world_book_id = ? AND is_enabled = 1 AND (title LIKE ? OR content LIKE ?) ORDER BY id ASC LIMIT 20`,
+            ).all(conv.world_book_id, `%${keyword}%`, `%${keyword}%`);
+          } else {
+            rows = database.prepare(
+              `SELECT id, title, content FROM world_book_entries WHERE world_book_id = ? AND is_enabled = 1 ORDER BY id ASC LIMIT 20`,
+            ).all(conv.world_book_id);
+          }
+          return rows;
         }
-        const invList = (state.inventory || []).map((i) => `${i.name}*${i.count}`).join('、') || '空';
-        return `【背包清单】物品: ${invList}；金币: ${state.stats.gold || 0}G；负重: ${state.stats.weight || 0}kg`;
-      }
 
-      return { ok: true, command: cmdName, args: cmdArgs };
+        default:
+          throw new Error(`命令 \`${cmdName}\` 已在白名单但没有后端分发实现；请检查白名单与注册表一致性`);
+      }
     }
 
     default:
