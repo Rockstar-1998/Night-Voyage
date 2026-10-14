@@ -343,9 +343,7 @@ function computeNodeTitle(node: BlueprintNode): string {
     case 'actor_definition':
       return node.config.actor_name ? `Actor: ${node.config.actor_name}` : 'Actor Definition';
     case 'writer':
-      return 'Writer';
-    case 'writer':
-      return '工具链写原语（工作区）';
+      return 'Writer（工作区写原语）';
     case 'ui_layout_config':
       return node.config.mount_type ? `HUD: ${node.config.mount_type}` : 'UI Layout';
   }

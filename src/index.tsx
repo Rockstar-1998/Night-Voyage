@@ -1,7 +1,10 @@
 /* @refresh reload */
 import { render } from 'solid-js/web';
 import './index.css';
+import { initBrowserBridge } from './lib/backend/browserBridge';
 import App from './App';
+
+initBrowserBridge();
 
 const root = document.getElementById('root');
 
