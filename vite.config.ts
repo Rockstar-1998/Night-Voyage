@@ -1,11 +1,13 @@
 import { defineConfig } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
+import { createSqliteIpcMiddleware } from './scripts/sqlite_ipc_middleware.mjs';
 
 const startupProbePlugin = {
     name: 'night-voyage-startup-probe',
-    configureServer(server: { middlewares: { use: (handler: (req: { method?: string; url?: string }, res: { statusCode?: number; on: (event: string, listener: () => void) => void }, next: () => void) => void) => void } }) {
-        server.middlewares.use((req, res, next) => {
+    configureServer(server: any) {
+        server.middlewares.use(createSqliteIpcMiddleware());
+        server.middlewares.use((req: any, res: any, next: any) => {
             const url = req.url ?? '';
             const isInterestingRequest =
                 url === '/' ||

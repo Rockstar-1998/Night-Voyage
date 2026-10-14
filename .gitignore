@@ -83,3 +83,6 @@ scratch/
 .zcode/
 .zcodeignore
 temp_old.json
+.agents/
+gatekeeper.cmd
+hooks.json
