@@ -28,8 +28,8 @@ pub struct DataContainer {
     /// 剧情标志位 / 进度状态字典
     #[serde(default)]
     pub flags: HashMap<String, String>,
-    /// 纯内存文本工作区变量 (如 draft, critique, final)，仅用于生命周期流转
-    #[serde(default)]
+    /// 纯内存文本工作区变量 (如 draft, critique, final)，仅用于生命周期流转，不持久化落盘
+    #[serde(default, skip_serializing)]
     pub scratchpad: HashMap<String, String>,
 }
 
