@@ -4,9 +4,9 @@
 
 **Blocked by:** 02: Blueprint-Driven Initial State & Genre-Neutral Engine Models
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `resolve_operand` is decoupled from hardcoded matches for `"total_cost"` and `"added_weight"`.
-- [ ] Operand evaluation supports generic variable lookup from tool arguments and active game state attributes.
-- [ ] Mathematical expressions (e.g. `[op1] * [op2]`) or blueprint `Calculator` outputs resolve dynamically.
-- [ ] Attempting to evaluate an undefined variable returns a descriptive error rather than silent failure.
+- [x] `resolve_operand` is decoupled from hardcoded matches for `"total_cost"` and `"added_weight"`.
+- [x] Operand evaluation supports generic variable lookup from tool arguments and active game state attributes.
+- [x] Mathematical expressions (e.g. `[op1] * [op2]`) or blueprint `Calculator` outputs resolve dynamically.
+- [x] Attempting to evaluate an undefined variable returns a descriptive error rather than silent failure.

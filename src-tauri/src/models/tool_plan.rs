@@ -291,88 +291,135 @@ impl ToolOutcome {
     }
 }
 
+/// 去除表达式两端匹配的成对括号 `(...)` 或方括号 `[...]`。
+fn strip_enclosing_delimiters(mut expr: &str) -> &str {
+    loop {
+        let s = expr.trim();
+        if s.len() >= 2 {
+            let first = s.chars().next().unwrap();
+            let last = s.chars().last().unwrap();
+            let matches = (first == '(' && last == ')') || (first == '[' && last == ']');
+            if matches {
+                let mut depth = 0;
+                let mut fully_enclosed = true;
+                for (idx, ch) in s.char_indices() {
+                    if ch == '(' || ch == '[' {
+                        depth += 1;
+                    } else if ch == ')' || ch == ']' {
+                        depth -= 1;
+                        if depth == 0 && idx < s.len() - ch.len_utf8() {
+                            fully_enclosed = false;
+                            break;
+                        }
+                    }
+                }
+                if fully_enclosed && depth == 0 {
+                    expr = s[first.len_utf8()..s.len() - last.len_utf8()].trim();
+                    continue;
+                }
+            }
+        }
+        return s;
+    }
+}
+
 /// 解析操作数表达式。
 ///
 /// 支持（按优先级从低到高）：
 /// 1. 二元 `+` / `-`（左右递归求值）；
 /// 2. 二元 `*` / `/` / `%`；
-/// 3. 数值字面量；
-/// 4. 变量：`args.<k>`（或裸 `<k>`，若该 key 在参数里）、`stats.<k>`、裸状态名（`gold`/`weight`/…）；
-/// 5. 派生量：`count`（参数 count，缺省 1）、`total_cost` = `unit_price * count`、
-///    `added_weight` = `unit_weight * count`。
+/// 3. 数值字面量（如 `10.5`）；
+/// 4. 变量查找：
+///    - 参数查找：`args.<k>` 或裸 `<k>`（若该 key 在调用参数中）；
+///    - 状态属性查找：`stats.<k>` 或裸 `<k>`（若该 key 在 active game state 中）；
+/// 5. 括号与方括号分组（如 `(a + b)` 或 `[op1] * [op2]`）。
 ///
-/// 无法识别一律 `Err`——不做"未知当 0"的兜底，否则门禁会静默失效（C2）。
+/// 无法识别或未定义的操作数一律返回 `Err`（C2 拒绝静默兜底为 0 或软截断）。
 pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Result<f64, String> {
-    let expr = expr.trim();
-    if expr.is_empty() {
+    let s = strip_enclosing_delimiters(expr);
+    if s.is_empty() {
         return Err("操作数表达式为空".to_string());
-    }
-    if let Ok(value) = expr.parse::<f64>() {
-        return Ok(value);
     }
 
     // 先低优先级（+ -），再高优先级（* / %），实现最简的两级优先级。
     let precedence: [&[char]; 2] = [&['+', '-'], &['*', '/', '%']];
     for ops in precedence {
-        if let Some((left, op, right)) = split_binary(expr, ops) {
+        if let Some((left, op, right)) = split_binary(s, ops) {
             let l = resolve_operand(left, args, state)?;
             let r = resolve_operand(right, args, state)?;
             return apply_binary(op, l, r);
         }
     }
 
-    let arg_number = |key: &str| args.get(key).and_then(Value::as_f64);
-    let required_arg = |key: &str| -> Result<f64, String> {
-        arg_number(key).ok_or_else(|| {
-            format!(
-                "参数 `{}` 缺失或不是数值——请在契约 parameters_schema.required 中声明，并在调用时提供（C2 拒绝静默取 0/1）",
-                key
-            )
-        })
-    };
-    match expr {
-        "count" => required_arg("count"),
-        "total_cost" => Ok(required_arg("unit_price")? * required_arg("count")?),
-        "added_weight" => Ok(required_arg("unit_weight")? * required_arg("count")?),
-        other => {
-            let (prefix, key) = other
-                .split_once('.')
-                .map_or((None, other), |(p, k)| (Some(p), k));
-            match prefix {
-                Some("args") => arg_number(key)
-                    .ok_or_else(|| format!("参数 `{}` 不存在或不是数值", key)),
-                Some("stats") => Ok(state.get_stat(key)),
-                Some(unknown) => Err(format!("不支持的操作数前缀 `{}`（支持 args / stats）", unknown)),
-                None => arg_number(key)
-                    .map(Ok)
-                    .unwrap_or_else(|| Ok(state.get_stat(key))),
-            }
-        }
+    // 数值字面量
+    if let Ok(value) = s.parse::<f64>() {
+        return Ok(value);
     }
+
+    // 点路径带前缀变量查找 (args.<k> / stats.<k>)
+    if let Some((prefix, key)) = s.split_once('.') {
+        let key = key.trim();
+        return match prefix {
+            "args" => match args.get(key) {
+                Some(val) => val
+                    .as_f64()
+                    .ok_or_else(|| format!("参数 `{}` 不是数值", key)),
+                None => Err(format!("操作数或变量 `{}` 未定义（参数 `{}` 不存在）", s, key)),
+            },
+            "stats" => state
+                .stats
+                .get(key)
+                .copied()
+                .ok_or_else(|| format!("操作数或变量 `{}` 未定义（属性 `{}` 不存在）", s, key)),
+            unknown => Err(format!(
+                "操作数或变量 `{}` 未定义（不支持的前缀 `{}`，仅支持 args / stats）",
+                s, unknown
+            )),
+        };
+    }
+
+    // 裸标识符查找：优先参数 args，其次状态属性 state.stats
+    if let Some(val) = args.get(s) {
+        return val.as_f64().ok_or_else(|| format!("参数 `{}` 不是数值", s));
+    }
+    if let Some(&val) = state.stats.get(s) {
+        return Ok(val);
+    }
+
+    Err(format!("操作数或变量 `{}` 未定义", s))
 }
 
 /// 按给定运算符集合切分表达式（保留左结合，最右侧的运算符先切）。
+/// 考虑括号/方括号深度，只在深度为 0 处切分。
 fn split_binary<'a>(expr: &'a str, ops: &[char]) -> Option<(&'a str, char, &'a str)> {
-    let bytes = expr.as_bytes();
-    for idx in (1..bytes.len()).rev() {
-        let ch = expr[idx..].chars().next()?;
-        if !ops.contains(&ch) {
+    let mut depth: i32 = 0;
+    let chars: Vec<(usize, char)> = expr.char_indices().collect();
+    for i in (1..chars.len()).rev() {
+        let (idx, ch) = chars[i];
+        if ch == ')' || ch == ']' {
+            depth += 1;
             continue;
         }
-        // 跳过一元正负号：若运算符左侧不是数字/变量结尾，视为符号而非二元运算
-        let left = expr[..idx].trim_end();
-        if left.is_empty() {
+        if ch == '(' || ch == '[' {
+            depth -= 1;
             continue;
         }
-        let prev = left.chars().last()?;
-        if !(prev.is_alphanumeric() || prev == '_' || prev == ')') {
-            continue;
+        if depth == 0 && ops.contains(&ch) {
+            // 跳过一元正负号：若运算符左侧不是数字/变量/闭括号结尾，视为符号而非二元运算
+            let left = expr[..idx].trim_end();
+            if left.is_empty() {
+                continue;
+            }
+            let prev = left.chars().last()?;
+            if !(prev.is_alphanumeric() || prev == '_' || prev == ')' || prev == ']') {
+                continue;
+            }
+            let right = expr[idx + ch.len_utf8()..].trim();
+            if right.is_empty() {
+                continue;
+            }
+            return Some((left, ch, right));
         }
-        let right = expr[idx + ch.len_utf8()..].trim();
-        if right.is_empty() {
-            continue;
-        }
-        return Some((left, ch, right));
     }
     None
 }
@@ -666,8 +713,8 @@ fn build_item_from(config: &CalculatorConfig, args: &Value) -> Result<InventoryI
 }
 
 /// 渲染回执模版：`{点路径}` 占位符逐个求值——先在上下文栈（args / stats /
-/// inspect / query）里按点路径解析；解析不到再回退到既有操作数表达式
-/// （`total_cost` 等派生量），保证旧模板向后兼容。
+/// inspect / query）里按点路径解析；解析不到再回退到动态操作数表达式
+/// （如 `{unit_price * count}` 等），保证动态计算与模板解析一致。
 fn render_return_template(
     template: &str,
     args: &Value,
@@ -731,16 +778,42 @@ mod tests {
         assert_eq!(resolve_operand("count", &args, &state).unwrap(), 4.0);
         assert_eq!(resolve_operand("gold", &args, &state).unwrap(), 100.0);
         assert_eq!(resolve_operand("stats.gold", &args, &state).unwrap(), 100.0);
-        assert_eq!(resolve_operand("total_cost", &args, &state).unwrap(), 200.0);
-        assert_eq!(resolve_operand("added_weight", &args, &state).unwrap(), 6.0);
+        // 动态四则表达式替代硬编码的 total_cost 与 added_weight
         assert_eq!(resolve_operand("unit_price * count", &args, &state).unwrap(), 200.0);
+        assert_eq!(resolve_operand("unit_weight * count", &args, &state).unwrap(), 6.0);
+        assert_eq!(resolve_operand("[unit_price] * [count]", &args, &state).unwrap(), 200.0);
+        assert_eq!(resolve_operand("(unit_price * count) - 50", &args, &state).unwrap(), 150.0);
+        // 未定义变量一律返回 Err，拒绝静默取 0 或硬编码公式
+        assert!(resolve_operand("total_cost", &args, &state).is_err());
+        assert!(resolve_operand("added_weight", &args, &state).is_err());
     }
 
     #[test]
     fn unknown_operand_is_an_error_not_zero() {
         let state = DataContainer::default();
         let err = resolve_operand("args.missing", &json!({}), &state).unwrap_err();
-        assert!(err.contains("不存在"), "unexpected: {err}");
+        assert!(err.contains("不存在") || err.contains("未定义"), "unexpected: {err}");
+
+        let err2 = resolve_operand("missing_var", &json!({}), &state).unwrap_err();
+        assert!(err2.contains("未定义"), "unexpected: {err2}");
+
+        let err3 = resolve_operand("stats.missing_stat", &json!({}), &state).unwrap_err();
+        assert!(err3.contains("未定义") || err3.contains("不存在"), "unexpected: {err3}");
+    }
+
+    #[test]
+    fn resolves_genre_neutral_attributes_and_complex_expressions() {
+        let mut state = DataContainer::default();
+        state.set_stat("sanity", 85.0);
+        state.set_stat("credits", 500.0);
+        let args = json!({"burst_rate": 3.5, "duration": 10.0, "bonus": 5.0});
+
+        assert_eq!(resolve_operand("sanity", &args, &state).unwrap(), 85.0);
+        assert_eq!(resolve_operand("stats.credits", &args, &state).unwrap(), 500.0);
+        assert_eq!(resolve_operand("burst_rate * duration", &args, &state).unwrap(), 35.0);
+        assert_eq!(resolve_operand("[burst_rate] * [duration] + bonus", &args, &state).unwrap(), 40.0);
+        assert_eq!(resolve_operand("stats.credits - (burst_rate * duration)", &args, &state).unwrap(), 465.0);
+        assert_eq!(resolve_operand("duration % 3", &args, &state).unwrap(), 1.0);
     }
 
     /// 测试用跨域读回调：未注册命令一律报错（Query 语义由 action_bridge 提供）。
@@ -775,7 +848,7 @@ mod tests {
             steps: vec![
                 ToolStep::Gate(ConditionGateConfig {
                     gate_type: "gold".into(),
-                    expression: "total_cost".into(),
+                    expression: "unit_price * count".into(),
                     pass_label: "放行".into(),
                     blocked_label: "拦截".into(),
                     block_reason: "金币不足".into(),
@@ -785,7 +858,7 @@ mod tests {
                     calc_mode: "math".into(),
                     target: "stats.gold".into(),
                     op: "-".into(),
-                    operand_a: "total_cost".into(),
+                    operand_a: "unit_price * count".into(),
                     operand_b: None,
                     item_def: None,
                     is_locked: false,
@@ -808,7 +881,7 @@ mod tests {
             steps: vec![
                 ToolStep::Gate(ConditionGateConfig {
                     gate_type: "gold".into(),
-                    expression: "total_cost".into(),
+                    expression: "unit_price * count".into(),
                     pass_label: "放行".into(),
                     blocked_label: "拦截".into(),
                     block_reason: String::new(),
@@ -818,7 +891,7 @@ mod tests {
                     calc_mode: "math".into(),
                     target: "stats.gold".into(),
                     op: "-".into(),
-                    operand_a: "total_cost".into(),
+                    operand_a: "unit_price * count".into(),
                     operand_b: None,
                     item_def: None,
                     is_locked: false,
