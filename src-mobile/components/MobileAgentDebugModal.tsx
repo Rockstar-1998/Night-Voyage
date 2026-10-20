@@ -36,9 +36,11 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
   const [toolName, setToolName] = createSignal('');
   const [toolArgs, setToolArgs] = createSignal('');
 
-  const [skill, setSkill] = createSignal('感知');
-  const [dc, setDc] = createSignal(12);
-  const [mod, setMod] = createSignal(2);
+  const [skill, setSkill] = createSignal('');
+  const [dc, setDc] = createSignal<number | ''>('');
+  const [mod, setMod] = createSignal<number | ''>('');
+
+  const availableStats = () => Object.keys(container()?.stats || {});
 
   const loadState = async () => {
     if (!props.conversationId) return;
@@ -138,7 +140,10 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
 
   const handleDiceRoll = async () => {
     try {
-      const res = await agentDiceRoll(skill(), Number(dc()), Number(mod()));
+      const skillName = skill().trim() || '检定';
+      const dcVal = typeof dc() === 'number' && !Number.isNaN(dc()) ? Number(dc()) : 10;
+      const modVal = typeof mod() === 'number' && !Number.isNaN(mod()) ? Number(mod()) : 0;
+      const res = await agentDiceRoll(skillName, dcVal, modVal);
       setDiceResult(res);
 
       const newEv: TimelineEvent = {
@@ -415,24 +420,47 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
                       type="text"
                       value={skill()}
                       onInput={(e) => setSkill(e.currentTarget.value)}
-                      placeholder="技能"
-                      class="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1 text-white"
+                      placeholder="属性/技能"
+                      class="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1 text-white placeholder:text-mist-solid/25"
                     />
                     <input
                       type="number"
                       value={dc()}
-                      onInput={(e) => setDc(Number(e.currentTarget.value))}
+                      onInput={(e) => setDc(e.currentTarget.value === '' ? '' : Number(e.currentTarget.value))}
                       placeholder="DC"
-                      class="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-white"
+                      class="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-white placeholder:text-mist-solid/25"
                     />
                     <input
                       type="number"
                       value={mod()}
-                      onInput={(e) => setMod(Number(e.currentTarget.value))}
+                      onInput={(e) => setMod(e.currentTarget.value === '' ? '' : Number(e.currentTarget.value))}
                       placeholder="Mod"
-                      class="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-white"
+                      class="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-white placeholder:text-mist-solid/25"
                     />
                   </div>
+                  {/* 可用属性快捷填充 */}
+                  <Show when={availableStats().length > 0}>
+                    <div class="flex flex-wrap gap-1 items-center pt-1">
+                      <span class="text-[10px] text-mist-solid/40">容器属性:</span>
+                      <For each={availableStats()}>
+                        {(stat) => (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSkill(stat);
+                              const val = container()?.stats[stat];
+                              if (typeof val === 'number') {
+                                setMod(val);
+                              }
+                            }}
+                            class="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-mist-solid/80 hover:text-white"
+                          >
+                            {stat}: {container()?.stats[stat]}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                   <button
                     onClick={handleDiceRoll}
                     class="w-full py-1.5 bg-amber-500/20 text-amber-300 font-bold rounded"

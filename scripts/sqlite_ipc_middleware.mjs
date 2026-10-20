@@ -91,15 +91,7 @@ function rowToUiLayoutDef(r) {
 // ─── DataContainer Defaults & Helpers (Agnostic Blueprint Engine) ───
 function defaultDataContainer() {
   return {
-    stats: {
-      hp: 100,
-      max_hp: 100,
-      mp: 50,
-      max_mp: 50,
-      gold: 100,
-      weight: 0,
-      max_weight: 50,
-    },
+    stats: {},
     inventory: [],
     flags: {},
     scratchpad: {},
@@ -108,7 +100,12 @@ function defaultDataContainer() {
 
 function getStat(state, name) {
   const key = name.startsWith('stats.') ? name.slice(6) : name;
-  return typeof state.stats[key] === 'number' ? state.stats[key] : (parseFloat(state.stats[key]) || 0);
+  if (state.stats && state.stats[key] !== undefined) {
+    const v = Number(state.stats[key]);
+    if (!Number.isNaN(v)) return v;
+    throw new Error(`属性 \`${key}\` 不是合法数值`);
+  }
+  return 0;
 }
 
 function setStat(state, name, val) {
@@ -122,7 +119,9 @@ function totalWeight(state) {
 
 function syncWeight(state) {
   const w = totalWeight(state);
-  setStat(state, 'weight', w);
+  if (w > 0 || (state.stats && state.stats.weight !== undefined)) {
+    setStat(state, 'weight', w);
+  }
   return w;
 }
 
@@ -526,8 +525,8 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
             ctx.inspect = {
               items: state.inventory,
               total_weight: totalWeight(state),
-              max_weight: getStat(state, 'max_weight'),
-              gold: getStat(state, 'gold'),
+              max_weight: state.stats?.max_weight,
+              gold: state.stats?.gold,
             };
             break;
           }

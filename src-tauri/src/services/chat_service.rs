@@ -2402,20 +2402,17 @@ pub async fn build_context_snapshot(
             }
         };
 
-    let (host_base_sections, _host_preset_placeholder, _host_world_book_placeholder, _host_provider_placeholder): (Option<String>, Option<String>, Option<String>, Option<String>) =
-        match host_character_id {
-            Some(card_id) => {
-                let card = crate::commands::characters::character_card_get(db, card_id)
-                    .await
-                    .ok();
-                let host_base_sections = card
-                    .as_ref()
-                    .map(|c| serde_json::to_string(&c.base_sections).unwrap_or_default())
-                    .filter(|s| !s.is_empty() && s != "[]");
-                (host_base_sections, None, None, None)
-            }
-            None => (None, None, None, None),
-        };
+    let host_base_sections: Option<String> = match host_character_id {
+        Some(card_id) => {
+            let card = crate::commands::characters::character_card_get(db, card_id)
+                .await
+                .ok();
+            card.as_ref()
+                .map(|c| serde_json::to_string(&c.base_sections).unwrap_or_default())
+                .filter(|s| !s.is_empty() && s != "[]")
+        }
+        None => None,
+    };
 
     let host_preset_name = sqlx::query_scalar::<_, String>(
         "SELECT p.name FROM conversations c LEFT JOIN presets p ON p.id = c.preset_id WHERE c.id = ? LIMIT 1",

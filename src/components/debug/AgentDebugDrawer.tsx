@@ -48,11 +48,13 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
   const [customToolArgs, setCustomToolArgs] = createSignal('');
   const [toolResult, setToolResult] = createSignal<string | null>(null);
 
-  // 骰点与禁词测试
-  const [diceSkill, setDiceSkill] = createSignal('察觉');
-  const [diceDc, setDiceDc] = createSignal(12);
-  const [diceMod, setDiceMod] = createSignal(3);
+  // 骰点与禁词测试（C11：默认留空，支持动态内窥当前容器 stats 属性）
+  const [diceSkill, setDiceSkill] = createSignal('');
+  const [diceDc, setDiceDc] = createSignal<number | ''>('');
+  const [diceMod, setDiceMod] = createSignal<number | ''>('');
   const [diceResult, setDiceResult] = createSignal<DiceRollResult | null>(null);
+
+  const availableStats = () => Object.keys(container()?.stats || {});
 
   const [bannedTestText, setBannedTestText] = createSignal('');
   const [bannedResult, setBannedResult] = createSignal<string | null>(null);
@@ -194,7 +196,10 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
 
   const handleRollDice = async () => {
     try {
-      const res = await agentDiceRoll(diceSkill(), Number(diceDc()), Number(diceMod()));
+      const skillName = diceSkill().trim() || '检定';
+      const dcVal = typeof diceDc() === 'number' && !Number.isNaN(diceDc()) ? Number(diceDc()) : 10;
+      const modVal = typeof diceMod() === 'number' && !Number.isNaN(diceMod()) ? Number(diceMod()) : 0;
+      const res = await agentDiceRoll(skillName, dcVal, modVal);
       setDiceResult(res);
       const newEv: TimelineEvent = {
         id: String(Date.now()),
@@ -495,21 +500,29 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                   </div>
                   <div class="grid grid-cols-3 gap-2">
                     <div>
-                      <label class="text-[10px] text-mist-solid/40 uppercase">技能名称</label>
+                      <label class="text-[10px] text-mist-solid/40 uppercase">属性 / 技能</label>
                       <input
                         type="text"
+                        list="debug-drawer-stats-list"
                         value={diceSkill()}
                         onInput={(e) => setDiceSkill(e.currentTarget.value)}
-                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                        placeholder="留空或选属性"
+                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-mist-solid/25"
                       />
+                      <datalist id="debug-drawer-stats-list">
+                        <For each={availableStats()}>
+                          {(stat) => <option value={stat} />}
+                        </For>
+                      </datalist>
                     </div>
                     <div>
                       <label class="text-[10px] text-mist-solid/40 uppercase">难度 DC</label>
                       <input
                         type="number"
                         value={diceDc()}
-                        onInput={(e) => setDiceDc(Number(e.currentTarget.value))}
-                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                        onInput={(e) => setDiceDc(e.currentTarget.value === '' ? '' : Number(e.currentTarget.value))}
+                        placeholder="10"
+                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-mist-solid/25"
                       />
                     </div>
                     <div>
@@ -517,11 +530,37 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                       <input
                         type="number"
                         value={diceMod()}
-                        onInput={(e) => setDiceMod(Number(e.currentTarget.value))}
-                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                        onInput={(e) => setDiceMod(e.currentTarget.value === '' ? '' : Number(e.currentTarget.value))}
+                        placeholder="0"
+                        class="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-mist-solid/25"
                       />
                     </div>
                   </div>
+
+                  {/* 动态内窥：当前容器属性快捷选择 */}
+                  <Show when={availableStats().length > 0}>
+                    <div class="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span class="text-[10px] text-mist-solid/40">容器属性快捷注入:</span>
+                      <For each={availableStats()}>
+                        {(stat) => (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDiceSkill(stat);
+                              const val = container()?.stats[stat];
+                              if (typeof val === 'number') {
+                                setDiceMod(val);
+                              }
+                            }}
+                            class="px-2 py-0.5 rounded text-[10px] bg-white/5 hover:bg-amber-500/20 text-mist-solid hover:text-amber-300 border border-white/5 hover:border-amber-500/30 transition-all"
+                          >
+                            {stat}: {container()?.stats[stat]}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+
                   <button
                     onClick={handleRollDice}
                     class="w-full py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded text-xs font-bold text-amber-300 transition-all"

@@ -553,19 +553,23 @@ pub async fn providers_fetch_models(
         provider.model_name
     );
     let start = Instant::now();
-    let mut models = if provider.provider_kind == PROVIDER_KIND_ANTHROPIC {
-        match try_fetch_models_from_api(&client, &provider, &models_url).await {
-            Ok(fetched) => fetched,
-            Err(_) => {
+    let mut models = match try_fetch_models_from_api(&client, &provider, &models_url).await {
+        Ok(fetched) => fetched,
+        Err(err) => {
+            // 若端点拉取失败但服务商配置了明确模型，则以配置模型为准；否则如实抛出 API 错误（C2）
+            if !provider.model_name.trim().is_empty() {
                 dbg_eprintln!(
-                    "[provider-debug] providers_fetch_models:anthropic_fallback provider_id={} url={}",
-                    provider.id, models_url
+                    "[provider-debug] providers_fetch_models: dynamic fetch failed ({}), using configured model: {}",
+                    err, provider.model_name
                 );
-                hardcoded_anthropic_models()
+                vec![RemoteModel {
+                    id: provider.model_name.trim().to_string(),
+                    owned_by: Some(provider.provider_kind.clone()),
+                }]
+            } else {
+                return Err(err);
             }
         }
-    } else {
-        try_fetch_models_from_api(&client, &provider, &models_url).await?
     };
 
     models.sort_by(|left, right| left.id.cmp(&right.id));
@@ -1070,45 +1074,4 @@ async fn try_fetch_models_from_api(
             })
         })
         .collect::<Vec<_>>())
-}
-
-fn hardcoded_anthropic_models() -> Vec<RemoteModel> {
-    vec![
-        RemoteModel {
-            id: "claude-sonnet-4-20250514".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-5-sonnet-20241022".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-5-sonnet-latest".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-5-haiku-20241022".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-5-haiku-latest".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-opus-20240229".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-opus-latest".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-haiku-20240307".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-        RemoteModel {
-            id: "claude-3-sonnet-20240229".to_string(),
-            owned_by: Some("anthropic".to_string()),
-        },
-    ]
 }
