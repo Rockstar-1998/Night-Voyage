@@ -126,28 +126,64 @@ function syncWeight(state) {
   return w;
 }
 
+function stripEnclosingDelimiters(expr) {
+  let s = String(expr).trim();
+  while (s.length >= 2) {
+    const first = s[0];
+    const last = s[s.length - 1];
+    const matches = (first === '(' && last === ')') || (first === '[' && last === ']');
+    if (!matches) break;
+    let depth = 0;
+    let fullyEnclosed = true;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '(' || ch === '[') {
+        depth++;
+      } else if (ch === ')' || ch === ']') {
+        depth--;
+        if (depth === 0 && i < s.length - 1) {
+          fullyEnclosed = false;
+          break;
+        }
+      }
+    }
+    if (fullyEnclosed && depth === 0) {
+      s = s.slice(1, -1).trim();
+    } else {
+      break;
+    }
+  }
+  return s;
+}
+
 function splitBinary(expr, ops) {
+  let depth = 0;
   for (let i = expr.length - 1; i >= 1; i--) {
     const ch = expr[i];
-    if (!ops.includes(ch)) continue;
-    const left = expr.slice(0, i).trimEnd();
-    if (!left) continue;
-    const lastChar = left[left.length - 1];
-    if (!/[a-zA-Z0-9_)]/.test(lastChar)) continue;
-    const right = expr.slice(i + 1).trim();
-    if (!right) continue;
-    return { left, op: ch, right };
+    if (ch === ')' || ch === ']') {
+      depth++;
+      continue;
+    }
+    if (ch === '(' || ch === '[') {
+      depth--;
+      continue;
+    }
+    if (depth === 0 && ops.includes(ch)) {
+      const left = expr.slice(0, i).trimEnd();
+      if (!left) continue;
+      const lastChar = left[left.length - 1];
+      if (!/[a-zA-Z0-9_\])]/.test(lastChar)) continue;
+      const right = expr.slice(i + 1).trim();
+      if (!right) continue;
+      return { left, op: ch, right };
+    }
   }
   return null;
 }
 
-function resolveOperand(expr, args, state) {
-  const trimmed = String(expr).trim();
+function resolveOperand(expr, args = {}, state = { stats: {} }) {
+  const trimmed = stripEnclosingDelimiters(expr);
   if (!trimmed) throw new Error('操作数表达式为空');
-  const num = Number(trimmed);
-  if (!Number.isNaN(num) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return num;
-  }
 
   // 二元运算符优先级：先 + -，再 * / %
   const precedence = [['+', '-'], ['*', '/', '%']];
@@ -171,51 +207,43 @@ function resolveOperand(expr, args, state) {
     }
   }
 
+  const num = Number(trimmed);
+  if (!Number.isNaN(num) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return num;
+  }
+
   const getArgNum = (k) => {
-    if (args[k] !== undefined && args[k] !== null) {
+    if (args && args[k] !== undefined && args[k] !== null) {
       const v = Number(args[k]);
       if (!Number.isNaN(v)) return v;
+      throw new Error(`参数 \`${k}\` 不是数值`);
     }
     return null;
   };
 
-  if (trimmed === 'count') {
-    const c = getArgNum('count');
-    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
-    return c;
-  }
-  if (trimmed === 'total_cost') {
-    const p = getArgNum('unit_price');
-    if (p === null) throw new Error('参数 `unit_price` 缺失或不是数值');
-    const c = getArgNum('count');
-    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
-    return p * c;
-  }
-  if (trimmed === 'added_weight') {
-    const w = getArgNum('unit_weight');
-    if (w === null) throw new Error('参数 `unit_weight` 缺失或不是数值');
-    const c = getArgNum('count');
-    if (c === null) throw new Error('参数 `count` 缺失或不是数值');
-    return w * c;
-  }
-
   if (trimmed.startsWith('args.')) {
-    const k = trimmed.slice(5);
+    const k = trimmed.slice(5).trim();
     const val = getArgNum(k);
-    if (val === null) throw new Error(`参数 \`${k}\` 不存在或不是数值`);
+    if (val === null) throw new Error(`操作数或变量 \`${trimmed}\` 未定义（参数 \`${k}\` 不存在）`);
     return val;
   }
   if (trimmed.startsWith('stats.')) {
-    const k = trimmed.slice(6);
-    return getStat(state, k);
+    const k = trimmed.slice(6).trim();
+    if (state && state.stats && state.stats[k] !== undefined) {
+      return getStat(state, k);
+    }
+    throw new Error(`操作数或变量 \`${trimmed}\` 未定义（属性 \`${k}\` 不存在）`);
+  }
+  if (trimmed.includes('.')) {
+    throw new Error(`操作数或变量 \`${trimmed}\` 未定义（不支持的前缀，仅支持 args / stats）`);
   }
 
   const aVal = getArgNum(trimmed);
   if (aVal !== null) return aVal;
-  if (state.stats && state.stats[trimmed] !== undefined) {
+  if (state && state.stats && state.stats[trimmed] !== undefined) {
     return getStat(state, trimmed);
   }
-  throw new Error(`不支持的操作数表达式: \`${trimmed}\`（支持 args / stats）`);
+  throw new Error(`操作数或变量 \`${trimmed}\` 未定义`);
 }
 
 function resolveDotted(path, obj) {
@@ -249,6 +277,12 @@ function renderTemplate(template, ctx) {
     const resolved = resolveDotted(trimmed, ctx);
     if (resolved !== undefined) {
       return stringifyValue(resolved);
+    }
+    if (ctx && (ctx.args || ctx.stats)) {
+      try {
+        const val = resolveOperand(trimmed, ctx.args || {}, { stats: ctx.stats || {} });
+        return stringifyValue(val);
+      } catch (_) {}
     }
     throw new Error(`模板占位符 \`${trimmed}\` 无法解析`);
   });
