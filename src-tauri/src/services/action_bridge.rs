@@ -1,15 +1,126 @@
 //! 动作与跨域读的统一治理层（spec：L3 动作通道 / L2 Querier）。
 //!
 //! 白名单是**设置数据**（`settings` 表），不是代码枚举：ActionButton 的用户动作
-//! 与 Querier 的跨域读共用同一份 `action_bridge.command_whitelist`，未注册命令
-//! 一律显式报错（I2，默认空白名单 = 注册前不可用）。后端分发用注册表把白名单
-//! 命令名接到**既有命令实现**上——注册表是基础设施接线，域语义仍在蓝图资产的
-//! 命令名与参数模板里。
+//! 与 Querier 的跨域读共用同一份 `action_bridge.command_whitelist`，未在白名单中
+//! 的命令一律显式报错（I2 / C2 零静默回退，默认空白名单 = 注册前不可用）。
+//! 后端分发采用可扩展命令路由注册表 (`ActionBridgeRouter`) 将白名单命令动态映射到具体处理器。
 
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
+
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
 pub const WHITELIST_SETTING_KEY: &str = "action_bridge.command_whitelist";
+
+/// 动态命令处理器签名：接收数据库连接池、会话 ID 和参数 JSON，返回异步执行结果。
+pub type ActionCommandHandler =
+    Arc<dyn for<'a> Fn(&'a SqlitePool, i64, &'a Value) -> BoxFuture<'a, Result<Value, String>> + Send + Sync>;
+
+/// 可扩展 ActionBridge 命令路由器
+#[derive(Clone)]
+pub struct ActionBridgeRouter {
+    handlers: HashMap<String, ActionCommandHandler>,
+}
+
+impl ActionBridgeRouter {
+    /// 创建一个空的命令路由器。
+    pub fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
+        }
+    }
+
+    /// 创建预置内置命令处理器的路由器。
+    pub fn with_builtins() -> Self {
+        let mut router = Self::new();
+        router.register("query_world_book_entries", |db, conv_id, args| {
+            Box::pin(query_world_book_entries(db, conv_id, args))
+        });
+        router.register("get_character_detail", |db, _conv_id, args| {
+            Box::pin(get_character_detail(db, args))
+        });
+        router.register("create_world_book_entry", |db, conv_id, args| {
+            Box::pin(create_world_book_entry(db, conv_id, args))
+        });
+        router.register("get_conversation_detail", |db, conv_id, args| {
+            Box::pin(get_conversation_detail(db, conv_id, args))
+        });
+        router.register("get_session_state", |db, conv_id, args| {
+            Box::pin(get_session_state(db, conv_id, args))
+        });
+        router
+    }
+
+    /// 注册一个命令处理器。
+    pub fn register<F>(&mut self, command: impl Into<String>, handler: F) -> &mut Self
+    where
+        F: for<'a> Fn(&'a SqlitePool, i64, &'a Value) -> BoxFuture<'a, Result<Value, String>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.handlers.insert(command.into(), Arc::new(handler));
+        self
+    }
+
+    /// 移除已注册命令。
+    pub fn unregister(&mut self, command: &str) -> Option<ActionCommandHandler> {
+        self.handlers.remove(command)
+    }
+
+    /// 检查命令是否已注册处理器。
+    pub fn has_command(&self, command: &str) -> bool {
+        self.handlers.contains_key(command)
+    }
+
+    /// 获取命令处理器。
+    pub fn get_handler(&self, command: &str) -> Option<ActionCommandHandler> {
+        self.handlers.get(command).cloned()
+    }
+
+    /// 执行命令分发。
+    pub async fn dispatch(
+        &self,
+        db: &SqlitePool,
+        conversation_id: i64,
+        command: &str,
+        args: &Value,
+    ) -> Result<Value, String> {
+        if let Some(handler) = self.get_handler(command) {
+            handler(db, conversation_id, args).await
+        } else {
+            Err(format!("命令 `{command}` 已在白名单但尚未注册后端处理器"))
+        }
+    }
+}
+
+impl Default for ActionBridgeRouter {
+    fn default() -> Self {
+        Self::with_builtins()
+    }
+}
+
+static GLOBAL_ROUTER: OnceLock<RwLock<ActionBridgeRouter>> = OnceLock::new();
+
+/// 获取全局默认命令路由器的读写锁。
+pub fn global_router() -> &'static RwLock<ActionBridgeRouter> {
+    GLOBAL_ROUTER.get_or_init(|| RwLock::new(ActionBridgeRouter::with_builtins()))
+}
+
+/// 向全局默认路由器动态注册新命令处理器。
+pub fn register_command<F>(command: impl Into<String>, handler: F)
+where
+    F: for<'a> Fn(&'a SqlitePool, i64, &'a Value) -> BoxFuture<'a, Result<Value, String>>
+        + Send
+        + Sync
+        + 'static,
+{
+    if let Ok(mut router) = global_router().write() {
+        router.register(command, handler);
+    }
+}
 
 /// 读取白名单。未写入过 = 空白名单（I2：动作件注册前显式报错）。
 pub async fn load_whitelist(db: &SqlitePool) -> Result<Vec<String>, String> {
@@ -41,16 +152,13 @@ pub async fn save_whitelist(db: &SqlitePool, commands: &[String]) -> Result<(), 
     Ok(())
 }
 
-/// 白名单校验：未注册命令显式报错（附当前白名单摘要，便于设置页排障）。
+/// 白名单校验：未在白名单中显式报错（C2 零静默回退）。
 pub async fn ensure_allowed(db: &SqlitePool, command: &str) -> Result<(), String> {
     let whitelist = load_whitelist(db).await?;
     if whitelist.iter().any(|c| c == command) {
         Ok(())
     } else {
-        Err(format!(
-            "命令 `{command}` 未在动作白名单注册（当前白名单: [{}]）；请在设置页登记后重试",
-            whitelist.join(", ")
-        ))
+        Err(format!("命令 `{command}` 未在当前会话的预设白名单中"))
     }
 }
 
@@ -66,23 +174,36 @@ pub async fn invoke(
     dispatch(db, conversation_id, command, args).await
 }
 
-/// 后端分发注册表：白名单命令名 → 既有命令实现。
-///
-/// 注册表是基础设施接线（把名字接到既有命令域）；新增可代理命令时在此登记
-/// 一行，域语义仍由蓝图资产的命令名与参数模板表达。
-async fn dispatch(
+/// 支持指定自定义路由器的执行入口（供单测与隔离环境）。
+pub async fn invoke_with_router(
+    router: &ActionBridgeRouter,
     db: &SqlitePool,
     conversation_id: i64,
     command: &str,
     args: &Value,
 ) -> Result<Value, String> {
-    match command {
-        "query_world_book_entries" => query_world_book_entries(db, conversation_id, args).await,
-        "get_character_detail" => get_character_detail(db, args).await,
-        "create_world_book_entry" => create_world_book_entry(db, conversation_id, args).await,
-        other => Err(format!(
-            "命令 `{other}` 已在白名单但没有后端分发实现；请检查白名单与注册表一致性"
-        )),
+    ensure_allowed(db, command).await?;
+    router.dispatch(db, conversation_id, command, args).await
+}
+
+/// 后端分发路由：白名单命令名 → 已注册命令实现。
+pub async fn dispatch(
+    db: &SqlitePool,
+    conversation_id: i64,
+    command: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    let handler = {
+        let router = global_router()
+            .read()
+            .map_err(|err| format!("读取全局命令路由失败: {err}"))?;
+        router.get_handler(command)
+    };
+
+    if let Some(handler) = handler {
+        handler(db, conversation_id, args).await
+    } else {
+        Err(format!("命令 `{command}` 已在白名单但尚未注册后端处理器"))
     }
 }
 
@@ -218,4 +339,189 @@ async fn query_world_book_entries(
         }
     }
     Ok(Value::Array(hits))
+}
+
+/// `get_conversation_detail`：按会话 ID 获取会话详情元数据
+async fn get_conversation_detail(
+    db: &SqlitePool,
+    conversation_id: i64,
+    args: &Value,
+) -> Result<Value, String> {
+    let conv_id = args
+        .get("conversation_id")
+        .or_else(|| args.get("id"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+        .unwrap_or(conversation_id);
+
+    let row = sqlx::query(
+        "SELECT id, conversation_type, title, host_character_id, world_book_id, preset_id, \
+         provider_id, embedding_provider_id, chat_mode, agent_provider_policy, memory_mode, \
+         mem0_snapshot_window, created_at, updated_at \
+         FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(conv_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let Some(row) = row else {
+        return Err(format!("未找到 ID 为 {conv_id} 的会话记录"));
+    };
+
+    Ok(serde_json::json!({
+        "id": row.try_get::<i64, _>("id").unwrap_or(conv_id),
+        "conversationType": row.try_get::<String, _>("conversation_type").unwrap_or_default(),
+        "title": row.try_get::<String, _>("title").unwrap_or_default(),
+        "hostCharacterId": row.try_get::<Option<i64>, _>("host_character_id").ok().flatten(),
+        "worldBookId": row.try_get::<Option<i64>, _>("world_book_id").ok().flatten(),
+        "presetId": row.try_get::<Option<i64>, _>("preset_id").ok().flatten(),
+        "providerId": row.try_get::<Option<i64>, _>("provider_id").ok().flatten(),
+        "embeddingProviderId": row.try_get::<Option<i64>, _>("embedding_provider_id").ok().flatten(),
+        "chatMode": row.try_get::<String, _>("chat_mode").unwrap_or_default(),
+        "agentProviderPolicy": row.try_get::<String, _>("agent_provider_policy").unwrap_or_default(),
+        "memoryMode": row.try_get::<String, _>("memory_mode").unwrap_or_default(),
+        "mem0SnapshotWindow": row.try_get::<Option<i64>, _>("mem0_snapshot_window").ok().flatten(),
+        "createdAt": row.try_get::<String, _>("created_at").unwrap_or_default(),
+        "updatedAt": row.try_get::<String, _>("updated_at").unwrap_or_default(),
+    }))
+}
+
+/// `get_session_state`：按会话 ID 获取当前数据容器状态 (DataContainer)
+async fn get_session_state(
+    db: &SqlitePool,
+    conversation_id: i64,
+    args: &Value,
+) -> Result<Value, String> {
+    let session_id = args
+        .get("session_id")
+        .or_else(|| args.get("conversation_id"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+        .unwrap_or(conversation_id);
+
+    let state = crate::services::agent_runtime::load_session_state(db, session_id).await?;
+    serde_json::to_value(state).map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite::memory:");
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_command_rejection() {
+        let pool = setup_test_db().await;
+
+        let err = ensure_allowed(&pool, "unwhitelisted_cmd")
+            .await
+            .expect_err("should reject unwhitelisted command");
+        assert_eq!(err, "命令 `unwhitelisted_cmd` 未在当前会话的预设白名单中");
+
+        let invoke_err = invoke(&pool, 1, "unwhitelisted_cmd", &json!({}))
+            .await
+            .expect_err("should reject invoke of unwhitelisted command");
+        assert_eq!(invoke_err, "命令 `unwhitelisted_cmd` 未在当前会话的预设白名单中");
+    }
+
+    #[tokio::test]
+    async fn test_whitelisted_but_unregistered_command() {
+        let pool = setup_test_db().await;
+        save_whitelist(&pool, &["cmd_without_handler".to_string()])
+            .await
+            .expect("save whitelist");
+
+        let err = invoke(&pool, 1, "cmd_without_handler", &json!({}))
+            .await
+            .expect_err("should fail when command has no backend handler");
+        assert_eq!(err, "命令 `cmd_without_handler` 已在白名单但尚未注册后端处理器");
+    }
+
+    #[tokio::test]
+    async fn test_custom_router_registration_and_dispatch() {
+        let pool = setup_test_db().await;
+        let mut router = ActionBridgeRouter::new();
+
+        router.register("calculate_sum", |_db, _conv_id, args| {
+            Box::pin(async move {
+                let a = args.get("a").and_then(Value::as_i64).unwrap_or(0);
+                let b = args.get("b").and_then(Value::as_i64).unwrap_or(0);
+                Ok(json!({ "sum": a + b }))
+            })
+        });
+
+        save_whitelist(&pool, &["calculate_sum".to_string()])
+            .await
+            .expect("save whitelist");
+
+        let res = invoke_with_router(&router, &pool, 42, "calculate_sum", &json!({ "a": 15, "b": 27 }))
+            .await
+            .expect("dispatch calculate_sum");
+        assert_eq!(res["sum"], 42);
+
+        let unauth = invoke_with_router(&router, &pool, 42, "unknown_cmd", &json!({}))
+            .await
+            .expect_err("unauthorized should fail");
+        assert_eq!(unauth, "命令 `unknown_cmd` 未在当前会话的预设白名单中");
+    }
+
+    #[tokio::test]
+    async fn test_builtin_get_conversation_detail() {
+        let pool = setup_test_db().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, conversation_type, title, chat_mode, memory_mode, created_at, updated_at) \
+             VALUES (99, 'single', 'Test Adventure', 'normal', 'legacy', '2026-01-01', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert conversation");
+
+        save_whitelist(&pool, &["get_conversation_detail".to_string()])
+            .await
+            .expect("save whitelist");
+
+        let res = invoke(&pool, 99, "get_conversation_detail", &json!({}))
+            .await
+            .expect("invoke get_conversation_detail");
+
+        assert_eq!(res["id"], 99);
+        assert_eq!(res["title"], "Test Adventure");
+        assert_eq!(res["conversationType"], "single");
+    }
+
+    #[tokio::test]
+    async fn test_builtin_get_session_state() {
+        let pool = setup_test_db().await;
+
+        save_whitelist(&pool, &["get_session_state".to_string()])
+            .await
+            .expect("save whitelist");
+
+        let res = invoke(&pool, 1, "get_session_state", &json!({}))
+            .await
+            .expect("invoke get_session_state");
+
+        assert!(res.is_object());
+    }
 }

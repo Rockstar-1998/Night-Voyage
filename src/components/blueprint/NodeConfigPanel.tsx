@@ -86,6 +86,7 @@ import { ConditionGateNode } from './nodes/ConditionGateNode';
 import { ToolReturnNode } from './nodes/ToolReturnNode';
 import { UiLayoutConfigNode } from './nodes/UiLayoutConfigNode';
 import { InitialStateConfigNode } from './nodes/InitialStateConfigNode';
+import { QuerierNode } from './nodes/QuerierNode';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -284,6 +285,14 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onUpdate(nodeId, {
       type: 'initial_state_config',
       config: { ...(props.node!.config as InitialStateConfig), ...updates },
+    });
+  const updateQuerier = (
+    nodeId: string,
+    updates: Partial<QuerierConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'querier',
+      config: { ...(props.node!.config as QuerierConfig), ...updates },
     });
 
   return (
@@ -493,15 +502,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                   </div>
                 </Match>
                 <Match when={node().type === 'querier'}>
-                  <div class="space-y-3">
-                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Command（须在白名单）</label>
-                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
-                      value={(node().config as QuerierConfig).command}
-                      onChange={(e) => updateNode(node().id, { command: e.currentTarget.value })}
-                      placeholder="query_world_book_entries"
-                    />
-                    <p class="text-xs text-mist-solid/40">args_template 经蓝图 JSON 编辑（当前: {JSON.stringify((node().config as QuerierConfig).args_template)}）</p>
-                  </div>
+                  <QuerierNode
+                    config={node().config as QuerierConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateQuerier(node().id, updates)}
+                  />
                 </Match>
                 <Match when={node().type === 'writer'}>
                   <div class="space-y-3">

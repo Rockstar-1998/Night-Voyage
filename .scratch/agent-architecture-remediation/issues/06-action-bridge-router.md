@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] ActionBridge dispatcher uses a command router registry supporting any authorized system command declared in the preset whitelist.
-- [ ] Attempting to dispatch an unwhitelisted or unregistered command returns an explicit authorization or dispatch error.
-- [ ] Desktop `NodeConfigPanel` renders an interactive visual builder for `Querier` node `args_template`, replacing the "经蓝图 JSON 编辑" placeholder text.
-- [ ] Whitelisted queries and actions execute successfully through the dynamic dispatch bridge.
+- [x] ActionBridge dispatcher uses a command router registry supporting any authorized system command declared in the preset whitelist.
+- [x] Attempting to dispatch an unwhitelisted or unregistered command returns an explicit authorization or dispatch error.
+- [x] Desktop `NodeConfigPanel` renders an interactive visual builder for `Querier` node `args_template`, replacing the "经蓝图 JSON 编辑" placeholder text.
+- [x] Whitelisted queries and actions execute successfully through the dynamic dispatch bridge.
