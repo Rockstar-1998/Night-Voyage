@@ -4,9 +4,9 @@
 
 **Blocked by:** 01: In-Memory Text Scratchpad & Native Tool Pipeline
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Scriptwriter pipeline runner executes an arbitrary ordered list of stages from the blueprint configuration instead of hardcoded 3-phase execution.
-- [ ] Director actor enforces scene beat extraction via standard `InvokeSchema` structured schema validation, removing hardcoded prompt text directives.
-- [ ] Desktop `NodeConfigPanel` renders a visual stage list editor (add, remove, reorder, configure) for `ScriptwriterPipeline` nodes, eliminating raw JSON editing.
-- [ ] Multi-stage pipeline runs end-to-end with dynamic stages passing text through the in-memory scratchpad.
+- [x] Scriptwriter pipeline runner executes an arbitrary ordered list of stages from the blueprint configuration instead of hardcoded 3-phase execution.
+- [x] Director actor enforces scene beat extraction via standard `InvokeSchema` structured schema validation, removing hardcoded prompt text directives.
+- [x] Desktop `NodeConfigPanel` renders a visual stage list editor (add, remove, reorder, configure) for `ScriptwriterPipeline` nodes, eliminating raw JSON editing.
+- [x] Multi-stage pipeline runs end-to-end with dynamic stages passing text through the in-memory scratchpad.

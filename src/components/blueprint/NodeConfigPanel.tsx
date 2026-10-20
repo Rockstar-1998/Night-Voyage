@@ -87,6 +87,7 @@ import { ToolReturnNode } from './nodes/ToolReturnNode';
 import { UiLayoutConfigNode } from './nodes/UiLayoutConfigNode';
 import { InitialStateConfigNode } from './nodes/InitialStateConfigNode';
 import { QuerierNode } from './nodes/QuerierNode';
+import { ScriptwriterPipelineNode } from './nodes/ScriptwriterPipelineNode';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -539,19 +540,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                   </div>
                 </Match>
                 <Match when={node().type === 'scriptwriter_pipeline'}>
-                  <div class="space-y-3">
-                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Anchor Tail Chars</label>
-                    <input type="number" class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
-                      value={(node().config as ScriptwriterPipelineConfig).anchor_tail_chars}
-                      onChange={(e) => updateNode(node().id, { anchor_tail_chars: Number(e.currentTarget.value) })}
-                    />
-                    <label class="block text-xs font-bold uppercase tracking-wider text-mist-solid/30">Blackout Marker</label>
-                    <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
-                      value={(node().config as ScriptwriterPipelineConfig).blackout_marker}
-                      onChange={(e) => updateNode(node().id, { blackout_marker: e.currentTarget.value })}
-                    />
-                    <p class="text-xs text-mist-solid/40">stages 列表经蓝图 JSON 编辑</p>
-                  </div>
+                  <ScriptwriterPipelineNode
+                    config={node().config as ScriptwriterPipelineConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateNode(node().id, updates)}
+                  />
                 </Match>
                 <Match when={node().type === 'agent_mode_switch'}>
                   <div class="space-y-3">
