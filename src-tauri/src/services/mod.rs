@@ -1,5 +1,3 @@
-// character_state_overlays removed (migration 0036): table dropped,
-// WorldVariable merged into message_rounds.world_variables.
 pub mod blueprint_executor;
 pub mod action_bridge;
 pub mod chat;
