@@ -269,6 +269,16 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           is_locked: false,
         },
       };
+    case 'initial_state_config':
+      return {
+        type: 'initial_state_config',
+        config: {
+          stats: {},
+          inventory: [],
+          flags: {},
+          is_locked: false,
+        },
+      };
   }
 }
 

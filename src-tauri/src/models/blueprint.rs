@@ -63,6 +63,9 @@ pub enum NodeType {
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig,
+    /// 初始状态配置节点（消除硬编码奇幻 RPG 数值，支持任意流派初始属性、物品与剧情标志位）
+    #[serde(rename = "initial_state_config")]
+    InitialStateConfig,
 }
 
 /// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
@@ -124,6 +127,9 @@ pub enum NodeConfig {
     /// 常驻 UI 布局绑定节点
     #[serde(rename = "ui_layout_config")]
     UiLayoutConfig(UiLayoutConfig),
+    /// 初始状态配置节点
+    #[serde(rename = "initial_state_config")]
+    InitialStateConfig(InitialStateConfig),
 }
 
 impl NodeConfig {
@@ -157,6 +163,7 @@ impl NodeConfig {
             Self::DirectorConfig(_) => NodeType::DirectorConfig,
             Self::ActorDefinition(_) => NodeType::ActorDefinition,
             Self::UiLayoutConfig(_) => NodeType::UiLayoutConfig,
+            Self::InitialStateConfig(_) => NodeType::InitialStateConfig,
         }
     }
 }
@@ -701,6 +708,30 @@ pub struct OrchestrationConfigs {
     pub director_config: Option<DirectorConfig>,
     pub actors: Vec<ActorDefinition>,
     pub declared_tool_definitions: std::collections::HashMap<String, ToolDefinitionConfig>,
+    pub initial_state: Option<InitialStateConfig>,
+}
+
+/// 初始数值属性定义（支持设定初始值及可选的上下限）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InitialStatDef {
+    pub initial: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// 初始状态配置节点（编排/规则资产：消除硬编码奇幻 RPG 数值，支持任意流派初始属性、物品与剧情标志位）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct InitialStateConfig {
+    #[serde(default)]
+    pub stats: HashMap<String, InitialStatDef>,
+    #[serde(default)]
+    pub inventory: Vec<crate::models::game_state::InventoryItem>,
+    #[serde(default, alias = "custom_flags")]
+    pub flags: HashMap<String, String>,
+    #[serde(default)]
+    pub is_locked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

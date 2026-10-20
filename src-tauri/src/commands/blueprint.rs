@@ -223,6 +223,7 @@ pub async fn load_blueprint_gates(
             NodeConfig::DirectorConfig(_) => None,
             NodeConfig::ActorDefinition(_) => None,
             NodeConfig::UiLayoutConfig(_) => None,
+            NodeConfig::InitialStateConfig(_) => None,
         })
         .collect();
 

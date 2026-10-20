@@ -73,6 +73,7 @@ const ADDABLE_NODE_TYPES: Array<{ type: NodeType; label: string; desc: string }>
   { type: 'branch', label: 'Branch', desc: '接收上游常量值，按 cases 匹配走对应出口' },
   { type: 'sampling_params_openai', label: 'SamplingParams (OpenAI)', desc: 'OpenAI 版采样参数（仅 chat_completions 生效）' },
   { type: 'sampling_params_anthropic', label: 'SamplingParams (Anthropic)', desc: 'Anthropic 版采样参数（含 thinking 配置）' },
+  { type: 'initial_state_config', label: 'InitialState', desc: '流派中立开局属性、背包与标记配置' },
   { type: 'start', label: 'Start', desc: '链表起点（每图唯一）' },
   { type: 'end', label: 'End', desc: '链表终点（每图唯一）' },
 ];

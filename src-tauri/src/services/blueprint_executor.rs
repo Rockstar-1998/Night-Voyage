@@ -557,7 +557,8 @@ fn traverse(
         | NodeConfig::ScriptwriterPipeline(_)
         | NodeConfig::AgentModeSwitch(_)
         | NodeConfig::DirectorConfig(_)
-        | NodeConfig::ActorDefinition(_) => {
+        | NodeConfig::ActorDefinition(_)
+        | NodeConfig::InitialStateConfig(_) => {
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path, values)?;
         }
@@ -1411,6 +1412,7 @@ pub fn extract_orchestration_configs(
     let mut agent_mode_switch_id = String::new();
     let mut director = None;
     let mut actors: Vec<ActorDefinition> = Vec::new();
+    let mut initial_state = None;
 
     // 图中声明的全部 ToolCall 契约（tools 引用校验的合法集与参数定义源）
     let declared_tools: HashMap<String, crate::models::blueprint::ToolDefinitionConfig> = graph
@@ -1467,6 +1469,15 @@ pub fn extract_orchestration_configs(
                 }
                 actors.push(cfg.clone());
             }
+            NodeConfig::InitialStateConfig(cfg) => {
+                if initial_state.is_some() {
+                    return Err(BlueprintError::DuplicateOrchestrationNode {
+                        node_type: "initial_state_config",
+                        id: node.id.clone(),
+                    });
+                }
+                initial_state = Some(cfg.clone());
+            }
             _ => {}
         }
     }
@@ -1498,6 +1509,7 @@ pub fn extract_orchestration_configs(
         director_config: director,
         actors,
         declared_tool_definitions: declared_tools,
+        initial_state,
     })
 }
 
@@ -1589,6 +1601,7 @@ fn evaluate_port(
         | NodeConfig::DirectorConfig(_)
         | NodeConfig::ActorDefinition(_)
         | NodeConfig::UiLayoutConfig(_)
+        | NodeConfig::InitialStateConfig(_)
         | NodeConfig::MutexGate(_)
         | NodeConfig::GroupGate(_)
         | NodeConfig::ModeSwitch(_)
