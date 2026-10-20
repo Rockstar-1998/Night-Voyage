@@ -181,6 +181,58 @@ function splitBinary(expr, ops) {
   return null;
 }
 
+function isRelationalOp(op) {
+  return ['>=', '<=', '==', '!=', '>', '<', '='].includes(String(op).trim());
+}
+
+function findRelationalOp(expr) {
+  const s = stripEnclosingDelimiters(expr);
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(' || ch === '[') {
+      depth++;
+      continue;
+    }
+    if (ch === ')' || ch === ']') {
+      depth--;
+      continue;
+    }
+    if (depth === 0) {
+      if (i + 1 < s.length) {
+        const two = s.slice(i, i + 2);
+        if (['>=', '<=', '==', '!='].includes(two)) {
+          const left = s.slice(0, i).trim();
+          const right = s.slice(i + 2).trim();
+          if (left && right) return { left, op: two, right };
+        }
+      }
+      if (ch === '>' || ch === '<') {
+        if (i + 1 >= s.length || s[i + 1] !== '=') {
+          const left = s.slice(0, i).trim();
+          const right = s.slice(i + 1).trim();
+          if (left && right) return { left, op: ch, right };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function compareRelational(op, left, right) {
+  const EPS = 1e-9;
+  switch (String(op).trim()) {
+    case '>=': return left >= right || Math.abs(left - right) < EPS;
+    case '<=': return left <= right || Math.abs(left - right) < EPS;
+    case '==':
+    case '=': return Math.abs(left - right) < EPS;
+    case '!=': return Math.abs(left - right) >= EPS;
+    case '>': return left > right + EPS;
+    case '<': return left < right - EPS;
+    default: throw new Error(`不支持的关系运算符: \`${op}\``);
+  }
+}
+
 function resolveOperand(expr, args = {}, state = { stats: {} }) {
   const trimmed = stripEnclosingDelimiters(expr);
   if (!trimmed) throw new Error('操作数表达式为空');
@@ -212,6 +264,19 @@ function resolveOperand(expr, args = {}, state = { stats: {} }) {
     return num;
   }
 
+  if (trimmed === 'd20') {
+    return Math.floor(Math.random() * 20) + 1;
+  }
+  if (trimmed === 'slots') {
+    return (state.inventory || []).length;
+  }
+  if (trimmed === 'weight' || trimmed === 'total_weight') {
+    if (state && state.stats && state.stats[trimmed] !== undefined) {
+      return getStat(state, trimmed);
+    }
+    return totalWeight(state);
+  }
+
   const getArgNum = (k) => {
     if (args && args[k] !== undefined && args[k] !== null) {
       const v = Number(args[k]);
@@ -234,8 +299,18 @@ function resolveOperand(expr, args = {}, state = { stats: {} }) {
     }
     throw new Error(`操作数或变量 \`${trimmed}\` 未定义（属性 \`${k}\` 不存在）`);
   }
+  if (trimmed.startsWith('inventory.')) {
+    const k = trimmed.slice(10).trim();
+    if (['len', 'length', 'count', 'slots'].includes(k)) {
+      return (state.inventory || []).length;
+    }
+    if (['weight', 'total_weight'].includes(k)) {
+      return totalWeight(state);
+    }
+    throw new Error(`操作数或变量 \`${trimmed}\` 未定义（inventory 属性 \`${k}\` 不存在，支持 len / weight）`);
+  }
   if (trimmed.includes('.')) {
-    throw new Error(`操作数或变量 \`${trimmed}\` 未定义（不支持的前缀，仅支持 args / stats）`);
+    throw new Error(`操作数或变量 \`${trimmed}\` 未定义（不支持的前缀，仅支持 args / stats / inventory）`);
   }
 
   const aVal = getArgNum(trimmed);
@@ -499,30 +574,64 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
       }
 
       case 'Gate': {
-        const gateType = cfg.gate_type || cfg.gateType;
-        const expression = cfg.expression || '0';
-        const threshold = resolveOperand(expression, parsedArgs, state);
+        const gateType = (cfg.gate_type || cfg.gateType || '').trim();
+        const expression = (cfg.expression || '').trim();
         let passed = false;
 
-        if (gateType === 'gold') {
-          passed = getStat(state, 'gold') >= threshold;
-        } else if (gateType === 'weight') {
-          passed = totalWeight(state) + threshold <= getStat(state, 'max_weight');
-        } else if (gateType === 'slots') {
-          passed = (state.inventory || []).length < threshold;
-        } else if (gateType === 'd20') {
-          const d20 = Math.floor(Math.random() * 20) + 1;
-          const modifier = Number(parsedArgs.modifier) || 0;
-          passed = (d20 + modifier) >= threshold;
-        } else if (state.stats && state.stats[gateType] !== undefined) {
-          passed = getStat(state, gateType) >= threshold;
+        const exprRel = findRelationalOp(expression);
+        const gateRel = findRelationalOp(gateType);
+
+        if (exprRel) {
+          const left = resolveOperand(exprRel.left, parsedArgs, state);
+          const right = resolveOperand(exprRel.right, parsedArgs, state);
+          passed = compareRelational(exprRel.op, left, right);
+        } else if (gateRel) {
+          const left = resolveOperand(gateRel.left, parsedArgs, state);
+          const right = resolveOperand(gateRel.right, parsedArgs, state);
+          passed = compareRelational(gateRel.op, left, right);
+        } else if (isRelationalOp(gateType)) {
+          let left;
+          if (parsedArgs && parsedArgs.stat) {
+            if (!state.stats || state.stats[parsedArgs.stat] === undefined) {
+              throw new Error(`门禁判定缺少必需属性 \`${parsedArgs.stat}\``);
+            }
+            left = getStat(state, parsedArgs.stat);
+          } else if (parsedArgs && parsedArgs.left !== undefined) {
+            left = typeof parsedArgs.left === 'string' ? resolveOperand(parsedArgs.left, parsedArgs, state) : Number(parsedArgs.left);
+          } else {
+            throw new Error(`操作符门禁 \`${gateType}\` 缺少左操作数（需在 args 提供 stat 或 left）`);
+          }
+          const right = resolveOperand(expression || '0', parsedArgs, state);
+          passed = compareRelational(gateType, left, right);
         } else {
-          throw new Error(`未知的门禁判定类型: ${gateType}`);
+          // 命名门禁与已知类型
+          const threshold = resolveOperand(expression || '0', parsedArgs, state);
+          if (gateType === 'gold') {
+            if (!state.stats || state.stats.gold === undefined) {
+              throw new Error('门禁判定缺少必需属性 `gold`');
+            }
+            passed = getStat(state, 'gold') >= threshold;
+          } else if (gateType === 'weight') {
+            if (!state.stats || state.stats.max_weight === undefined) {
+              throw new Error('门禁判定缺少必需属性 `max_weight`');
+            }
+            passed = totalWeight(state) + threshold <= getStat(state, 'max_weight');
+          } else if (gateType === 'slots') {
+            passed = (state.inventory || []).length < threshold;
+          } else if (gateType === 'd20') {
+            const d20 = Math.floor(Math.random() * 20) + 1;
+            const modifier = Number(parsedArgs.modifier) || 0;
+            passed = (d20 + modifier) >= threshold;
+          } else if (state.stats && state.stats[gateType] !== undefined) {
+            passed = getStat(state, gateType) >= threshold;
+          } else {
+            throw new Error(`未知的门禁判定类型: ${gateType}`);
+          }
         }
 
         if (!passed) {
           const reason = (cfg.block_reason || cfg.blockReason || '').trim() ||
-            `【门禁拦截 - ${gateType}】判定未通过（阈值 ${threshold}）`;
+            `【门禁拦截 - ${gateType}】判定未通过（表达式 \`${expression}\`）`;
           throw new Error(reason);
         }
         break;

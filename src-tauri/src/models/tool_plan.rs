@@ -329,13 +329,24 @@ fn strip_enclosing_delimiters(mut expr: &str) -> &str {
 /// 1. 二元 `+` / `-`（左右递归求值）；
 /// 2. 二元 `*` / `/` / `%`；
 /// 3. 数值字面量（如 `10.5`）；
-/// 4. 变量查找：
+/// 4. 特殊变量（如 `d20`, `slots`, `total_weight` 等）；
+/// 5. 变量查找：
 ///    - 参数查找：`args.<k>` 或裸 `<k>`（若该 key 在调用参数中）；
 ///    - 状态属性查找：`stats.<k>` 或裸 `<k>`（若该 key 在 active game state 中）；
-/// 5. 括号与方括号分组（如 `(a + b)` 或 `[op1] * [op2]`）。
+///    - 背包属性查找：`inventory.len`（或 slots）/ `inventory.weight`（或 total_weight）；
+/// 6. 括号与方括号分组（如 `(a + b)` 或 `[op1] * [op2]`）。
 ///
 /// 无法识别或未定义的操作数一律返回 `Err`（C2 拒绝静默兜底为 0 或软截断）。
 pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Result<f64, String> {
+    resolve_operand_with_dice(expr, args, state, &mut None)
+}
+
+pub fn resolve_operand_with_dice(
+    expr: &str,
+    args: &Value,
+    state: &DataContainer,
+    roll_out: &mut Option<i64>,
+) -> Result<f64, String> {
     let s = strip_enclosing_delimiters(expr);
     if s.is_empty() {
         return Err("操作数表达式为空".to_string());
@@ -345,8 +356,8 @@ pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Resul
     let precedence: [&[char]; 2] = [&['+', '-'], &['*', '/', '%']];
     for ops in precedence {
         if let Some((left, op, right)) = split_binary(s, ops) {
-            let l = resolve_operand(left, args, state)?;
-            let r = resolve_operand(right, args, state)?;
+            let l = resolve_operand_with_dice(left, args, state, roll_out)?;
+            let r = resolve_operand_with_dice(right, args, state, roll_out)?;
             return apply_binary(op, l, r);
         }
     }
@@ -356,7 +367,20 @@ pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Resul
         return Ok(value);
     }
 
-    // 点路径带前缀变量查找 (args.<k> / stats.<k>)
+    // 特殊标识符: d20 骰点
+    if s == "d20" {
+        let roll = match *roll_out {
+            Some(r) => r,
+            None => {
+                let r = crate::services::agent_guards::random_d20()?;
+                *roll_out = Some(r);
+                r
+            }
+        };
+        return Ok(roll as f64);
+    }
+
+    // 点路径带前缀变量查找 (args.<k> / stats.<k> / inventory.<k>)
     if let Some((prefix, key)) = s.split_once('.') {
         let key = key.trim();
         return match prefix {
@@ -371,8 +395,16 @@ pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Resul
                 .get(key)
                 .copied()
                 .ok_or_else(|| format!("操作数或变量 `{}` 未定义（属性 `{}` 不存在）", s, key)),
+            "inventory" => match key {
+                "len" | "length" | "count" | "slots" => Ok(state.inventory.len() as f64),
+                "weight" | "total_weight" => Ok(state.total_weight()),
+                unknown => Err(format!(
+                    "操作数或变量 `{}` 未定义（inventory 属性 `{}` 不存在，支持 len / weight）",
+                    s, unknown
+                )),
+            },
             unknown => Err(format!(
-                "操作数或变量 `{}` 未定义（不支持的前缀 `{}`，仅支持 args / stats）",
+                "操作数或变量 `{}` 未定义（不支持的前缀 `{}`，仅支持 args / stats / inventory）",
                 s, unknown
             )),
         };
@@ -386,7 +418,116 @@ pub fn resolve_operand(expr: &str, args: &Value, state: &DataContainer) -> Resul
         return Ok(val);
     }
 
+    // 常用内置属性快捷访问
+    if s == "slots" {
+        return Ok(state.inventory.len() as f64);
+    }
+    if s == "weight" || s == "total_weight" {
+        return Ok(state.total_weight());
+    }
+
     Err(format!("操作数或变量 `{}` 未定义", s))
+}
+
+/// 判断字符串是否是独立的关系运算符
+pub fn is_relational_op(op: &str) -> bool {
+    matches!(op.trim(), ">=" | "<=" | "==" | "!=" | ">" | "<" | "=")
+}
+
+/// 检查表达式中是否包含关系运算符
+pub fn has_relational_op(expr: &str) -> bool {
+    find_relational_op(expr).is_some()
+}
+
+/// 在顶层（深度为 0，不在成对括号/方括号内）查找关系运算符，并切分为 (left, op, right)
+pub fn find_relational_op(expr: &str) -> Option<(&str, &str, &str)> {
+    let s = strip_enclosing_delimiters(expr);
+    let mut depth: i32 = 0;
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+
+    for (i, &(idx, ch)) in chars.iter().enumerate() {
+        if ch == '(' || ch == '[' {
+            depth += 1;
+            continue;
+        }
+        if ch == ')' || ch == ']' {
+            depth -= 1;
+            continue;
+        }
+        if depth == 0 {
+            // 优先检查双字符关系运算符: >=, <=, ==, !=
+            if i + 1 < chars.len() {
+                let next_ch = chars[i + 1].1;
+                let candidate = match (ch, next_ch) {
+                    ('>', '=') => Some(">="),
+                    ('<', '=') => Some("<="),
+                    ('=', '=') => Some("=="),
+                    ('!', '=') => Some("!="),
+                    _ => None,
+                };
+                if let Some(op) = candidate {
+                    let left = s[..idx].trim();
+                    let op_len = ch.len_utf8() + next_ch.len_utf8();
+                    let right = s[idx + op_len..].trim();
+                    if !left.is_empty() && !right.is_empty() {
+                        return Some((left, op, right));
+                    }
+                }
+            }
+            // 检查单字符关系运算符: >, <
+            if ch == '>' || ch == '<' {
+                // 确保不是 >= 或 <=
+                if i + 1 >= chars.len() || chars[i + 1].1 != '=' {
+                    let left = s[..idx].trim();
+                    let op = if ch == '>' { ">" } else { "<" };
+                    let right = s[idx + ch.len_utf8()..].trim();
+                    if !left.is_empty() && !right.is_empty() {
+                        return Some((left, op, right));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 比较两个数值的关系运算结果
+pub fn compare_relational(op: &str, left: f64, right: f64) -> Result<bool, String> {
+    const EPS: f64 = 1e-9;
+    match op.trim() {
+        ">=" => Ok(left >= right || (left - right).abs() < EPS),
+        "<=" => Ok(left <= right || (left - right).abs() < EPS),
+        "==" | "=" => Ok((left - right).abs() < EPS),
+        "!=" => Ok((left - right).abs() >= EPS),
+        ">" => Ok(left > right + EPS),
+        "<" => Ok(left < right - EPS),
+        unknown => Err(format!(
+            "不支持的关系运算符: `{}`（仅支持 >=, <=, ==, !=, >, <）",
+            unknown
+        )),
+    }
+}
+
+/// 解析并执行一个关系表达式（如 "credits >= 100", "fuel > 20", "inventory.len < max_slots", "d20 + modifier >= 15"）
+pub fn evaluate_relational_expression(
+    expr: &str,
+    args: &Value,
+    state: &DataContainer,
+    roll_out: &mut Option<i64>,
+) -> Result<bool, String> {
+    let s = strip_enclosing_delimiters(expr);
+    if s.is_empty() {
+        return Err("门禁表达式为空".to_string());
+    }
+
+    let (left_str, op, right_str) = find_relational_op(s).ok_or_else(|| {
+        format!("门禁表达式缺少关系运算符 (>=, <=, ==, !=, >, <): `{}`", expr)
+    })?;
+
+    let left = resolve_operand_with_dice(left_str, args, state, roll_out)?;
+    let right = resolve_operand_with_dice(right_str, args, state, roll_out)?;
+
+    compare_relational(op, left, right)
 }
 
 /// 按给定运算符集合切分表达式（保留左结合，最右侧的运算符先切）。
@@ -479,36 +620,54 @@ where
         match step {
             ToolStep::Calculate(config) => apply_calculator(state, config, args)?,
             ToolStep::Gate(config) => {
-                let threshold = resolve_operand(&config.expression, args, state).map_err(|err| {
-                    format!("门禁 `{}` 的判定表达式无法求值: {}", config.express_label(), err)
-                })?;
                 let mut dice_roll: Option<i64> = None;
-                let passed = state
-                    .evaluate_condition(&config.gate_type, threshold, args, &mut dice_roll)
-                    .map_err(|err| {
-                        format!("门禁 `{}` 判定失败: {}", config.gate_type, err)
-                    })?;
+                let passed = if has_relational_op(&config.expression) {
+                    evaluate_relational_expression(&config.expression, args, state, &mut dice_roll)
+                        .map_err(|err| format!("门禁 `{}` 判定失败: {}", config.express_label(), err))?
+                } else if has_relational_op(&config.gate_type) {
+                    evaluate_relational_expression(&config.gate_type, args, state, &mut dice_roll)
+                        .map_err(|err| format!("门禁 `{}` 判定失败: {}", config.express_label(), err))?
+                } else if is_relational_op(&config.gate_type) {
+                    let threshold = resolve_operand_with_dice(&config.expression, args, state, &mut dice_roll)
+                        .map_err(|err| {
+                            format!("门禁 `{}` 的判定表达式无法求值: {}", config.express_label(), err)
+                        })?;
+                    state
+                        .evaluate_condition(&config.gate_type, threshold, args, &mut dice_roll)
+                        .map_err(|err| {
+                            format!("门禁 `{}` 判定失败: {}", config.gate_type, err)
+                        })?
+                } else {
+                    let threshold = resolve_operand_with_dice(&config.expression, args, state, &mut dice_roll)
+                        .map_err(|err| {
+                            format!("门禁 `{}` 的判定表达式无法求值: {}", config.express_label(), err)
+                        })?;
+                    state
+                        .evaluate_condition(&config.gate_type, threshold, args, &mut dice_roll)
+                        .map_err(|err| {
+                            format!("门禁 `{}` 判定失败: {}", config.gate_type, err)
+                        })?
+                };
+
                 if let Some(roll) = dice_roll {
                     let modifier = args.get("modifier").and_then(Value::as_f64).unwrap_or(0.0);
                     outcome.dice_roll = Some(roll);
                     outcome.gate_trace.push(format!(
-                        "D20 检定: roll={} + modifier={} vs DC {} → {}",
+                        "D20 检定: roll={} + modifier={} → {}",
                         roll,
                         modifier,
-                        threshold,
                         if passed { "成功" } else { "失败" }
                     ));
                 }
                 outcome.gate_trace.push(format!(
-                    "门禁[{}] 表达式 `{}` 阈值 {} → {}",
+                    "门禁[{}] 表达式 `{}` → {}",
                     config.gate_type,
                     config.expression,
-                    threshold,
                     if passed { "放行" } else { "拦截" }
                 ));
                 if !passed {
                     let reason = if config.block_reason.trim().is_empty() {
-                        format!("【门禁拦截 - {}】判定未通过（阈值 {}）", config.gate_type, threshold)
+                        format!("【门禁拦截 - {}】判定未通过（表达式 `{}`）", config.gate_type, config.expression)
                     } else {
                         config.block_reason.clone()
                     };
@@ -995,5 +1154,139 @@ mod tests {
         let args = json!({"key": "draft"});
         let err = run_plan_sync(&mut state.clone(), &plan, &args, no_query).unwrap_err();
         assert!(err.contains("不存在"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn generic_expression_gate_blocks_and_passes_on_custom_stats() {
+        let mut state = DataContainer::default();
+        state.set_stat("credits", 150.0);
+        state.set_stat("fuel", 30.0);
+        state.set_stat("max_slots", 5.0);
+
+        // 1. 测试 credits >= cost (当 cost=200 时被拦截)
+        let plan_blocked = ToolPlan {
+            tool_name: "warp_jump".into(),
+            steps: vec![
+                ToolStep::Gate(ConditionGateConfig {
+                    gate_type: "custom".into(),
+                    expression: "credits >= cost".into(),
+                    pass_label: "放行".into(),
+                    blocked_label: "拦截".into(),
+                    block_reason: "信用点不足".into(),
+                    is_locked: false,
+                }),
+                ToolStep::Calculate(CalculatorConfig {
+                    calc_mode: "math".into(),
+                    target: "stats.credits".into(),
+                    op: "-".into(),
+                    operand_a: "cost".into(),
+                    operand_b: None,
+                    item_def: None,
+                    is_locked: false,
+                }),
+            ],
+            success_return: None,
+            parameters_schema: None,
+        };
+
+        let args_fail = json!({"cost": 200});
+        let outcome_fail = run_plan_sync(&mut state, &plan_blocked, &args_fail, no_query).unwrap();
+        assert!(outcome_fail.is_blocked);
+        assert_eq!(outcome_fail.text, "信用点不足");
+        assert_eq!(state.get_stat("credits"), 150.0, "门禁拦截时不得扣减信用点");
+
+        // 2. 测试通过并扣费 (当 cost=50 时放行)
+        let args_pass = json!({"cost": 50});
+        let outcome_pass = run_plan_sync(&mut state, &plan_blocked, &args_pass, no_query).unwrap();
+        assert!(!outcome_pass.is_blocked);
+        assert_eq!(state.get_stat("credits"), 100.0, "放行后扣减 50 信用点");
+
+        // 3. 测试 inventory.len < max_slots 门禁
+        let plan_slots = ToolPlan {
+            tool_name: "pickup_mineral".into(),
+            steps: vec![ToolStep::Gate(ConditionGateConfig {
+                gate_type: "expression".into(),
+                expression: "inventory.len < max_slots".into(),
+                pass_label: "放行".into(),
+                blocked_label: "拦截".into(),
+                block_reason: "仓储槽位已满".into(),
+                is_locked: false,
+            })],
+            success_return: None,
+            parameters_schema: None,
+        };
+        let outcome_slots = run_plan_sync(&mut state, &plan_slots, &json!({}), no_query).unwrap();
+        assert!(!outcome_slots.is_blocked, "空背包应满足 len < 5");
+    }
+
+    #[test]
+    fn missing_required_attribute_on_gate_raises_error() {
+        let mut state = DataContainer::default(); // stats 为空
+        let plan = ToolPlan {
+            tool_name: "refuel".into(),
+            steps: vec![ToolStep::Gate(ConditionGateConfig {
+                gate_type: "custom".into(),
+                expression: "fuel > 20".into(),
+                pass_label: "放行".into(),
+                blocked_label: "拦截".into(),
+                block_reason: "".into(),
+                is_locked: false,
+            })],
+            success_return: None,
+            parameters_schema: None,
+        };
+
+        let err = run_plan_sync(&mut state, &plan, &json!({}), no_query).unwrap_err();
+        assert!(err.contains("未定义"), "缺少属性必须显式报错，实际报错: {}", err);
+    }
+
+    #[test]
+    fn d20_gate_records_dice_roll_and_gate_trace() {
+        let mut state = DataContainer::default();
+        let plan = ToolPlan {
+            tool_name: "hack_terminal".into(),
+            steps: vec![ToolStep::Gate(ConditionGateConfig {
+                gate_type: "custom".into(),
+                expression: "d20 + modifier >= 1".into(),
+                pass_label: "放行".into(),
+                blocked_label: "拦截".into(),
+                block_reason: "入侵失败".into(),
+                is_locked: false,
+            })],
+            success_return: None,
+            parameters_schema: None,
+        };
+
+        let args = json!({"modifier": 10});
+        let outcome = run_plan_sync(&mut state, &plan, &args, no_query).unwrap();
+        assert!(!outcome.is_blocked);
+        assert!(outcome.dice_roll.is_some(), "D20 门禁执行必须记录实际骰值");
+        let roll = outcome.dice_roll.unwrap();
+        assert!((1..=20).contains(&roll));
+        assert!(outcome.gate_trace.iter().any(|t| t.contains("D20 检定")));
+    }
+
+    #[test]
+    fn relational_operator_in_gate_type() {
+        let mut state = DataContainer::default();
+        state.set_stat("radiation", 15.0);
+
+        let plan = ToolPlan {
+            tool_name: "enter_zone".into(),
+            steps: vec![ToolStep::Gate(ConditionGateConfig {
+                gate_type: "<=".into(),
+                expression: "20".into(),
+                pass_label: "放行".into(),
+                blocked_label: "拦截".into(),
+                block_reason: "辐射过高".into(),
+                is_locked: false,
+            })],
+            success_return: None,
+            parameters_schema: None,
+        };
+
+        let args = json!({"stat": "radiation"});
+        let outcome = run_plan_sync(&mut state, &plan, &args, no_query).unwrap();
+        assert!(!outcome.is_blocked);
     }
 }
