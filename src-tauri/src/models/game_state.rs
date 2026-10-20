@@ -164,9 +164,12 @@ impl DataContainer {
 
     /// 确定性门禁判定
     ///
-    /// `d20`：expression = DC 难度等级；投掷 = CSPRNG d20（`agent_guards::random_d20`），
-    /// 判定 = `roll + modifier >= dc`。`modifier` 取调用参数 `modifier`（缺省 0）。
-    /// 返回值同时通过 `roll_out` 回传实际骰值（供不可篡改检定卡广播）。
+    /// 支持：
+    /// 1. 关系表达式判定（gate_type 包含 `>=, <=, ==, !=, >, <`）；
+    /// 2. 纯关系运算符判定（gate_type 为 `>=, <=, ==, !=, >, <`，左操作数由 args.stat 或 args.left 给出）；
+    /// 3. D20 检定（`gate_type == "d20"` 或 d20 表达式，roll + modifier >= target_value，roll 回传至 roll_out）；
+    /// 4. 命名/流派通用门禁（如 `credits`, `fuel`, `radiation` 或已废除硬编码的 `gold`, `weight`, `slots`）：
+    ///    - 缺少必需属性时抛出显式 Err（C2 零静默兜底，严禁 max(10.0) 或缺省 0.0 放行）。
     pub fn evaluate_condition(
         &self,
         gate_type: &str,
@@ -174,14 +177,57 @@ impl DataContainer {
         args: &serde_json::Value,
         roll_out: &mut Option<i64>,
     ) -> Result<bool, String> {
-        match gate_type {
+        let trimmed_gate = gate_type.trim();
+
+        // 1. 若 gate_type 包含关系运算符，直接作为关系表达式求值
+        if crate::models::tool_plan::has_relational_op(trimmed_gate) {
+            return self.evaluate_expression(trimmed_gate, args, roll_out);
+        }
+
+        // 2. 若 gate_type 为纯关系运算符（如 ">=", "<=", "==", "!=", ">", "<"）
+        if crate::models::tool_plan::is_relational_op(trimmed_gate) {
+            let left_val = if let Some(stat_key) = args.get("stat").and_then(serde_json::Value::as_str) {
+                if !self.stats.contains_key(stat_key) {
+                    return Err(format!("门禁判定缺少必需属性 `{}`", stat_key));
+                }
+                self.stats[stat_key]
+            } else if let Some(left_str) = args.get("left").and_then(serde_json::Value::as_str) {
+                crate::models::tool_plan::resolve_operand_with_dice(left_str, args, self, roll_out)?
+            } else if let Some(left_num) = args.get("left").and_then(serde_json::Value::as_f64) {
+                left_num
+            } else {
+                return Err(format!(
+                    "操作符门禁 `{}` 缺少左操作数（需在 args 提供 stat 或 left）",
+                    trimmed_gate
+                ));
+            };
+
+            let right_val = if let Some(right_str) = args.get("right").and_then(serde_json::Value::as_str) {
+                crate::models::tool_plan::resolve_operand_with_dice(right_str, args, self, roll_out)?
+            } else if let Some(right_num) = args.get("right").and_then(serde_json::Value::as_f64) {
+                right_num
+            } else {
+                target_value
+            };
+
+            return crate::models::tool_plan::compare_relational(trimmed_gate, left_val, right_val);
+        }
+
+        // 3. 命名门禁与已知类型
+        match trimmed_gate {
             "gold" => {
-                let current_gold = self.get_stat("gold");
+                if !self.stats.contains_key("gold") {
+                    return Err("门禁判定缺少必需属性 `gold`".to_string());
+                }
+                let current_gold = *self.stats.get("gold").unwrap();
                 Ok(current_gold >= target_value)
             }
             "weight" => {
+                if !self.stats.contains_key("max_weight") {
+                    return Err("门禁判定缺少必需属性 `max_weight`".to_string());
+                }
                 let current_w = self.total_weight();
-                let max_w = self.get_stat("max_weight").max(10.0);
+                let max_w = *self.stats.get("max_weight").unwrap();
                 Ok(current_w + target_value <= max_w)
             }
             "slots" => {
@@ -195,18 +241,42 @@ impl DataContainer {
                 Ok((roll as f64 + modifier) >= target_value)
             }
             "custom" => {
-                if let Some(stat_key) = args.get("stat").and_then(serde_json::Value::as_str) {
-                    Ok(self.get_stat(stat_key) >= target_value)
+                if let Some(expr) = args.get("expression").and_then(serde_json::Value::as_str) {
+                    self.evaluate_expression(expr, args, roll_out)
+                } else if let Some(stat_key) = args.get("stat").and_then(serde_json::Value::as_str) {
+                    if !self.stats.contains_key(stat_key) {
+                        return Err(format!("门禁判定缺少必需属性 `{}`", stat_key));
+                    }
+                    let val = self.stats[stat_key];
+                    let op = args.get("op").and_then(serde_json::Value::as_str).unwrap_or(">=");
+                    crate::models::tool_plan::compare_relational(op, val, target_value)
                 } else {
                     Ok(target_value > 0.0)
                 }
             }
             stat if self.stats.contains_key(stat) => {
-                Ok(self.get_stat(stat) >= target_value)
+                Ok(self.stats[stat] >= target_value)
+            }
+            stat if is_valid_stat_identifier(stat) => {
+                Err(format!("门禁判定缺少必需属性 `{}`", stat))
             }
             other => Err(format!("未知的门禁判定类型: {}", other)),
         }
     }
+
+    /// 评估通用关系表达式（如 "credits >= 100", "fuel > 20", "inventory.len < max_slots", "d20 + modifier >= 15"）
+    pub fn evaluate_expression(
+        &self,
+        expr: &str,
+        args: &serde_json::Value,
+        roll_out: &mut Option<i64>,
+    ) -> Result<bool, String> {
+        crate::models::tool_plan::evaluate_relational_expression(expr, args, self, roll_out)
+    }
+}
+
+fn is_valid_stat_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
 }
 
 /// 发送给前端常驻 HUD 局部刷新的增量补丁载荷
@@ -278,5 +348,89 @@ mod tests {
         dc.remove_item("medkit", 1).unwrap();
         assert_eq!(dc.get_item("medkit").unwrap().count, 2);
         assert!((dc.total_weight() - 1.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_relational_condition_gates_on_custom_stats() {
+        let mut dc = DataContainer::default();
+        dc.set_stat("credits", 150.0);
+        dc.set_stat("radiation", 30.0);
+        dc.set_stat("fuel", 50.0);
+        dc.set_stat("max_slots", 10.0);
+
+        let args = serde_json::json!({});
+        let mut roll_out = None;
+
+        // >=
+        assert!(dc.evaluate_condition("credits >= 100", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("credits >= 200", 0.0, &args, &mut roll_out).unwrap());
+
+        // <=
+        assert!(dc.evaluate_condition("radiation <= 30", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("radiation <= 20", 0.0, &args, &mut roll_out).unwrap());
+
+        // >
+        assert!(dc.evaluate_condition("fuel > 20", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("fuel > 50", 0.0, &args, &mut roll_out).unwrap());
+
+        // <
+        assert!(dc.evaluate_condition("radiation < 50", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("radiation < 30", 0.0, &args, &mut roll_out).unwrap());
+
+        // ==
+        assert!(dc.evaluate_condition("fuel == 50", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("fuel == 40", 0.0, &args, &mut roll_out).unwrap());
+
+        // !=
+        assert!(dc.evaluate_condition("fuel != 0", 0.0, &args, &mut roll_out).unwrap());
+        assert!(!dc.evaluate_condition("fuel != 50", 0.0, &args, &mut roll_out).unwrap());
+
+        // inventory.len < max_slots
+        assert!(dc.evaluate_condition("inventory.len < max_slots", 0.0, &args, &mut roll_out).unwrap());
+    }
+
+    #[test]
+    fn test_missing_required_attribute_produces_explicit_err_per_c2() {
+        let dc = DataContainer::default(); // 空 stats
+        let args = serde_json::json!({});
+        let mut roll_out = None;
+
+        // weight 门禁缺少 max_weight 绝无 max(10.0) 兜底，必须硬错
+        let err_weight = dc.evaluate_condition("weight", 5.0, &args, &mut roll_out).unwrap_err();
+        assert!(err_weight.contains("门禁判定缺少必需属性 `max_weight`"), "实际报错: {}", err_weight);
+
+        // gold 门禁缺少 gold 必须硬错
+        let err_gold = dc.evaluate_condition("gold", 50.0, &args, &mut roll_out).unwrap_err();
+        assert!(err_gold.contains("门禁判定缺少必需属性 `gold`"), "实际报错: {}", err_gold);
+
+        // 自定义属性门禁缺少属性必须硬错
+        let err_credits = dc.evaluate_condition("credits", 100.0, &args, &mut roll_out).unwrap_err();
+        assert!(err_credits.contains("门禁判定缺少必需属性 `credits`"), "实际报错: {}", err_credits);
+
+        // 关系表达式中缺少操作数/属性必须硬错
+        let err_expr = dc.evaluate_condition("fuel > 20", 0.0, &args, &mut roll_out).unwrap_err();
+        assert!(err_expr.contains("未定义"), "实际报错: {}", err_expr);
+    }
+
+    #[test]
+    fn test_d20_gate_check_with_csprng_and_threshold() {
+        let dc = DataContainer::default();
+        let mut roll_out = None;
+        let args = serde_json::json!({"modifier": 5.0});
+
+        // DC 1 必然通过 (1 + 5 = 6 >= 1)
+        let passed = dc.evaluate_condition("d20", 1.0, &args, &mut roll_out).unwrap();
+        assert!(passed);
+        assert!(roll_out.is_some());
+        let roll = roll_out.unwrap();
+        assert!((1..=20).contains(&roll));
+
+        // 通过表达式执行 d20 + modifier >= DC
+        let mut roll_expr = None;
+        let passed_expr = dc.evaluate_condition("d20 + modifier >= 1", 0.0, &args, &mut roll_expr).unwrap();
+        assert!(passed_expr);
+        assert!(roll_expr.is_some());
+        let r2 = roll_expr.unwrap();
+        assert!((1..=20).contains(&r2));
     }
 }
