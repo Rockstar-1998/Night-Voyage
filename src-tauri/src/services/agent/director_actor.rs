@@ -40,6 +40,30 @@ pub struct DirectorPlan {
     pub beats: Vec<DirectorBeat>,
 }
 
+/// 返回导演分镜计划（DirectorPlan）的标准 JSON Schema 定义。
+///
+/// 遵循 `InvokeSchema` 规范，用于强制约束模型以标准 JSON 产出分镜槽位。
+pub fn director_plan_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "beats": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "slot_id": { "type": "string" },
+                        "character": { "type": "string" },
+                        "focus": { "type": "string" }
+                    },
+                    "required": ["slot_id", "focus"]
+                }
+            }
+        },
+        "required": ["beats"]
+    })
+}
+
 /// 解析导演计划：必须是 JSON 对象且含非空 `beats` 数组。
 ///
 /// 允许模型把 JSON 包在 ```json 代码块里；除此之外任何偏差都报错——
@@ -159,21 +183,37 @@ pub async fn run_director_actor_pipeline(
         .filter_map(|name| tool_defs_by_name.get(name).cloned())
         .collect();
 
+    let schema_json = serde_json::to_string(&director_plan_schema())
+        .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}"))?;
+
     let plan_raw = if director_tools.is_empty() {
-        stage_call(
-            app,
+        let req = SubAgentRequest::new(
+            "导演·分镜",
+            director_system.clone(),
+            user_input,
+            provider.temperature,
+            provider.max_tokens,
+        )
+        .with_structured_schema(&schema_json);
+        let res = run_subagent(provider, req).await?;
+        record_draft(
             db,
             run_id,
-            conversation_id,
-            round_id,
-            provider,
-            &director_system,
-            "导演·分镜",
-            "请只输出一个 JSON 对象：{\"beats\":[{\"slot_id\":\"b1\",\"character\":\"角色名\",\"focus\":\"这一镜要发生什么\"}]}。\
-             不要输出解释文字。",
+            "director:plan",
+            &res.text,
             user_input,
         )
-        .await?
+        .await?;
+        timeline::emit(
+            app,
+            conversation_id,
+            round_id,
+            TimelineKind::SubAgent,
+            TimelineStatus::Success,
+            "导演·分镜".to_string(),
+            format!("分镜计划产出 {} 字", res.text.chars().count()),
+        );
+        res.text
     } else {
         let max_rounds = configs
             .agent_mode_switch
@@ -210,18 +250,17 @@ pub async fn run_director_actor_pipeline(
             max_rounds,
             execute: &execute,
         };
-        let mut stage_sys = director_system.clone();
-        stage_sys.push("请只输出一个 JSON 对象：{\"beats\":[{\"slot_id\":\"b1\",\"character\":\"角色名\",\"focus\":\"这一镜要发生什么\"}]}。\
-             不要输出解释文字。".to_string());
+        let req = SubAgentRequest::new(
+            "导演·分镜",
+            director_system.clone(),
+            user_input,
+            provider.temperature,
+            provider.max_tokens,
+        )
+        .with_structured_schema(&schema_json);
         let res = run_subagent_with_tools(
             provider,
-            SubAgentRequest {
-                label: "导演·分镜",
-                system: stage_sys,
-                user: user_input.to_string(),
-                temperature: provider.temperature,
-                max_output_tokens: provider.max_tokens,
-            },
+            req,
             &runtime,
         )
         .await?;
@@ -233,6 +272,15 @@ pub async fn run_director_actor_pipeline(
             user_input,
         )
         .await?;
+        timeline::emit(
+            app,
+            conversation_id,
+            round_id,
+            TimelineKind::SubAgent,
+            TimelineStatus::Success,
+            "导演·分镜".to_string(),
+            format!("分镜计划产出 {} 字", res.text.chars().count()),
+        );
         res.text
     };
 
@@ -341,16 +389,17 @@ pub async fn run_director_actor_pipeline(
             }
         };
 
+        let actor_label = format!("演员 {}", beat.slot_id);
         let response = if actor_tools.is_empty() {
             run_subagent(
                 provider,
-                SubAgentRequest {
-                    label: &format!("演员 {}", beat.slot_id),
-                    system: actor_system,
-                    user: actor_user_prompt,
-                    temperature: provider.temperature,
-                    max_output_tokens: provider.max_tokens,
-                },
+                SubAgentRequest::new(
+                    &actor_label,
+                    actor_system,
+                    actor_user_prompt,
+                    provider.temperature,
+                    provider.max_tokens,
+                ),
             )
             .await
         } else {
@@ -366,13 +415,13 @@ pub async fn run_director_actor_pipeline(
             };
             run_subagent_with_tools(
                 provider,
-                SubAgentRequest {
-                    label: &format!("演员 {}", beat.slot_id),
-                    system: actor_system,
-                    user: actor_user_prompt,
-                    temperature: provider.temperature,
-                    max_output_tokens: provider.max_tokens,
-                },
+                SubAgentRequest::new(
+                    &actor_label,
+                    actor_system,
+                    actor_user_prompt,
+                    provider.temperature,
+                    provider.max_tokens,
+                ),
                 &runtime,
             )
             .await
@@ -470,4 +519,77 @@ pub async fn run_director_nudge_pass(
     .await;
     let _ = record_run_finish(db, run_id, if text.is_ok() { "completed" } else { "failed" }).await;
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_director_plan_schema_structure() {
+        let schema = director_plan_schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], serde_json::json!(["beats"]));
+
+        let beats_prop = &schema["properties"]["beats"];
+        assert_eq!(beats_prop["type"], "array");
+
+        let item_props = &beats_prop["items"]["properties"];
+        assert!(item_props["slot_id"].is_object());
+        assert!(item_props["character"].is_object());
+        assert!(item_props["focus"].is_object());
+        assert_eq!(
+            beats_prop["items"]["required"],
+            serde_json::json!(["slot_id", "focus"])
+        );
+    }
+
+    #[test]
+    fn test_parse_director_plan_valid() {
+        let json_str = r#"{
+            "beats": [
+                { "slot_id": "b1", "character": "Alice", "focus": "走进房间并发现线索" },
+                { "slot_id": "b2", "character": null, "focus": "门外传来脚步声" }
+            ]
+        }"#;
+
+        let plan = parse_director_plan(json_str).expect("parse valid plan");
+        assert_eq!(plan.beats.len(), 2);
+        assert_eq!(plan.beats[0].slot_id, "b1");
+        assert_eq!(plan.beats[0].character.as_deref(), Some("Alice"));
+        assert_eq!(plan.beats[0].focus, "走进房间并发现线索");
+
+        assert_eq!(plan.beats[1].slot_id, "b2");
+        assert_eq!(plan.beats[1].character, None);
+        assert_eq!(plan.beats[1].focus, "门外传来脚步声");
+    }
+
+    #[test]
+    fn test_parse_director_plan_code_block() {
+        let raw = "```json\n{\n  \"beats\": [\n    {\"slot_id\": \"slot_intro\", \"character\": \"侦探\", \"focus\": \"观察现场\"}\n  ]\n}\n```";
+        let plan = parse_director_plan(raw).expect("parse markdown json");
+        assert_eq!(plan.beats.len(), 1);
+        assert_eq!(plan.beats[0].slot_id, "slot_intro");
+        assert_eq!(plan.beats[0].character.as_deref(), Some("侦探"));
+        assert_eq!(plan.beats[0].focus, "观察现场");
+    }
+
+    #[test]
+    fn test_parse_director_plan_errors() {
+        // Not a JSON object
+        assert!(parse_director_plan("not a json").is_err());
+        assert!(parse_director_plan("[]").is_err());
+
+        // Missing beats
+        assert!(parse_director_plan(r#"{"other": 123}"#).is_err());
+
+        // Empty beats
+        assert!(parse_director_plan(r#"{"beats": []}"#).is_err());
+
+        // Missing required field slot_id
+        assert!(parse_director_plan(r#"{"beats": [{"focus": "something"}]}"#).is_err());
+
+        // Missing required field focus
+        assert!(parse_director_plan(r#"{"beats": [{"slot_id": "b1"}]}"#).is_err());
+    }
 }

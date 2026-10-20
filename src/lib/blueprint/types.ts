@@ -283,7 +283,7 @@ export interface BannedWordsConfig {
 }
 
 export interface ScriptwriterStage {
-  stage: 'drafter' | 'critic' | 'refiner';
+  stage: string;
   workspace_key: string;
   prompt: string;
   tools: string[];

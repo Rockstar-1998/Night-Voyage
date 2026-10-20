@@ -23,6 +23,34 @@ pub struct SubAgentRequest<'a> {
     pub user: String,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    pub response_mode: Option<String>,
+    pub structured_output_schema: Option<String>,
+}
+
+impl<'a> SubAgentRequest<'a> {
+    pub fn new(
+        label: &'a str,
+        system: Vec<String>,
+        user: impl Into<String>,
+        temperature: Option<f64>,
+        max_output_tokens: Option<i64>,
+    ) -> Self {
+        Self {
+            label,
+            system,
+            user: user.into(),
+            temperature,
+            max_output_tokens,
+            response_mode: None,
+            structured_output_schema: None,
+        }
+    }
+
+    pub fn with_structured_schema(mut self, schema_json: impl Into<String>) -> Self {
+        self.response_mode = Some("structured_json".to_string());
+        self.structured_output_schema = Some(schema_json.into());
+        self
+    }
 }
 
 /// 子智能体调用结果：整段文本 + 用量。
@@ -109,7 +137,7 @@ async fn run_subagent_inner(
             top_k: None,
             presence_penalty: None,
             frequency_penalty: None,
-            response_mode: None,
+            response_mode: request.response_mode.clone(),
             stop_sequences: vec![],
             // 非流式：一次拿完整段落。
             stream: false,
@@ -121,7 +149,7 @@ async fn run_subagent_inner(
             },
             thinking: None,
             beta_features: vec![],
-            structured_output_schema: None,
+            structured_output_schema: request.structured_output_schema.clone(),
             structured_output_display: None,
         };
 

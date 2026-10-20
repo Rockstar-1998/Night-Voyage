@@ -7,6 +7,7 @@
 //! 编排层只做三件事：选流水线、串子角色、把最终稿交回聊天链路落盘。
 //! 每次子角色调用都走 [`super::subagent`]，不存在第二套推理实现。
 
+use std::future::Future;
 use sqlx::SqlitePool;
 use tauri::AppHandle;
 
@@ -147,14 +148,138 @@ pub async fn assemble_context(
     Ok((system, user))
 }
 
-/// 剧本流水线：`draft` → `critique` → `refiner`（计划 §6.2）。
+/// 动态执行剧本流水线的通用核心逻辑。
 ///
-/// refiner 阶段做 **Layer 1 锚点涂黑**：把历史正文替换为 `[前文背景已锁定]`，
-/// 仅保留最近 50 字作为**尾锚**，防止润色时接不上上文或把已发生的事实改写。
+/// 接收 $N$ 个阶段（$N \ge 2$）：
+/// - 阶段 0：接收初始用户输入与该阶段提示词，产出初稿存入 `scratchpad`；
+/// - 中间阶段 ($1..N-2$)：按序接力执行，把上一阶段产出与该阶段提示词传给模型，产出存入 `scratchpad`；
+/// - 最终阶段 ($N-1$)：接收累积的批注/上下文与经过 `blackout_marker` 涂黑的尾锚（保留 `anchor_tail_chars` 字），产出定稿存入 `scratchpad`。
+pub async fn execute_dynamic_scriptwriter_pipeline<F, Fut>(
+    stages: &[crate::models::blueprint::ScriptwriterStage],
+    anchor_tail_chars: u32,
+    blackout_marker: &str,
+    user_input: &str,
+    scratchpad: &Scratchpad,
+    mut call_stage: F,
+) -> Result<String, String>
+where
+    F: FnMut(String, String, String, Scratchpad) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
+    let num_stages = stages.len();
+    if num_stages < 2 {
+        return Err(format!(
+            "ScriptwriterPipeline.stages 至少需要 2 个阶段（当前 {num_stages} 个）：接力流水线语义无法成立"
+        ));
+    }
+
+    // 阶段 0：初始初稿生成
+    let stage0 = &stages[0];
+    let stage0_label = format!("阶段 {}", stage0.stage);
+    let stage0_key = if !stage0.workspace_key.trim().is_empty() {
+        stage0.workspace_key.trim()
+    } else {
+        stage0.stage.trim()
+    };
+    let draft = call_stage(
+        stage0_label,
+        stage0.prompt.clone(),
+        user_input.to_string(),
+        scratchpad.clone(),
+    )
+    .await?;
+
+    scratchpad.write_text("draft", &draft);
+    scratchpad.write_text(stage0_key, &draft);
+    scratchpad.write_text(&stage0.stage, &draft);
+
+    // 中间阶段（1..N-2）：按序接力执行
+    let mut prev_output = draft.clone();
+    let mut accumulated_critiques: Vec<(String, String)> = Vec::new();
+
+    for stage_cfg in &stages[1..num_stages - 1] {
+        let stage_label = format!("阶段 {}", stage_cfg.stage);
+        let stage_key = if !stage_cfg.workspace_key.trim().is_empty() {
+            stage_cfg.workspace_key.trim()
+        } else {
+            stage_cfg.stage.trim()
+        };
+
+        let output = call_stage(
+            stage_label,
+            stage_cfg.prompt.clone(),
+            prev_output.clone(),
+            scratchpad.clone(),
+        )
+        .await?;
+
+        scratchpad.write_text(stage_key, &output);
+        scratchpad.write_text(&stage_cfg.stage, &output);
+        accumulated_critiques.push((stage_cfg.stage.clone(), output.clone()));
+        prev_output = output;
+    }
+
+    // 若恰好有 1 个中间阶段，为了向后兼容也将输出写入 "critique"
+    if accumulated_critiques.len() == 1 {
+        scratchpad.write_text("critique", &accumulated_critiques[0].1);
+    }
+
+    // 尾锚：只保留初稿末尾 N 字（节点资产 anchor_tail_chars），头部用涂黑标记
+    // （节点资产 blackout_marker），避免润色时重写既有事实。
+    let draft_content = scratchpad.read_text("draft").unwrap_or_else(|_| draft.clone());
+    let tail_anchor: String = {
+        let chars: Vec<char> = draft_content.chars().collect();
+        let start = chars.len().saturating_sub(anchor_tail_chars as usize);
+        chars[start..].iter().collect()
+    };
+
+    let mut refine_user = format!("{}\n{tail_anchor}\n\n", blackout_marker);
+    if !accumulated_critiques.is_empty() {
+        if accumulated_critiques.len() == 1 {
+            refine_user.push_str(&format!("【批注意见】\n{}\n\n", accumulated_critiques[0].1));
+        } else {
+            for (stage_name, critique_text) in &accumulated_critiques {
+                refine_user.push_str(&format!("【批注意见 · {}】\n{}\n\n", stage_name, critique_text));
+            }
+        }
+        refine_user.push_str("请依据批注重写这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。");
+    } else {
+        refine_user.push_str("请依据要求润色这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。");
+    }
+
+    let final_stage = &stages[num_stages - 1];
+    let final_label = format!("阶段 {}", final_stage.stage);
+    let final_key = if !final_stage.workspace_key.trim().is_empty() {
+        final_stage.workspace_key.trim()
+    } else {
+        final_stage.stage.trim()
+    };
+
+    let final_text = call_stage(
+        final_label,
+        final_stage.prompt.clone(),
+        refine_user,
+        scratchpad.clone(),
+    )
+    .await?;
+
+    scratchpad.write_text("final", &final_text);
+    scratchpad.write_text(final_key, &final_text);
+    scratchpad.write_text(&final_stage.stage, &final_text);
+
+    Ok(final_text)
+}
+
+/// 剧本流水线：动态按序执行 blueprint 中定义的 $N$ 个阶段（计划 §6.2）。
 ///
-/// 纯内存工作区（零磁盘 I/O，spec §1）：中间各阶段稿件（`draft`、`critique`、`final` 等）
+/// 阶段定义由 `ScriptwriterPipelineConfig.stages` 提供：
+/// - 阶段 0：初始生成（初稿放入 `draft`）；
+/// - 中间阶段 ($1..N-2$)：按序接力，传递前序产出与指令，产出存入 `scratchpad`；
+/// - 末尾阶段 ($N-1$)：做 **Layer 1 锚点涂黑**（保留最近 N 字尾锚），接收累积的批注或上下文，产出定稿。
+///
+/// 纯内存工作区（零磁盘 I/O，spec §1）：所有中间各阶段稿件
 /// 严格存留于瞬时 in-memory Scratchpad 中，向 SQLite `agent_drafts` 插入 0 行。
-/// 回合结束时工作区自动丢弃清空。
+/// 回合结束时工作区自动丢弃清空（无论成功或失败）。
 pub async fn run_scriptwriter_pipeline(
     app: &AppHandle,
     db: &SqlitePool,
@@ -174,111 +299,67 @@ pub async fn run_scriptwriter_pipeline(
         "蓝图缺少 ScriptwriterPipeline 节点，无法运行剧本流水线（请在该预设蓝图中添加）".to_string()
     })?;
 
-    // 阶段提示词消费蓝图 ScriptwriterStage 资产（B7：资产驱动，消除硬编码旁路）；
-    // stages 数组按序执行（stage 名 = drafter/critic/refiner 时与既有行为对齐）。
-    let stages: Vec<(String, String, String)> = if pipeline_cfg.stages.is_empty() {
+    if pipeline_cfg.stages.is_empty() {
+        let _ = record_run_finish(db, run_id, "failed").await;
         return Err(
             "ScriptwriterPipeline.stages 未配置阶段资产（至少需要 2 个阶段，如 draft 与 refiner，C2/C11 严禁代码硬编码兜底）".to_string()
         );
-    } else {
-        pipeline_cfg
-            .stages
-            .iter()
-            .map(|stage| (stage.stage.clone(), format!("阶段 {}", stage.stage), stage.prompt.clone()))
-            .collect()
-    };
-    if stages.len() < 2 {
+    }
+    if pipeline_cfg.stages.len() < 2 {
+        let _ = record_run_finish(db, run_id, "failed").await;
         return Err(format!(
-            "ScriptwriterPipeline.stages 至少需要 2 个阶段（当前 {} 个）：draft→critique→refiner 的接力语义无法成立",
-            stages.len()
+            "ScriptwriterPipeline.stages 至少需要 2 个阶段（当前 {} 个）：接力流水线语义无法成立",
+            pipeline_cfg.stages.len()
         ));
     }
 
     // 实例化本轮纯内存 Scratchpad（全生命周期在内存中流转，零磁盘 I/O）
     let scratchpad = Scratchpad::new();
 
-    // 阶段一：产出初稿（工作区变量 draft，计划 §6.2）
-    let draft_stage = &stages[0];
-    let draft = stage_call_with_scratchpad(
-        app,
-        db,
-        run_id,
-        conversation_id,
-        round_id,
-        provider,
-        system,
-        &draft_stage.1,
-        &draft_stage.2,
+    let result = execute_dynamic_scriptwriter_pipeline(
+        &pipeline_cfg.stages,
+        pipeline_cfg.anchor_tail_chars,
+        &pipeline_cfg.blackout_marker,
         user_input,
         &scratchpad,
+        |stage_label, instruction, payload, pad| {
+            let app = app.clone();
+            let db = db.clone();
+            let provider = provider.clone();
+            let system = system.to_vec();
+            async move {
+                stage_call_with_scratchpad(
+                    &app,
+                    &db,
+                    run_id,
+                    conversation_id,
+                    round_id,
+                    &provider,
+                    &system,
+                    &stage_label,
+                    &instruction,
+                    &payload,
+                    &pad,
+                )
+                .await
+            }
+        },
     )
-    .await?;
-    scratchpad.write_text("draft", &draft);
-    scratchpad.write_text(&draft_stage.0, &draft);
+    .await;
 
-    // 中间阶段（critique 等）：逐阶段接力，上一阶段产出从 scratchpad 读取
-    let mut critique = String::new();
-    if stages.len() > 2 {
-        let mid_stage = &stages[1];
-        let mid_input = scratchpad.read_text("draft").unwrap_or_else(|_| draft.clone());
-        critique = stage_call_with_scratchpad(
-            app,
-            db,
-            run_id,
-            conversation_id,
-            round_id,
-            provider,
-            system,
-            &mid_stage.1,
-            &mid_stage.2,
-            &mid_input,
-            &scratchpad,
-        )
-        .await?;
-        scratchpad.write_text("critique", &critique);
-        scratchpad.write_text(&mid_stage.0, &critique);
-    }
-
-    // 尾锚：只保留初稿末尾 N 字（节点资产 anchor_tail_chars），头部用涂黑标记
-    // （节点资产 blackout_marker），避免润色时重写既有事实。
-    let draft_content = scratchpad.read_text("draft").unwrap_or_else(|_| draft.clone());
-    let tail_anchor: String = {
-        let chars: Vec<char> = draft_content.chars().collect();
-        let start = chars.len().saturating_sub(pipeline_cfg.anchor_tail_chars as usize);
-        chars[start..].iter().collect()
-    };
-    let mut refine_user = format!(
-        "{}\n{tail_anchor}\n\n",
-        pipeline_cfg.blackout_marker
-    );
-    if !critique.is_empty() {
-        refine_user.push_str(&format!("【批注意见】\n{critique}\n\n"));
-    }
-    refine_user.push_str("请依据批注重写这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。");
-
-    // 末阶段：润色定稿
-    let last_stage = &stages[stages.len() - 1];
-    let final_text = stage_call_with_scratchpad(
-        app,
-        db,
-        run_id,
-        conversation_id,
-        round_id,
-        provider,
-        system,
-        &last_stage.1,
-        &last_stage.2,
-        &refine_user,
-        &scratchpad,
-    )
-    .await?;
-    scratchpad.write_text("final", &final_text);
-    scratchpad.write_text(&last_stage.0, &final_text);
-
-    record_run_finish(db, run_id, "completed").await?;
     // 回合结束：释放纯内存缓冲，彻底丢弃工作区（零磁盘残留）
     scratchpad.clear();
-    Ok(final_text)
+
+    match result {
+        Ok(final_text) => {
+            record_run_finish(db, run_id, "completed").await?;
+            Ok(final_text)
+        }
+        Err(err) => {
+            let _ = record_run_finish(db, run_id, "failed").await;
+            Err(err)
+        }
+    }
 }
 
 /// 禁词 Nudge 单趟重写（计划 §6.3）：以驳回意见为指令，单模型调用重写整段终稿。
@@ -353,13 +434,13 @@ pub async fn stage_call_with_scratchpad(
 
     let response = run_subagent_with_tools(
         provider,
-        SubAgentRequest {
-            label: stage,
-            system: stage_system,
-            user: payload.to_string(),
-            temperature: provider.temperature,
-            max_output_tokens: provider.max_tokens,
-        },
+        SubAgentRequest::new(
+            stage,
+            stage_system,
+            payload,
+            provider.temperature,
+            provider.max_tokens,
+        ),
         &runtime,
     )
     .await;
@@ -568,5 +649,167 @@ mod tests {
         assert!(scratchpad.read_text("draft").is_err());
         assert!(scratchpad.read_text("final").is_err());
         assert_eq!(scratchpad.snapshot().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_pipeline_two_stages() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "你是初稿编写者".to_string(),
+                tools: vec![],
+            },
+            ScriptwriterStage {
+                stage: "refiner".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "你是定稿润色者".to_string(),
+                tools: vec![],
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let executed_stages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let executed_clone = executed_stages.clone();
+
+        let final_result = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            20,
+            "【背景锁定】",
+            "玩家探索走廊",
+            &scratchpad,
+            move |label, instruction, payload, pad| {
+                let executed = executed_clone.clone();
+                async move {
+                    executed.lock().unwrap().push((label.clone(), instruction.clone(), payload.clone()));
+                    if label.contains("draft") {
+                        Ok("幽暗的走廊里有微弱的灯光".to_string())
+                    } else {
+                        // 验证润色阶段接收到了尾锚与背景锁定标记
+                        assert!(payload.contains("【背景锁定】"));
+                        assert!(payload.contains("幽暗的走廊里有微弱的灯光"));
+                        // 阶段 1 中间阶段为空，因而不需要批注意见标题
+                        assert!(!payload.contains("【批注意见】"));
+                        // 且能够从 scratchpad 中读取到初稿
+                        let prev_draft = pad.read_text("draft").expect("read draft in final stage");
+                        assert_eq!(prev_draft, "幽暗的走廊里有微弱的灯光");
+                        Ok("幽暗的走廊深处，微弱灯光若隐若现。".to_string())
+                    }
+                }
+            },
+        )
+        .await
+        .expect("pipeline execution success");
+
+        assert_eq!(final_result, "幽暗的走廊深处，微弱灯光若隐若现。");
+        assert_eq!(executed_stages.lock().unwrap().len(), 2);
+
+        // 验证中间结果均在 scratchpad 中
+        assert_eq!(scratchpad.read_text("draft").unwrap(), "幽暗的走廊里有微弱的灯光");
+        assert_eq!(scratchpad.read_text("final").unwrap(), "幽暗的走廊深处，微弱灯光若隐若现。");
+
+        // 验证清理工作区
+        scratchpad.clear();
+        assert_eq!(scratchpad.snapshot().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_pipeline_four_stages() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "outline".to_string(),
+                workspace_key: "outline".to_string(),
+                prompt: "提炼分镜大纲".to_string(),
+                tools: vec![],
+            },
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft_content".to_string(),
+                prompt: "展开剧情初稿".to_string(),
+                tools: vec![],
+            },
+            ScriptwriterStage {
+                stage: "critique".to_string(),
+                workspace_key: "critique_notes".to_string(),
+                prompt: "检查逻辑漏洞与节奏".to_string(),
+                tools: vec![],
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "终稿修辞打磨".to_string(),
+                tools: vec![],
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let executed_stages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let executed_clone = executed_stages.clone();
+
+        let final_result = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            30,
+            "【前情锁定】",
+            "调查失窃的秘宝",
+            &scratchpad,
+            move |label, instruction, payload, pad| {
+                let executed = executed_clone.clone();
+                async move {
+                    executed.lock().unwrap().push((label.clone(), instruction.clone(), payload.clone()));
+                    if label.contains("outline") {
+                        assert_eq!(payload, "调查失窃的秘宝");
+                        Ok("大纲：密室现场、窗户破损、神秘足迹".to_string())
+                    } else if label.contains("draft") {
+                        assert_eq!(payload, "大纲：密室现场、窗户破损、神秘足迹");
+                        Ok("探长推开沉重的木门，密室内一片狼藉，窗框上残留着神秘的灰烬。".to_string())
+                    } else if label.contains("critique") {
+                        assert!(payload.contains("探长推开沉重的木门"));
+                        Ok("批注：增加对足迹走向的描写。".to_string())
+                    } else {
+                        // 终稿润色阶段验证：包含前情锁定与中间阶段批注
+                        assert!(payload.contains("【前情锁定】"));
+                        assert!(payload.contains("【批注意见 · draft】") || payload.contains("【批注意见 · critique】"));
+                        assert!(payload.contains("增加对足迹走向的描写。"));
+                        // 验证 scratchpad 累积了各阶段变量
+                        assert!(pad.read_text("outline").is_ok());
+                        assert!(pad.read_text("draft_content").is_ok());
+                        assert!(pad.read_text("critique_notes").is_ok());
+                        Ok("探长推开沉重的橡木门，密室内一片狼藉，一行灰白足迹直指破碎的窗棂。".to_string())
+                    }
+                }
+            },
+        )
+        .await
+        .expect("execute 4 stages");
+
+        assert_eq!(final_result, "探长推开沉重的橡木门，密室内一片狼藉，一行灰白足迹直指破碎的窗棂。");
+        assert_eq!(executed_stages.lock().unwrap().len(), 4);
+
+        // 验证各阶段产出都写入了工作区
+        assert_eq!(scratchpad.read_text("outline").unwrap(), "大纲：密室现场、窗户破损、神秘足迹");
+        assert_eq!(scratchpad.read_text("draft_content").unwrap(), "探长推开沉重的木门，密室内一片狼藉，窗框上残留着神秘的灰烬。");
+        assert_eq!(scratchpad.read_text("critique_notes").unwrap(), "批注：增加对足迹走向的描写。");
+        assert_eq!(scratchpad.read_text("final").unwrap(), "探长推开沉重的橡木门，密室内一片狼藉，一行灰白足迹直指破碎的窗棂。");
+
+        scratchpad.clear();
+        assert_eq!(scratchpad.snapshot().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_pipeline_insufficient_stages() {
+        let scratchpad = Scratchpad::new();
+        let res = execute_dynamic_scriptwriter_pipeline(
+            &[],
+            10,
+            "MARKER",
+            "input",
+            &scratchpad,
+            |_l, _i, _p, _pad| async { Ok("res".to_string()) },
+        )
+        .await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("至少需要 2 个阶段"));
     }
 }
