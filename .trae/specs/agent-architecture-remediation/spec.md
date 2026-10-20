@@ -1,6 +1,6 @@
 # Specification: Agent Architecture & Remediation (Audit Fixes)
 
-**Triage Label**: `ready-for-agent`  
+**Triage Label**: `completed`  
 **Reference Document**: `plans/agent-system-architecture-plan.md`  
 **Compliance Standards**: `AGENTS.md` (C1, C2, C3, C4, C5, C7, C8, C9, C10, C11)
 
