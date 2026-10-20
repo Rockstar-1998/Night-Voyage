@@ -30,6 +30,9 @@ import {
   clearPresetGateSelection,
 } from '../../../src/lib/backend';
 import { showToast } from '../Toast';
+import { MobileSchemaEditorModal } from '../preset/MobileSchemaEditorModal';
+import { MobileUiDesignerModal } from '../preset/MobileUiDesignerModal';
+import { MobileActionWhitelistModal } from '../preset/MobileActionWhitelistModal';
 
 // ─── Props ───
 
@@ -37,6 +40,7 @@ export interface MobilePresetDetailViewProps {
   preset: PresetSummary;
   onBack: () => void;
   onEditBlueprint: () => void;
+  sessionId?: number;
 }
 
 // ─── 单个 Gate 选择器（互斥组单选 chip / 普通组多选 checkbox）───
@@ -166,6 +170,9 @@ export const MobilePresetDetailView: Component<MobilePresetDetailViewProps> = (p
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [updatingNodeId, setUpdatingNodeId] = createSignal<string | null>(null);
+  const [schemaModalOpen, setSchemaModalOpen] = createSignal(false);
+  const [uiDesignerOpen, setUiDesignerOpen] = createSignal(false);
+  const [whitelistModalOpen, setWhitelistModalOpen] = createSignal(false);
 
   onMount(async () => {
     try {
@@ -256,6 +263,34 @@ export const MobilePresetDetailView: Component<MobilePresetDetailViewProps> = (p
           </Show>
         </div>
 
+        {/* 创作者资产工具栏 */}
+        <div class="grid grid-cols-3 gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setSchemaModalOpen(true)}
+            class="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-accent/15 border border-accent/30 text-accent text-[12px] font-semibold active:scale-95 transition-transform shadow-sm"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+            Schema 管理
+          </button>
+          <button
+            type="button"
+            onClick={() => setUiDesignerOpen(true)}
+            class="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[12px] font-semibold active:scale-95 transition-transform shadow-sm"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            UI 设计器
+          </button>
+          <button
+            type="button"
+            onClick={() => setWhitelistModalOpen(true)}
+            class="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[12px] font-semibold active:scale-95 transition-transform shadow-sm"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            动作白名单
+          </button>
+        </div>
+
         {/* 加载状态 */}
         <Show when={loading()}>
           <div class="flex items-center justify-center py-12">
@@ -305,6 +340,25 @@ export const MobilePresetDetailView: Component<MobilePresetDetailViewProps> = (p
           </Show>
         </Show>
       </div>
+
+      <MobileSchemaEditorModal
+        presetId={props.preset.id}
+        isOpen={schemaModalOpen()}
+        onClose={() => setSchemaModalOpen(false)}
+      />
+
+      <MobileUiDesignerModal
+        presetId={props.preset.id}
+        isOpen={uiDesignerOpen()}
+        sessionId={props.sessionId}
+        onClose={() => setUiDesignerOpen(false)}
+      />
+
+      <MobileActionWhitelistModal
+        presetId={props.preset.id}
+        isOpen={whitelistModalOpen()}
+        onClose={() => setWhitelistModalOpen(false)}
+      />
     </div>
   );
 };
