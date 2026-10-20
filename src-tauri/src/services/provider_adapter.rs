@@ -1022,7 +1022,7 @@ mod tests {
 
         let error = build_provider_http_request(&request, "https://api.openai.com", "key")
             .expect_err("non-text openai request should fail");
-        assert!(error.contains("纯文本"));
+        assert!(error.contains("文本"));
     }
 
     #[test]

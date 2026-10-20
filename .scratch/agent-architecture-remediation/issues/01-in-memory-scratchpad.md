@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Native `read_text(key: String)` and `write_text(key: String, content: String)` tools are exposed to LLM agents during pipeline execution.
-- [ ] Scriptwriter pipeline stages store and retrieve intermediate drafts (`draft`, `critique`, `final`, etc.) exclusively through the in-memory scratchpad.
-- [ ] Running a multi-step scriptwriter turn inserts zero rows into the `agent_drafts` database table.
-- [ ] Volatile scratchpad buffers are dropped and deallocated when turn execution completes.
+- [x] Native `read_text(key: String)` and `write_text(key: String, content: String)` tools are exposed to LLM agents during pipeline execution.
+- [x] Scriptwriter pipeline stages store and retrieve intermediate drafts (`draft`, `critique`, `final`, etc.) exclusively through the in-memory scratchpad.
+- [x] Running a multi-step scriptwriter turn inserts zero rows into the `agent_drafts` database table.
+- [x] Volatile scratchpad buffers are dropped and deallocated when turn execution completes.

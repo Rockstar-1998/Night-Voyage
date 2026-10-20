@@ -288,6 +288,58 @@ pub async fn execute_tool_call_with_plan(
     arguments_json: &str,
     plan: Option<&crate::models::tool_plan::ToolPlan>,
 ) -> Result<String, String> {
+    // 原生工作区工具（read_text / write_text）：无需蓝图显式定义即可原生直通纯内存工作区（零磁盘 I/O）
+    if plan.is_none() && (tool_name == "read_text" || tool_name == "write_text") {
+        let args: serde_json::Value = serde_json::from_str(arguments_json).map_err(|err| {
+            format!(
+                "ToolCall 参数不是合法 JSON（契约 {}）: {}",
+                tool_name, err
+            )
+        })?;
+        if !args.is_object() {
+            return Err(format!(
+                "ToolCall 参数必须是 JSON 对象（契约 {}），实际收到: {}",
+                tool_name,
+                args_type_name(&args)
+            ));
+        }
+
+        let mut state = load_session_state_cached(db, app, session_id).await?;
+        let outcome_text = match tool_name {
+            "read_text" => {
+                let key = args.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                    "read_text 缺少必需参数 `key`".to_string()
+                })?;
+                state.scratchpad.get(key).cloned().ok_or_else(|| {
+                    format!("工作区变量 `{key}` 不存在")
+                })?
+            }
+            "write_text" => {
+                let key = args.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                    "write_text 缺少必需参数 `key`".to_string()
+                })?;
+                let content = args.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
+                    "write_text 缺少必需参数 `content`".to_string()
+                })?;
+                state.scratchpad.insert(key.to_string(), content.to_string());
+                stage_session_state(app, session_id, &state);
+                format!("成功写入工作区变量 `{key}`")
+            }
+            _ => unreachable!(),
+        };
+
+        crate::services::agent::timeline::emit(
+            app,
+            session_id,
+            round_id,
+            crate::services::agent::timeline::TimelineKind::HudPatch,
+            crate::services::agent::timeline::TimelineStatus::Success,
+            format!("工作区变量变更: {tool_name}"),
+            outcome_text.clone(),
+        );
+        return Ok(outcome_text);
+    }
+
     // 蓝图未定义 = 显式报错（spec 不变量 I2）：内置契约兜底已废除——具体功能
     // 语义只存在于蓝图资产，代码不再携带任何具体实现。
     let Some(plan) = plan else {

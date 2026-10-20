@@ -12,7 +12,12 @@ use tauri::AppHandle;
 
 use crate::models::ApiProvider;
 use crate::repositories::preset_gate_repository::PresetGateRepository;
-use crate::services::agent::subagent::{run_subagent, SubAgentRequest};
+use crate::services::agent::scratchpad::{
+    execute_scratchpad_tool, native_scratchpad_tools, Scratchpad,
+};
+use crate::services::agent::subagent::{
+    run_subagent_with_tools, SubAgentRequest, SubAgentToolRuntime,
+};
 use crate::services::agent::timeline::{self, TimelineKind, TimelineStatus};
 use crate::services::prompt_compiler::{
     compile_prompt, PromptBudget, PromptCompileInput, PromptCompileMode,
@@ -146,7 +151,10 @@ pub async fn assemble_context(
 ///
 /// refiner 阶段做 **Layer 1 锚点涂黑**：把历史正文替换为 `[前文背景已锁定]`，
 /// 仅保留最近 50 字作为**尾锚**，防止润色时接不上上文或把已发生的事实改写。
-/// 三个阶段的中间稿都写进 `agent_drafts`，便于事后复盘。
+///
+/// 纯内存工作区（零磁盘 I/O，spec §1）：中间各阶段稿件（`draft`、`critique`、`final` 等）
+/// 严格存留于瞬时 in-memory Scratchpad 中，向 SQLite `agent_drafts` 插入 0 行。
+/// 回合结束时工作区自动丢弃清空。
 pub async fn run_scriptwriter_pipeline(
     app: &AppHandle,
     db: &SqlitePool,
@@ -186,9 +194,12 @@ pub async fn run_scriptwriter_pipeline(
         ));
     }
 
+    // 实例化本轮纯内存 Scratchpad（全生命周期在内存中流转，零磁盘 I/O）
+    let scratchpad = Scratchpad::new();
+
     // 阶段一：产出初稿（工作区变量 draft，计划 §6.2）
     let draft_stage = &stages[0];
-    let draft = stage_call(
+    let draft = stage_call_with_scratchpad(
         app,
         db,
         run_id,
@@ -199,14 +210,18 @@ pub async fn run_scriptwriter_pipeline(
         &draft_stage.1,
         &draft_stage.2,
         user_input,
+        &scratchpad,
     )
     .await?;
+    scratchpad.write_text("draft", &draft);
+    scratchpad.write_text(&draft_stage.0, &draft);
 
-    // 中间阶段（critique 等）：逐阶段接力，上一阶段产出作为下一阶段输入
+    // 中间阶段（critique 等）：逐阶段接力，上一阶段产出从 scratchpad 读取
     let mut critique = String::new();
     if stages.len() > 2 {
         let mid_stage = &stages[1];
-        critique = stage_call(
+        let mid_input = scratchpad.read_text("draft").unwrap_or_else(|_| draft.clone());
+        critique = stage_call_with_scratchpad(
             app,
             db,
             run_id,
@@ -216,36 +231,34 @@ pub async fn run_scriptwriter_pipeline(
             system,
             &mid_stage.1,
             &mid_stage.2,
-            &draft,
+            &mid_input,
+            &scratchpad,
         )
         .await?;
+        scratchpad.write_text("critique", &critique);
+        scratchpad.write_text(&mid_stage.0, &critique);
     }
 
     // 尾锚：只保留初稿末尾 N 字（节点资产 anchor_tail_chars），头部用涂黑标记
     // （节点资产 blackout_marker），避免润色时重写既有事实。
+    let draft_content = scratchpad.read_text("draft").unwrap_or_else(|_| draft.clone());
     let tail_anchor: String = {
-        let chars: Vec<char> = draft.chars().collect();
+        let chars: Vec<char> = draft_content.chars().collect();
         let start = chars.len().saturating_sub(pipeline_cfg.anchor_tail_chars as usize);
         chars[start..].iter().collect()
     };
     let mut refine_user = format!(
-        "{}
-{tail_anchor}
-
-",
+        "{}\n{tail_anchor}\n\n",
         pipeline_cfg.blackout_marker
     );
     if !critique.is_empty() {
-        refine_user.push_str(&format!("【批注意见】
-{critique}
-
-"));
+        refine_user.push_str(&format!("【批注意见】\n{critique}\n\n"));
     }
     refine_user.push_str("请依据批注重写这一段，保持剧情走向与已完成的事实不变，只输出重写后的正文。");
 
     // 末阶段：润色定稿
     let last_stage = &stages[stages.len() - 1];
-    let final_text = stage_call(
+    let final_text = stage_call_with_scratchpad(
         app,
         db,
         run_id,
@@ -256,10 +269,15 @@ pub async fn run_scriptwriter_pipeline(
         &last_stage.1,
         &last_stage.2,
         &refine_user,
+        &scratchpad,
     )
     .await?;
+    scratchpad.write_text("final", &final_text);
+    scratchpad.write_text(&last_stage.0, &final_text);
 
     record_run_finish(db, run_id, "completed").await?;
+    // 回合结束：释放纯内存缓冲，彻底丢弃工作区（零磁盘残留）
+    scratchpad.clear();
     Ok(final_text)
 }
 
@@ -294,12 +312,14 @@ pub async fn run_scriptwriter_nudge_pass(
     text
 }
 
-/// 单阶段子角色调用 + 落 `agent_drafts` + 发时序事件。
+/// 单阶段子角色调用（带纯内存 Scratchpad 注入与原生 read_text/write_text 工具循环）。
+///
+/// 零磁盘 I/O（spec §1）：不向 SQLite `agent_drafts` 写入任何记录。
 #[allow(clippy::too_many_arguments)]
-pub async fn stage_call(
+pub async fn stage_call_with_scratchpad(
     app: &AppHandle,
-    db: &SqlitePool,
-    run_id: i64,
+    _db: &SqlitePool,
+    _run_id: i64,
     conversation_id: i64,
     round_id: i64,
     provider: &ApiProvider,
@@ -307,11 +327,31 @@ pub async fn stage_call(
     stage: &str,
     instruction: &str,
     payload: &str,
+    scratchpad: &Scratchpad,
 ) -> Result<String, String> {
     let mut stage_system: Vec<String> = system.to_vec();
     stage_system.push(instruction.to_string());
 
-    let response = run_subagent(
+    let tools = native_scratchpad_tools();
+    let pad = scratchpad.clone();
+    let execute = move |name: String, args_json: String| {
+        let pad = pad.clone();
+        std::pin::Pin::from(Box::pin(async move {
+            match execute_scratchpad_tool(&pad, &name, &args_json) {
+                Some(res) => res,
+                None => Err(format!("未知的工作区工具 `{name}`")),
+            }
+        }))
+            as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+    };
+
+    let runtime = SubAgentToolRuntime {
+        tools,
+        max_rounds: 5,
+        execute: &execute,
+    };
+
+    let response = run_subagent_with_tools(
         provider,
         SubAgentRequest {
             label: stage,
@@ -320,19 +360,14 @@ pub async fn stage_call(
             temperature: provider.temperature,
             max_output_tokens: provider.max_tokens,
         },
+        &runtime,
     )
     .await;
 
     match response {
         Ok(response) => {
-            record_draft(
-                db,
-                run_id,
-                &format!("scriptwriter:{stage}"),
-                &response.text,
-                stage,
-            )
-            .await?;
+            // 纯内存工作区记账（0 disk I/O，不写 SQLite agent_drafts 表）
+            scratchpad.write_text(format!("scriptwriter:{stage}"), &response.text);
             timeline::emit(
                 app,
                 conversation_id,
@@ -364,6 +399,37 @@ pub async fn stage_call(
             Err(err)
         }
     }
+}
+
+/// 单阶段子角色调用（兼容入口，创建独立 Scratchpad 转发）。
+#[allow(clippy::too_many_arguments)]
+pub async fn stage_call(
+    app: &AppHandle,
+    db: &SqlitePool,
+    run_id: i64,
+    conversation_id: i64,
+    round_id: i64,
+    provider: &ApiProvider,
+    system: &[String],
+    stage: &str,
+    instruction: &str,
+    payload: &str,
+) -> Result<String, String> {
+    let scratchpad = Scratchpad::new();
+    stage_call_with_scratchpad(
+        app,
+        db,
+        run_id,
+        conversation_id,
+        round_id,
+        provider,
+        system,
+        stage,
+        instruction,
+        payload,
+        &scratchpad,
+    )
+    .await
 }
 
 pub async fn record_run_start(
@@ -399,24 +465,108 @@ pub async fn record_run_finish(db: &SqlitePool, run_id: i64, status: &str) -> Re
         .map_err(|err| format!("更新 agent_runs 失败: {}", err))
 }
 
+/// 兼容旧签名的草稿记账函数。
+///
+/// 零磁盘 I/O（spec §1）：所有中间草稿仅存留于内存 Scratchpad 中，
+/// 不向持久化 SQLite `agent_drafts` 表执行任何写入。返回 Ok(()) 保持无害。
 pub async fn record_draft(
-    db: &SqlitePool,
-    run_id: i64,
-    agent_key: &str,
-    content: &str,
-    intent: &str,
+    _db: &SqlitePool,
+    _run_id: i64,
+    _agent_key: &str,
+    _content: &str,
+    _intent: &str,
 ) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO agent_drafts (run_id, agent_key, character_id, draft_content, draft_intent, status, created_at) \
-         VALUES (?, ?, NULL, ?, ?, 'produced', ?)",
-    )
-    .bind(run_id)
-    .bind(agent_key)
-    .bind(content)
-    .bind(intent)
-    .bind(crate::utils::now_ts())
-    .execute(db)
-    .await
-    .map(|_| ())
-    .map_err(|err| format!("写入 agent_drafts 失败: {}", err))
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite::memory:");
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_record_draft_produces_zero_sqlite_rows() {
+        let pool = setup_test_db().await;
+
+        // Setup fixture conversation and round
+        sqlx::query("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (1, 'test', 0, 0)")
+            .execute(&pool)
+            .await
+            .expect("insert test conversation");
+        sqlx::query("INSERT INTO message_rounds (id, conversation_id, round_index, status, created_at, updated_at) VALUES (1, 1, 1, 'completed', 0, 0)")
+            .execute(&pool)
+            .await
+            .expect("insert test round");
+
+        let run_id = record_run_start(&pool, 1, 1, "scriptwriter_pipeline")
+            .await
+            .expect("record_run_start");
+
+        // Initial count should be 0
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_drafts")
+            .fetch_one(&pool)
+            .await
+            .expect("count before");
+        assert_eq!(count_before, 0);
+
+        // Call record_draft multiple times across intermediate drafting stages
+        record_draft(&pool, run_id, "scriptwriter:draft", "初稿内容", "draft")
+            .await
+            .expect("record draft 1");
+        record_draft(&pool, run_id, "scriptwriter:critique", "批注意见", "critique")
+            .await
+            .expect("record draft 2");
+        record_draft(&pool, run_id, "scriptwriter:final", "定稿正文", "final")
+            .await
+            .expect("record draft 3");
+
+        // Verify that exactly 0 rows were inserted into agent_drafts (zero disk I/O)
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_drafts")
+            .fetch_one(&pool)
+            .await
+            .expect("count after");
+        assert_eq!(count_after, 0, "agent_drafts 表必须为 0 行（零磁盘 I/O）");
+    }
+
+    #[test]
+    fn test_scratchpad_stage_storage_and_lifecycle() {
+        let scratchpad = Scratchpad::new();
+
+        // 阶段一初稿写入
+        scratchpad.write_text("draft", "这是第一阶段初稿");
+        scratchpad.write_text("stage:drafter", "这是第一阶段初稿");
+
+        // 阶段二读取初稿并写入批注
+        let draft_input = scratchpad.read_text("draft").expect("read draft");
+        assert_eq!(draft_input, "这是第一阶段初稿");
+        scratchpad.write_text("critique", "批注：增强环境描写");
+
+        // 阶段三润色读取批注和初稿并写入终稿
+        let critique_input = scratchpad.read_text("critique").expect("read critique");
+        assert_eq!(critique_input, "批注：增强环境描写");
+        scratchpad.write_text("final", "这是最终润色后的正文");
+
+        // 验证各阶段在内存中均能正常检索
+        assert_eq!(scratchpad.read_text("final").unwrap(), "这是最终润色后的正文");
+        assert_eq!(scratchpad.snapshot().len(), 4);
+
+        // 回合结束：清空工作区，缓冲区彻底回收释放
+        scratchpad.clear();
+        assert!(scratchpad.read_text("draft").is_err());
+        assert!(scratchpad.read_text("final").is_err());
+        assert_eq!(scratchpad.snapshot().len(), 0);
+    }
 }

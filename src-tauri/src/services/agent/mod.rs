@@ -13,5 +13,6 @@
 pub mod director_actor;
 pub mod nudge;
 pub mod orchestrator;
+pub mod scratchpad;
 pub mod subagent;
 pub mod timeline;
