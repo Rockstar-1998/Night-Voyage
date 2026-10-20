@@ -4,9 +4,9 @@
 
 **Blocked by:** 02: Blueprint-Driven Initial State & Genre-Neutral Engine Models, 07: Dynamic Scriptwriter Pipeline Stages & Schema Beat Extraction
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Mobile `MobileNodeConfigForms.tsx` renders dedicated, functional configuration forms for all 8 previously missing node variants.
-- [ ] Mobile creators can inspect, configure, and save parameters for all 8 node types on mobile devices without encountering empty panels.
-- [ ] Mobile `MobilePresetDetailView.tsx` provides accessible buttons and responsive modal flows for `SchemaEditorModal`, `UiDesignerModal`, and `PresetActionWhitelistModal`.
-- [ ] Preset modifications made on mobile serialize faithfully to the unified preset schema.
+- [x] Mobile `MobileNodeConfigForms.tsx` renders dedicated, functional configuration forms for all 8 previously missing node variants.
+- [x] Mobile creators can inspect, configure, and save parameters for all 8 node types on mobile devices without encountering empty panels.
+- [x] Mobile `MobilePresetDetailView.tsx` provides accessible buttons and responsive modal flows for `SchemaEditorModal`, `UiDesignerModal`, and `PresetActionWhitelistModal`.
+- [x] Preset modifications made on mobile serialize faithfully to the unified preset schema.

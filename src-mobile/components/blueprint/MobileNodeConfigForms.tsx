@@ -40,6 +40,15 @@ import type {
   InitialStateConfig,
   InitialStatDef,
   InitialStateInventoryItem,
+  InspectorConfig,
+  WriterConfig,
+  QuerierConfig,
+  BannedWordsConfig,
+  ScriptwriterStage,
+  ScriptwriterPipelineConfig,
+  AgentModeSwitchConfig,
+  DirectorConfig,
+  ActorDefinition,
 } from '../../../src/lib/blueprint/types';
 
 // ─── 公共 Props ───
@@ -1487,6 +1496,656 @@ const InitialStateConfigForm: Component<{
   );
 };
 
+// ─── Inspector 节点表单 ───
+
+const INSPECT_KIND_OPTIONS = [
+  { value: 'inventory', label: 'inventory (背包清单/金币/负重)' },
+  { value: 'stats', label: 'stats (全部数值属性)' },
+  { value: 'item', label: 'item (单件详情)' },
+  { value: 'scratchpad', label: 'scratchpad (工作区变量)' },
+];
+
+const InspectorForm: Component<{
+  config: InspectorConfig;
+  onChange: (c: InspectorConfig) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 space-y-1">
+        <div class="text-xs font-bold text-sky-400">Inspector 容器读原语</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          读取游戏数据容器的指定片段（背包、属性、单品或纯内存工作区），结果写入上下文 inspect，供回执引用。
+        </p>
+      </div>
+      <div>
+        <FieldLabel label="读取类型 (inspect_kind)" />
+        <Select
+          value={props.config.inspect_kind || 'inventory'}
+          onChange={(v) => props.onChange({ ...props.config, inspect_kind: v as InspectorConfig['inspect_kind'] })}
+          options={INSPECT_KIND_OPTIONS}
+        />
+      </div>
+      <div>
+        <FieldLabel label="键表达式 (key_expr)" hint="item / scratchpad 时必填" />
+        <TextInput
+          value={props.config.key_expr || ''}
+          placeholder="如 args.item_id 或 draft"
+          onInput={(v) => props.onChange({ ...props.config, key_expr: v })}
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── Querier 节点表单 ───
+
+const QuerierForm: Component<{
+  config: QuerierConfig;
+  onChange: (c: QuerierConfig) => void;
+}> = (props) => {
+  const [newKey, setNewKey] = createSignal('');
+  const [newVal, setNewVal] = createSignal('');
+
+  const templateEntries = () => {
+    const raw = props.config.args_template || {};
+    return Object.entries(raw).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)] as [string, string]);
+  };
+
+  const syncTemplate = (entries: [string, string][]) => {
+    const record: Record<string, string> = {};
+    for (const [k, v] of entries) {
+      if (k.trim()) {
+        record[k.trim()] = v;
+      }
+    }
+    props.onChange({ ...props.config, args_template: record });
+  };
+
+  const handleKeyChange = (oldKey: string, nextKey: string) => {
+    const trimmed = nextKey.trim();
+    if (!trimmed || trimmed === oldKey) return;
+    const current = templateEntries();
+    const updated = current.map(([k, v]) => (k === oldKey ? ([trimmed, v] as [string, string]) : ([k, v] as [string, string])));
+    syncTemplate(updated);
+  };
+
+  const handleValChange = (key: string, nextVal: string) => {
+    const current = templateEntries();
+    const updated = current.map(([k, v]) => (k === key ? ([k, nextVal] as [string, string]) : ([k, v] as [string, string])));
+    syncTemplate(updated);
+  };
+
+  const handleDeleteEntry = (keyToDelete: string) => {
+    const current = templateEntries();
+    const updated = current.filter(([k]) => k !== keyToDelete);
+    syncTemplate(updated);
+  };
+
+  const handleAddParam = () => {
+    const k = newKey().trim();
+    if (!k) return;
+    const v = newVal();
+    const current = templateEntries();
+    const idx = current.findIndex(([ek]) => ek === k);
+    if (idx >= 0) {
+      current[idx] = [k, v];
+    } else {
+      current.push([k, v]);
+    }
+    syncTemplate(current);
+    setNewKey('');
+    setNewVal('');
+  };
+
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 space-y-1">
+        <div class="text-xs font-bold text-sky-400">Querier 跨域读配置</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          经 ActionBridge 白名单代理调用既有 Tauri 命令，查询结果写入上下文 query。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label="命令名称 (command)" hint="须在动作白名单中" />
+        <TextInput
+          value={props.config.command || ''}
+          placeholder="如 get_world_book_entry"
+          onInput={(v) => props.onChange({ ...props.config, command: v.trim() })}
+        />
+      </div>
+
+      <div class="space-y-2 pt-2 border-t border-white/10">
+        <FieldLabel label={`参数模板 (${templateEntries().length})`} hint="支持 {表达式}" />
+        <For each={templateEntries()}>
+          {([k, v]) => (
+            <div class="flex flex-col gap-1.5 p-2.5 rounded-xl bg-white/5 border border-white/10">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-mono text-accent truncate">{k}</span>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEntry(k)}
+                  class="text-mist-solid/40 hover:text-rose-400 text-xs px-1.5 py-0.5 shrink-0"
+                >
+                  删除
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <TextInput
+                  value={k}
+                  placeholder="参数名"
+                  onInput={(nextK) => handleKeyChange(k, nextK)}
+                />
+                <TextInput
+                  value={v}
+                  placeholder="模板值，如 {args.entry_id}"
+                  onInput={(nextV) => handleValChange(k, nextV)}
+                />
+              </div>
+            </div>
+          )}
+        </For>
+
+        <div class="flex flex-col gap-1.5 pt-1">
+          <div class="grid grid-cols-2 gap-1.5">
+            <TextInput
+              value={newKey()}
+              onInput={setNewKey}
+              placeholder="新增参数名"
+            />
+            <TextInput
+              value={newVal()}
+              onInput={setNewVal}
+              placeholder="参数模板值"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleAddParam}
+            class="w-full py-2 rounded-xl bg-sky-500/20 text-sky-300 text-xs font-semibold"
+          >
+            + 添加参数模板行
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── Writer 节点表单 ───
+
+const WriterForm: Component<{
+  config: WriterConfig;
+  onChange: (c: WriterConfig) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 space-y-1">
+        <div class="text-xs font-bold text-sky-400">Writer 工作区写原语</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          将渲染结果写入 DataContainer 纯内存工作区，零磁盘 I/O，随回合生命周期自动释放。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label="工作区变量名 (key_expr)" hint="支持 {表达式}" />
+        <TextInput
+          value={props.config.key_expr || ''}
+          placeholder="如 draft 或 task_{args.id}"
+          onInput={(v) => props.onChange({ ...props.config, key_expr: v })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="写入值模板 (value_template)" hint="支持 {表达式}" />
+        <TextArea
+          value={props.config.value_template || ''}
+          placeholder="写入工作区变量的值模板，例如：&#10;{query.result.content}"
+          rows={5}
+          onInput={(v) => props.onChange({ ...props.config, value_template: v })}
+        />
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── BannedWordsConfig 节点表单 ───
+
+const BannedWordsConfigForm: Component<{
+  config: BannedWordsConfig;
+  onChange: (c: BannedWordsConfig) => void;
+}> = (props) => {
+  const wordsText = () => (props.config.words || []).join('\n');
+
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 space-y-1">
+        <div class="text-xs font-bold text-amber-400">违规禁词与 Nudge 自纠过滤</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          配置当前预设的违规词库，触发时由模型根据自纠模板尝试重写正文。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label={`禁词词库 (每行一个，已录入 ${(props.config.words || []).length} 词)`} />
+        <TextArea
+          value={wordsText()}
+          placeholder="输入需要拦截的词语，每行一个…"
+          rows={6}
+          onInput={(v) => {
+            const list = v.split('\n').map((s) => s.trim()).filter(Boolean);
+            props.onChange({ ...props.config, words: list });
+          }}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="最大自纠重试轮次 (max_nudge_retries)" />
+        <NumberInput
+          value={props.config.max_nudge_retries ?? 2}
+          placeholder="缺省 2"
+          step="1"
+          onInput={(v) => props.onChange({ ...props.config, max_nudge_retries: Math.max(0, Math.round(v ?? 2)) })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="Nudge 自纠提示模板" hint="含 {hits} 与 {remaining} 占位符" />
+        <TextArea
+          value={props.config.nudge_instruction_template || ''}
+          placeholder="以下词语违反内容约束：{hits}。请只重写正文，保持剧情走向与已完成的事实不变；不要解释这条指令本身。剩余自纠机会 {remaining} 次。"
+          rows={4}
+          onInput={(v) => props.onChange({ ...props.config, nudge_instruction_template: v })}
+        />
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── ScriptwriterPipeline 节点表单 ───
+
+const ScriptwriterPipelineForm: Component<{
+  config: ScriptwriterPipelineConfig;
+  onChange: (c: ScriptwriterPipelineConfig) => void;
+}> = (props) => {
+  const stages = () => props.config.stages || [];
+
+  const handleAddStage = () => {
+    const current = [...stages()];
+    const idx = current.length;
+    const defaultName = idx === 0 ? 'draft' : idx === 1 ? 'polish' : `stage_${idx + 1}`;
+    const newStage: ScriptwriterStage = {
+      stage: defaultName,
+      workspace_key: defaultName,
+      prompt: '',
+      tools: [],
+    };
+    props.onChange({ ...props.config, stages: [...current, newStage] });
+  };
+
+  const handleDeleteStage = (index: number) => {
+    const current = [...stages()];
+    current.splice(index, 1);
+    props.onChange({ ...props.config, stages: current });
+  };
+
+  const handleMoveUp = (index: number) => {
+    if (index <= 0) return;
+    const current = [...stages()];
+    const temp = current[index - 1];
+    current[index - 1] = current[index];
+    current[index] = temp;
+    props.onChange({ ...props.config, stages: current });
+  };
+
+  const handleMoveDown = (index: number) => {
+    const current = [...stages()];
+    if (index >= current.length - 1) return;
+    const temp = current[index + 1];
+    current[index + 1] = current[index];
+    current[index] = temp;
+    props.onChange({ ...props.config, stages: current });
+  };
+
+  const handleUpdateStage = (index: number, partial: Partial<ScriptwriterStage>) => {
+    const current = [...stages()];
+    if (current[index]) {
+      current[index] = { ...current[index], ...partial };
+      props.onChange({ ...props.config, stages: current });
+    }
+  };
+
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-purple-500/20 bg-purple-500/5 space-y-1">
+        <div class="text-xs font-bold text-purple-400">剧本流水线编排 (Scriptwriter Pipeline)</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          自定义多阶段流水线（如 draft → critique → polish），支持各阶段独立提示词与工具集。
+        </p>
+      </div>
+
+      <div class="space-y-3 rounded-xl border border-white/10 bg-white/5 p-3">
+        <div>
+          <FieldLabel label="尾锚字数 (anchor_tail_chars)" hint="历史保留末尾字数" />
+          <NumberInput
+            value={props.config.anchor_tail_chars ?? 50}
+            placeholder="50"
+            step="1"
+            onInput={(v) => props.onChange({ ...props.config, anchor_tail_chars: Math.max(0, Math.round(v ?? 50)) })}
+          />
+        </div>
+        <div>
+          <FieldLabel label="背景锁定标记 (blackout_marker)" />
+          <TextInput
+            value={props.config.blackout_marker ?? ''}
+            placeholder="【前文背景已锁定】..."
+            onInput={(v) => props.onChange({ ...props.config, blackout_marker: v })}
+          />
+        </div>
+      </div>
+
+      <div class="space-y-2 pt-2 border-t border-white/10">
+        <div class="flex items-center justify-between">
+          <FieldLabel label={`流水线阶段序列 (${stages().length})`} />
+          <button
+            type="button"
+            onClick={handleAddStage}
+            class="px-2.5 py-1 rounded-lg bg-accent/20 text-accent text-xs font-semibold"
+          >
+            + 添加阶段
+          </button>
+        </div>
+
+        <For each={stages()}>
+          {(stage, idx) => (
+            <div class="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-accent font-mono">
+                  #{idx() + 1} {stage.stage || '未命名阶段'}
+                </span>
+                <div class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={idx() === 0}
+                    onClick={() => handleMoveUp(idx())}
+                    class="p-1 rounded bg-white/5 text-mist-solid/60 hover:text-white disabled:opacity-30 text-xs"
+                    title="上移"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx() === stages().length - 1}
+                    onClick={() => handleMoveDown(idx())}
+                    class="p-1 rounded bg-white/5 text-mist-solid/60 hover:text-white disabled:opacity-30 text-xs"
+                    title="下移"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteStage(idx())}
+                    class="p-1 rounded bg-white/5 text-mist-solid/40 hover:text-rose-400 text-xs ml-1"
+                    title="删除"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <FieldLabel label="阶段标识" />
+                  <TextInput
+                    value={stage.stage}
+                    placeholder="如 draft"
+                    onInput={(v) => handleUpdateStage(idx(), { stage: v })}
+                  />
+                </div>
+                <div>
+                  <FieldLabel label="工作区输出变量" />
+                  <TextInput
+                    value={stage.workspace_key}
+                    placeholder="如 draft"
+                    onInput={(v) => handleUpdateStage(idx(), { workspace_key: v })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <FieldLabel label="阶段提示词 (Prompt)" />
+                <TextArea
+                  value={stage.prompt}
+                  placeholder="该阶段的提示词指令…"
+                  rows={3}
+                  onInput={(v) => handleUpdateStage(idx(), { prompt: v })}
+                />
+              </div>
+
+              <div>
+                <FieldLabel label="可用工具 (逗号分隔)" hint="对应 ToolDefinition 名称" />
+                <TextInput
+                  value={(stage.tools || []).join(', ')}
+                  placeholder="如 read_text, write_text"
+                  onInput={(v) => {
+                    const toolList = v.split(',').map((s) => s.trim()).filter(Boolean);
+                    handleUpdateStage(idx(), { tools: toolList });
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </For>
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── AgentModeSwitch 节点表单 ───
+
+const AGENT_MODE_OPTIONS = [
+  { value: 'single', label: 'single (经典单智能体)' },
+  { value: 'director_actor', label: 'director_actor (导演-演员编排)' },
+  { value: 'scriptwriter', label: 'scriptwriter (剧本流水线)' },
+];
+
+const AgentModeSwitchForm: Component<{
+  config: AgentModeSwitchConfig;
+  onChange: (c: AgentModeSwitchConfig) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 space-y-1">
+        <div class="text-xs font-bold text-indigo-400">智能体架构模式选择 (Agent Mode Switch)</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          设置预设默认的智能体编排模式与工具轮次上限，台前 Gate 面板可随时切换。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label="默认模式 (default_mode)" />
+        <Select
+          value={props.config.default_mode || 'single'}
+          onChange={(v) => props.onChange({ ...props.config, default_mode: v as AgentModeSwitchConfig['default_mode'] })}
+          options={AGENT_MODE_OPTIONS}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="工具循环轮次上限 (max_tool_rounds)" />
+        <NumberInput
+          value={props.config.max_tool_rounds ?? 5}
+          placeholder="5"
+          step="1"
+          onInput={(v) => props.onChange({ ...props.config, max_tool_rounds: Math.max(1, Math.round(v ?? 5)) })}
+        />
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── DirectorConfig 节点表单 ───
+
+const DirectorConfigForm: Component<{
+  config: DirectorConfig;
+  onChange: (c: DirectorConfig) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-1">
+        <div class="text-xs font-bold text-emerald-400">导演节点配置 (Director)</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          配置导演智能体的分镜提示词指令及可调用的工具契约。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label="导演提示词 (director_prompt)" hint="指导分镜与调度" />
+        <TextArea
+          value={props.config.director_prompt || ''}
+          placeholder="导演分镜指令，例如：分析玩家输入并拆解为角色行为 beats…"
+          rows={5}
+          onInput={(v) => props.onChange({ ...props.config, director_prompt: v })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="轮次限制 (max_rounds)" hint="可选" />
+        <NumberInput
+          value={(props.config as any).max_rounds ?? null}
+          placeholder="留空使用默认"
+          step="1"
+          onInput={(v) => props.onChange({ ...props.config, ...({ max_rounds: v ? Math.max(1, Math.round(v)) : undefined } as any) })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="可用工具列表 (tools)" hint="逗号分隔" />
+        <TextInput
+          value={(props.config.tools || []).join(', ')}
+          placeholder="如 read_text, write_text, dice_roll"
+          onInput={(v) => {
+            const list = v.split(',').map((s) => s.trim()).filter(Boolean);
+            props.onChange({ ...props.config, tools: list });
+          }}
+        />
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── ActorDefinition 节点表单 ───
+
+const ActorDefinitionForm: Component<{
+  config: ActorDefinition;
+  onChange: (c: ActorDefinition) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <div class="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 space-y-1">
+        <div class="text-xs font-bold text-amber-400">演员设定 (Actor Definition)</div>
+        <p class="text-[11px] text-mist-solid/60 leading-relaxed">
+          定义导演调度的具名演员/槽位，设定其视界人设 Persona 与工具权限。
+        </p>
+      </div>
+
+      <div>
+        <FieldLabel label="演员名称 / Slot ID (slot_id / actor_name)" />
+        <TextInput
+          value={props.config.actor_name || (props.config as any).slot_id || ''}
+          placeholder="如 detective 或 warrior"
+          onInput={(v) => props.onChange({ ...props.config, actor_name: v, ...({ slot_id: v } as any) })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="视界人设 (persona)" hint="演员视界注入内容" />
+        <TextArea
+          value={props.config.persona || ''}
+          placeholder="设定此演员的角色人设、说话习惯与行动逻辑…"
+          rows={5}
+          onInput={(v) => props.onChange({ ...props.config, persona: v })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="可用工具列表 (tools)" hint="逗号分隔" />
+        <TextInput
+          value={(props.config.tools || []).join(', ')}
+          placeholder="如 read_text, attack_enemy"
+          onInput={(v) => {
+            const list = v.split(',').map((s) => s.trim()).filter(Boolean);
+            props.onChange({ ...props.config, tools: list });
+          }}
+        />
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
 // ─── 分发器 ───
 //
 // 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
@@ -1613,6 +2272,54 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
         <InitialStateConfigForm
           config={props.node.config as InitialStateConfig}
           onChange={(c: InitialStateConfig) => props.onConfigChange({ type: 'initial_state_config', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'inspector'}>
+        <InspectorForm
+          config={props.node.config as InspectorConfig}
+          onChange={(c: InspectorConfig) => props.onConfigChange({ type: 'inspector', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'querier'}>
+        <QuerierForm
+          config={props.node.config as QuerierConfig}
+          onChange={(c: QuerierConfig) => props.onConfigChange({ type: 'querier', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'writer'}>
+        <WriterForm
+          config={props.node.config as WriterConfig}
+          onChange={(c: WriterConfig) => props.onConfigChange({ type: 'writer', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'banned_words_config'}>
+        <BannedWordsConfigForm
+          config={props.node.config as BannedWordsConfig}
+          onChange={(c: BannedWordsConfig) => props.onConfigChange({ type: 'banned_words_config', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'scriptwriter_pipeline'}>
+        <ScriptwriterPipelineForm
+          config={props.node.config as ScriptwriterPipelineConfig}
+          onChange={(c: ScriptwriterPipelineConfig) => props.onConfigChange({ type: 'scriptwriter_pipeline', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'agent_mode_switch'}>
+        <AgentModeSwitchForm
+          config={props.node.config as AgentModeSwitchConfig}
+          onChange={(c: AgentModeSwitchConfig) => props.onConfigChange({ type: 'agent_mode_switch', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'director_config'}>
+        <DirectorConfigForm
+          config={props.node.config as DirectorConfig}
+          onChange={(c: DirectorConfig) => props.onConfigChange({ type: 'director_config', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'actor_definition'}>
+        <ActorDefinitionForm
+          config={props.node.config as ActorDefinition}
+          onChange={(c: ActorDefinition) => props.onConfigChange({ type: 'actor_definition', config: c })}
         />
       </Match>
     </Switch>
