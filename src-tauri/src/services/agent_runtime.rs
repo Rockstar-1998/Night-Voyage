@@ -40,7 +40,7 @@ pub async fn load_session_state(db: &SqlitePool, session_id: i64) -> Result<Data
             .map_err(|e| format!("解析 session_state 数据失败: {}", e).replace(BACKSLASH, "/"))?;
         Ok(state)
     } else {
-        Ok(DataContainer::default())
+        create_initial_state_for_conversation(db, session_id).await
     }
 }
 
@@ -105,9 +105,36 @@ pub async fn flush_session_state_cache(db: &SqlitePool, app: &AppHandle, session
     }
 }
 
-/// 重置会话状态为初始状态
+/// 为指定会话根据其绑定的蓝图配置生成初始 DataContainer。
+/// 若会话绑定了包含 `InitialStateConfig` 的预设蓝图，则使用该配置中的自定义属性、初始物品和标志位初始化；
+/// 否则返回空的默认 DataContainer（遵循无奇幻 RPG 默认值契约）。
+pub async fn create_initial_state_for_conversation(
+    db: &SqlitePool,
+    session_id: i64,
+) -> Result<DataContainer, String> {
+    let orch = load_blueprint_configs_for_conversation(db, session_id)
+        .await
+        .unwrap_or_default();
+    if let Some(initial_config) = orch.initial_state {
+        let mut state = DataContainer::default();
+        for (stat_name, stat_def) in initial_config.stats {
+            state.set_stat(&stat_name, stat_def.initial);
+        }
+        for item in initial_config.inventory {
+            state.add_item(item);
+        }
+        for (flag_key, flag_val) in initial_config.flags {
+            state.flags.insert(flag_key, flag_val);
+        }
+        Ok(state)
+    } else {
+        Ok(DataContainer::default())
+    }
+}
+
+/// 重置会话状态为初始状态（优先采用蓝图定义的初始状态配置）
 pub async fn reset_session_state(db: &SqlitePool, session_id: i64) -> Result<DataContainer, String> {
-    let state = DataContainer::default();
+    let state = create_initial_state_for_conversation(db, session_id).await?;
     save_session_state(db, session_id, &state).await?;
     Ok(state)
 }
@@ -541,5 +568,136 @@ pub async fn load_blueprint_configs_for_conversation(
     crate::services::blueprint_executor::extract_orchestration_configs(&graph)
         .map_err(|e| e.to_string().replace('\\', "/"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use crate::models::blueprint::{
+        BlueprintEdge, BlueprintGraph, BlueprintNode, InitialStatDef, InitialStateConfig, NodeConfig, Position,
+    };
+    use crate::models::game_state::InventoryItem;
+
+    #[tokio::test]
+    async fn test_initial_state_config_from_blueprint() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        // 建立测试最小表结构
+        sqlx::query(
+            "CREATE TABLE presets (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                blueprint_graph TEXT
+            );
+            CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY,
+                preset_id INTEGER,
+                conversation_type TEXT NOT NULL DEFAULT 'single',
+                memory_mode TEXT NOT NULL DEFAULT 'legacy'
+            );
+            CREATE TABLE session_states (
+                session_id INTEGER PRIMARY KEY,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                updated_at INTEGER NOT NULL
+            );"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 构建包含 InitialStateConfig 的蓝图
+        let mut stats = HashMap::new();
+        stats.insert("credits".to_string(), InitialStatDef { initial: 5000.0, min: Some(0.0), max: None });
+        stats.insert("sanity".to_string(), InitialStatDef { initial: 85.0, min: Some(0.0), max: Some(100.0) });
+        stats.insert("fuel".to_string(), InitialStatDef { initial: 50.0, min: Some(0.0), max: Some(100.0) });
+
+        let inventory = vec![
+            InventoryItem {
+                id: "stimpak".to_string(),
+                name: "兴奋剂".to_string(),
+                count: 2,
+                unit_weight: 0.2,
+                unit_price: 250.0,
+                icon: None,
+                properties: HashMap::new(),
+            }
+        ];
+
+        let mut flags = HashMap::new();
+        flags.insert("origin_sector".to_string(), "Sector-7".to_string());
+
+        let init_node = BlueprintNode {
+            id: "n_init".to_string(),
+            position: Position { x: 100.0, y: 100.0 },
+            config: NodeConfig::InitialStateConfig(InitialStateConfig {
+                stats,
+                inventory,
+                flags,
+                is_locked: false,
+            }),
+        };
+
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode { id: "n_start".to_string(), position: Position { x: 0.0, y: 0.0 }, config: NodeConfig::Start },
+                init_node,
+                BlueprintNode { id: "n_end".to_string(), position: Position { x: 200.0, y: 0.0 }, config: NodeConfig::End },
+            ],
+            edges: vec![
+                BlueprintEdge { id: "e1".to_string(), source: "n_start".to_string(), source_port: "out".to_string(), target: "n_init".to_string(), target_port: "in".to_string(), order: 0 },
+                BlueprintEdge { id: "e2".to_string(), source: "n_init".to_string(), source_port: "out".to_string(), target: "n_end".to_string(), target_port: "in".to_string(), order: 0 },
+            ],
+            comments: vec![],
+        };
+
+        let graph_json = serde_json::to_string(&graph).unwrap();
+
+        sqlx::query("INSERT INTO presets (id, name, blueprint_graph) VALUES (1, '科幻生存', ?)")
+            .bind(&graph_json)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO conversations (id, preset_id) VALUES (101, 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // 验证首次 load_session_state 会正确由 InitialStateConfig 填充数据容器
+        let state = load_session_state(&pool, 101).await.unwrap();
+
+        assert_eq!(state.get_stat("credits"), 5000.0);
+        assert_eq!(state.get_stat("sanity"), 85.0);
+        assert_eq!(state.get_stat("fuel"), 50.0);
+        // 验证严禁注入奇幻属性
+        assert_eq!(state.stats.get("hp"), None, "不得包含默认奇幻属性 hp");
+        assert_eq!(state.stats.get("mp"), None, "不得包含默认奇幻属性 mp");
+        assert_eq!(state.stats.get("gold"), None, "不得包含默认奇幻属性 gold");
+
+        // 验证背包物品和标志位
+        assert_eq!(state.inventory.len(), 1);
+        assert_eq!(state.inventory[0].id, "stimpak");
+        assert_eq!(state.inventory[0].count, 2);
+        assert_eq!(state.flags.get("origin_sector").unwrap(), "Sector-7");
+
+        // 修改状态并测试 reset_session_state
+        let mut mutated = state.clone();
+        mutated.set_stat("credits", 1200.0);
+        save_session_state(&pool, 101, &mutated).await.unwrap();
+
+        let loaded_mutated = load_session_state(&pool, 101).await.unwrap();
+        assert_eq!(loaded_mutated.get_stat("credits"), 1200.0);
+
+        // 重置后应恢复为蓝图初始状态 5000.0 credits
+        let reset_state = reset_session_state(&pool, 101).await.unwrap();
+        assert_eq!(reset_state.get_stat("credits"), 5000.0);
+        assert_eq!(reset_state.get_stat("sanity"), 85.0);
+    }
+}
+
 
 

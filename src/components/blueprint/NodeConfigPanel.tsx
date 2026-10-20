@@ -61,6 +61,7 @@ import type {
   DirectorConfig,
   ActorDefinition,
   UiLayoutConfig,
+  InitialStateConfig,
 } from '../../lib/blueprint/types';
 import { isNodeLocked } from './nodeLayout';
 import { Lock, Trash2 } from '../../lib/icons';
@@ -84,6 +85,7 @@ import { CalculatorNode } from './nodes/CalculatorNode';
 import { ConditionGateNode } from './nodes/ConditionGateNode';
 import { ToolReturnNode } from './nodes/ToolReturnNode';
 import { UiLayoutConfigNode } from './nodes/UiLayoutConfigNode';
+import { InitialStateConfigNode } from './nodes/InitialStateConfigNode';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -135,6 +137,7 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   director_config: 'Director Config',
   actor_definition: 'Actor Definition',
   ui_layout_config: 'UI Layout Config',
+  initial_state_config: 'Initial State Config',
 };
 
 // ─── Component ───
@@ -273,6 +276,14 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onUpdate(nodeId, {
       type: 'ui_layout_config',
       config: { ...(props.node!.config as UiLayoutConfig), ...updates },
+    });
+  const updateInitialStateConfig = (
+    nodeId: string,
+    updates: Partial<InitialStateConfig>,
+  ) =>
+    props.onUpdate(nodeId, {
+      type: 'initial_state_config',
+      config: { ...(props.node!.config as InitialStateConfig), ...updates },
     });
 
   return (
@@ -450,6 +461,14 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as UiLayoutConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateUiLayoutConfig(node().id, updates)}
+                    presetId={props.presetId}
+                  />
+                </Match>
+                <Match when={node().type === 'initial_state_config'}>
+                  <InitialStateConfigNode
+                    config={node().config as InitialStateConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateInitialStateConfig(node().id, updates)}
                     presetId={props.presetId}
                   />
                 </Match>

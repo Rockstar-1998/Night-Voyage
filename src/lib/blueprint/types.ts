@@ -44,6 +44,7 @@ export const NODE_TYPES = [
   'director_config',
   'actor_definition',
   'ui_layout_config',
+  'initial_state_config',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -314,6 +315,29 @@ export interface ActorDefinition {
   is_locked: boolean;
 }
 
+export interface InitialStatDef {
+  initial: number;
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface InitialStateInventoryItem {
+  id: string;
+  name: string;
+  count: number;
+  unit_weight?: number;
+  unit_price?: number;
+  icon?: string | null;
+  properties?: Record<string, string>;
+}
+
+export interface InitialStateConfig {
+  stats: Record<string, InitialStatDef>;
+  inventory: InitialStateInventoryItem[];
+  flags: Record<string, string>;
+  is_locked: boolean;
+}
+
 // ─── Discriminated union: NodeType + Config strong binding ───
 
 export type NodeConfig =
@@ -343,7 +367,8 @@ export type NodeConfig =
   | { type: 'agent_mode_switch'; config: AgentModeSwitchConfig }
   | { type: 'director_config'; config: DirectorConfig }
   | { type: 'actor_definition'; config: ActorDefinition }
-  | { type: 'ui_layout_config'; config: UiLayoutConfig };
+  | { type: 'ui_layout_config'; config: UiLayoutConfig }
+  | { type: 'initial_state_config'; config: InitialStateConfig };
 
 export type BlueprintNode = NodeConfig & {
   id: string;

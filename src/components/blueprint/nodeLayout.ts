@@ -123,6 +123,7 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   director_config: '#fbbf24',
   actor_definition: '#60a5fa',
   ui_layout_config: '#ec4899',
+  initial_state_config: '#0ea5e9',
 };
 
 /**
@@ -153,6 +154,7 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'director_config':
     case 'actor_definition':
     case 'ui_layout_config':
+    case 'initial_state_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
     case 'condition_gate':
       return [
@@ -246,6 +248,7 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'director_config':
     case 'actor_definition':
     case 'ui_layout_config':
+    case 'initial_state_config':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
   }
 }
@@ -276,6 +279,7 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'director_config':
     case 'actor_definition':
     case 'ui_layout_config':
+    case 'initial_state_config':
       return node.config.is_locked;
     case 'start':
     case 'end':
@@ -346,11 +350,15 @@ function computeNodeTitle(node: BlueprintNode): string {
       return 'Writer（工作区写原语）';
     case 'ui_layout_config':
       return node.config.mount_type ? `HUD: ${node.config.mount_type}` : 'UI Layout';
+    case 'initial_state_config':
+      return 'Initial State';
   }
 }
 
 function computeNodeSubtitle(node: BlueprintNode): string | null {
   switch (node.type) {
+    case 'initial_state_config':
+      return `${Object.keys(node.config.stats || {}).length} 属性, ${(node.config.inventory || []).length} 物品`;
     case 'writer':
       return '工作区写原语';
     case 'prompt':

@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 pub struct InventoryItem {
     pub id: String,
     pub name: String,
+    #[serde(alias = "quantity")]
     pub count: i64,
+    #[serde(default)]
     pub unit_weight: f64,
+    #[serde(default)]
     pub unit_price: f64,
     pub icon: Option<String>,
     #[serde(default)]
@@ -19,7 +22,7 @@ pub struct InventoryItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DataContainer {
-    /// 基础数值字典 (如 hp, max_hp, mp, gold, weight, max_weight, level 等)
+    /// 基础数值字典 (如 credits, sanity, fuel 等，不再内置任何特定流派的硬编码默认值)
     #[serde(default)]
     pub stats: HashMap<String, f64>,
     /// 玩家物品清单
@@ -35,17 +38,8 @@ pub struct DataContainer {
 
 impl Default for DataContainer {
     fn default() -> Self {
-        let mut stats = HashMap::new();
-        stats.insert("hp".to_string(), 100.0);
-        stats.insert("max_hp".to_string(), 100.0);
-        stats.insert("mp".to_string(), 50.0);
-        stats.insert("max_mp".to_string(), 50.0);
-        stats.insert("gold".to_string(), 100.0);
-        stats.insert("weight".to_string(), 0.0);
-        stats.insert("max_weight".to_string(), 50.0);
-
         Self {
-            stats,
+            stats: HashMap::new(),
             inventory: Vec::new(),
             flags: HashMap::new(),
             scratchpad: HashMap::new(),
@@ -66,10 +60,12 @@ impl DataContainer {
             .sum()
     }
 
-    /// 重新同步 weight 数值到 stats["weight"]
+    /// 重新同步 weight 数值到 stats["weight"]（仅当持有物品产生实际重量或已显式追踪 weight 时同步，避免无负重设定的场景被强制注入）
     pub fn sync_weight(&mut self) -> f64 {
         let w = self.total_weight();
-        self.stats.insert("weight".to_string(), w);
+        if w > 0.0 || self.stats.contains_key("weight") {
+            self.stats.insert("weight".to_string(), w);
+        }
         w
     }
 
@@ -226,4 +222,61 @@ pub struct DataContainerPatch {
     pub flags: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema_patches: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_datacontainer_default_starts_with_empty_stats() {
+        let dc = DataContainer::default();
+        assert!(dc.stats.is_empty(), "DataContainer::default() 必须为空 stats，严禁硬编码任何特定流派数值");
+        assert!(dc.inventory.is_empty(), "DataContainer::default() 背包必须为空");
+        assert!(dc.flags.is_empty(), "DataContainer::default() 标志位必须为空");
+        assert_eq!(dc.get_stat("hp"), 0.0, "未定义属性应当返回 0.0，而非硬编码默认值");
+        assert_eq!(dc.get_stat("credits"), 0.0);
+    }
+
+    #[test]
+    fn test_datacontainer_custom_genre_stats() {
+        let mut dc = DataContainer::default();
+        dc.set_stat("sanity", 80.0);
+        dc.set_stat("credits", 2500.0);
+        dc.set_stat("fuel", 45.5);
+
+        assert_eq!(dc.get_stat("sanity"), 80.0);
+        assert_eq!(dc.get_stat("credits"), 2500.0);
+        assert_eq!(dc.get_stat("fuel"), 45.5);
+
+        // 验证数学运算
+        let res = dc.apply_math_op("credits", "-", 500.0, None).unwrap();
+        assert_eq!(res, 2000.0);
+        assert_eq!(dc.get_stat("credits"), 2000.0);
+    }
+
+    #[test]
+    fn test_datacontainer_inventory_operations() {
+        let mut dc = DataContainer::default();
+        let item = InventoryItem {
+            id: "medkit".to_string(),
+            name: "急救包".to_string(),
+            count: 3,
+            unit_weight: 0.8,
+            unit_price: 150.0,
+            icon: None,
+            properties: HashMap::new(),
+        };
+
+        dc.add_item(item);
+        assert_eq!(dc.inventory.len(), 1);
+        assert_eq!(dc.get_item("medkit").unwrap().count, 3);
+        assert!((dc.total_weight() - 2.4).abs() < 1e-6);
+        assert!((dc.get_stat("weight") - 2.4).abs() < 1e-6);
+
+        // 扣减物品
+        dc.remove_item("medkit", 1).unwrap();
+        assert_eq!(dc.get_item("medkit").unwrap().count, 2);
+        assert!((dc.total_weight() - 1.6).abs() < 1e-6);
+    }
 }

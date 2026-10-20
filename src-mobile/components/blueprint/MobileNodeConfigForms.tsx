@@ -37,6 +37,9 @@ import type {
   ConditionGateConfig,
   ToolReturnConfig,
   UiLayoutConfig,
+  InitialStateConfig,
+  InitialStatDef,
+  InitialStateInventoryItem,
 } from '../../../src/lib/blueprint/types';
 
 // ─── 公共 Props ───
@@ -1205,6 +1208,285 @@ const UiLayoutConfigForm: Component<{
   );
 };
 
+const InitialStateConfigForm: Component<{
+  config: InitialStateConfig;
+  onChange: (config: InitialStateConfig) => void;
+}> = (props) => {
+  const [newStatKey, setNewStatKey] = createSignal('');
+  const [newStatInitial, setNewStatInitial] = createSignal(100);
+
+  const [newItemId, setNewItemId] = createSignal('');
+  const [newItemName, setNewItemName] = createSignal('');
+
+  const [newFlagKey, setNewFlagKey] = createSignal('');
+  const [newFlagVal, setNewFlagVal] = createSignal('true');
+
+  const statsList = () => Object.entries(props.config.stats || {});
+  const flagsList = () => Object.entries(props.config.flags || {});
+
+  const handleAddStat = () => {
+    const k = newStatKey().trim();
+    if (!k) return;
+    const current = { ...(props.config.stats || {}) };
+    current[k] = { initial: newStatInitial(), min: 0, max: null };
+    props.onChange({ ...props.config, stats: current });
+    setNewStatKey('');
+    setNewStatInitial(100);
+  };
+
+  const handleRemoveStat = (key: string) => {
+    const current = { ...(props.config.stats || {}) };
+    delete current[key];
+    props.onChange({ ...props.config, stats: current });
+  };
+
+  const handleUpdateStat = (key: string, updates: Partial<InitialStatDef>) => {
+    const current = { ...(props.config.stats || {}) };
+    if (current[key]) {
+      current[key] = { ...current[key], ...updates };
+      props.onChange({ ...props.config, stats: current });
+    }
+  };
+
+  const handleAddItem = () => {
+    const id = newItemId().trim();
+    const name = newItemName().trim() || id;
+    if (!id) return;
+    const current = [...(props.config.inventory || [])];
+    current.push({ id, name, count: 1, unit_weight: 0, unit_price: 0 });
+    props.onChange({ ...props.config, inventory: current });
+    setNewItemId('');
+    setNewItemName('');
+  };
+
+  const handleRemoveItem = (index: number) => {
+    const current = [...(props.config.inventory || [])];
+    current.splice(index, 1);
+    props.onChange({ ...props.config, inventory: current });
+  };
+
+  const handleUpdateItem = (index: number, updates: Partial<InitialStateInventoryItem>) => {
+    const current = [...(props.config.inventory || [])];
+    if (current[index]) {
+      current[index] = { ...current[index], ...updates };
+      props.onChange({ ...props.config, inventory: current });
+    }
+  };
+
+  const handleAddFlag = () => {
+    const k = newFlagKey().trim();
+    if (!k) return;
+    const current = { ...(props.config.flags || {}) };
+    current[k] = newFlagVal().trim();
+    props.onChange({ ...props.config, flags: current });
+    setNewFlagKey('');
+    setNewFlagVal('true');
+  };
+
+  const handleRemoveFlag = (key: string) => {
+    const current = { ...(props.config.flags || {}) };
+    delete current[key];
+    props.onChange({ ...props.config, flags: current });
+  };
+
+  const handleUpdateFlag = (key: string, val: string) => {
+    const current = { ...(props.config.flags || {}) };
+    current[key] = val;
+    props.onChange({ ...props.config, flags: current });
+  };
+
+  return (
+    <div class="space-y-4">
+      <div class="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
+        <div class="text-[13px] font-bold text-sky-400">流派中立初始状态与背包</div>
+        <p class="mt-1 text-[11px] leading-relaxed text-mist-solid/60">
+          设定会话开局时的自定义属性（如 sanity/credits/fuel）、初始装备物品与剧情标志位，彻底消除硬编码奇幻 RPG 默认值。
+        </p>
+      </div>
+
+      {/* 属性字典 */}
+      <div class="space-y-2">
+        <FieldLabel label={`初始属性字典 (${statsList().length})`} />
+        <For each={statsList()}>
+          {([statKey, statDef]) => (
+            <div class="rounded-xl border border-white/10 bg-white/5 p-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[13px] font-mono font-bold text-sky-300">{statKey}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveStat(statKey)}
+                  class="text-mist-solid/40 hover:text-rose-400 text-xs px-1.5 py-0.5"
+                >
+                  删除
+                </button>
+              </div>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">初始值</span>
+                  <NumberInput
+                    value={statDef.initial}
+                    onInput={(v) => handleUpdateStat(statKey, { initial: v ?? 0 })}
+                  />
+                </div>
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">最小值</span>
+                  <NumberInput
+                    value={statDef.min ?? null}
+                    onInput={(v) => handleUpdateStat(statKey, { min: v })}
+                    placeholder="无"
+                  />
+                </div>
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">最大值</span>
+                  <NumberInput
+                    value={statDef.max ?? null}
+                    onInput={(v) => handleUpdateStat(statKey, { max: v })}
+                    placeholder="无"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </For>
+        <div class="flex items-center gap-1.5">
+          <TextInput
+            value={newStatKey()}
+            onInput={setNewStatKey}
+            placeholder="属性名 (如 sanity, credits)"
+          />
+          <div class="w-24">
+            <NumberInput
+              value={newStatInitial()}
+              onInput={(v) => setNewStatInitial(v ?? 0)}
+              placeholder="初始值"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleAddStat}
+            class="px-3 py-2.5 rounded-xl bg-sky-500/20 text-sky-300 text-xs font-semibold whitespace-nowrap"
+          >
+            添加
+          </button>
+        </div>
+      </div>
+
+      {/* 背包物品 */}
+      <div class="space-y-2 pt-2 border-t border-white/10">
+        <FieldLabel label={`初始物品清单 (${(props.config.inventory || []).length})`} />
+        <For each={props.config.inventory || []}>
+          {(item, idx) => (
+            <div class="rounded-xl border border-white/10 bg-white/5 p-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[13px] font-semibold text-mist-solid">{item.name || item.id}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveItem(idx())}
+                  class="text-mist-solid/40 hover:text-rose-400 text-xs px-1.5 py-0.5"
+                >
+                  删除
+                </button>
+              </div>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">数量</span>
+                  <NumberInput
+                    value={item.count}
+                    onInput={(v) => handleUpdateItem(idx(), { count: Math.max(1, Math.round(v ?? 1)) })}
+                  />
+                </div>
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">单重</span>
+                  <NumberInput
+                    value={item.unit_weight ?? 0}
+                    onInput={(v) => handleUpdateItem(idx(), { unit_weight: v ?? 0 })}
+                  />
+                </div>
+                <div>
+                  <span class="text-[10px] text-mist-solid/40 block">单价</span>
+                  <NumberInput
+                    value={item.unit_price ?? 0}
+                    onInput={(v) => handleUpdateItem(idx(), { unit_price: v ?? 0 })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </For>
+        <div class="flex items-center gap-1.5">
+          <TextInput
+            value={newItemId()}
+            onInput={setNewItemId}
+            placeholder="物品 ID"
+          />
+          <TextInput
+            value={newItemName()}
+            onInput={setNewItemName}
+            placeholder="物品名"
+          />
+          <button
+            type="button"
+            onClick={handleAddItem}
+            class="px-3 py-2.5 rounded-xl bg-sky-500/20 text-sky-300 text-xs font-semibold whitespace-nowrap"
+          >
+            添加
+          </button>
+        </div>
+      </div>
+
+      {/* 标志位 */}
+      <div class="space-y-2 pt-2 border-t border-white/10">
+        <FieldLabel label={`初始剧情标志位 (${flagsList().length})`} />
+        <For each={flagsList()}>
+          {([flagKey, flagVal]) => (
+            <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-2">
+              <span class="text-xs font-mono text-sky-300 w-1/3 truncate">{flagKey}</span>
+              <TextInput
+                value={flagVal}
+                onInput={(v) => handleUpdateFlag(flagKey, v)}
+              />
+              <button
+                type="button"
+                onClick={() => handleRemoveFlag(flagKey)}
+                class="text-mist-solid/40 hover:text-rose-400 text-xs px-1"
+              >
+                删除
+              </button>
+            </div>
+          )}
+        </For>
+        <div class="flex items-center gap-1.5">
+          <TextInput
+            value={newFlagKey()}
+            onInput={setNewFlagKey}
+            placeholder="标志位键名"
+          />
+          <TextInput
+            value={newFlagVal()}
+            onInput={setNewFlagVal}
+            placeholder="初始值"
+          />
+          <button
+            type="button"
+            onClick={handleAddFlag}
+            class="px-3 py-2.5 rounded-xl bg-sky-500/20 text-sky-300 text-xs font-semibold whitespace-nowrap"
+          >
+            添加
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <Toggle
+          checked={props.config.is_locked}
+          onChange={(v) => props.onChange({ ...props.config, is_locked: v })}
+          label="锁定（条目锁）"
+        />
+      </div>
+    </div>
+  );
+};
+
 // ─── 分发器 ───
 //
 // 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
@@ -1325,6 +1607,12 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
         <UiLayoutConfigForm
           config={props.node.config as UiLayoutConfig}
           onChange={(c: UiLayoutConfig) => props.onConfigChange({ type: 'ui_layout_config', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'initial_state_config'}>
+        <InitialStateConfigForm
+          config={props.node.config as InitialStateConfig}
+          onChange={(c: InitialStateConfig) => props.onConfigChange({ type: 'initial_state_config', config: c })}
         />
       </Match>
     </Switch>
@@ -1537,5 +1825,7 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return { type: 'director_config', config: { director_prompt: '', tools: [], is_locked: false } };
     case 'actor_definition':
       return { type: 'actor_definition', config: { actor_name: '', persona: '', tools: [], is_locked: false } };
+    case 'initial_state_config':
+      return { type: 'initial_state_config', config: { stats: {}, inventory: [], flags: {}, is_locked: false } };
   }
 }
