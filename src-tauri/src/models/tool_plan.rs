@@ -132,22 +132,38 @@ pub fn validate_args_against_schema(
 pub struct StepContext {
     pub inspect: Option<Value>,
     pub query: Option<Value>,
+    pub tool_name: Option<String>,
+    pub result: Option<String>,
+    pub mutated_stats: Option<Value>,
 }
 
 impl StepContext {
-    /// 合并为点路径求值用的 JSON：`{ args, stats, inspect, query }`。
+    /// 合并为点路径求值用的 JSON：`{ tool_name, result, mutated_stats, args, stats, inspect, query }`。
     fn context_json(&self, args: &Value, state: &DataContainer) -> Value {
         let stats: serde_json::Map<String, Value> = state
             .stats
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::json!(v)))
             .collect();
-        serde_json::json!({
-            "args": args,
-            "stats": stats,
-            "inspect": self.inspect,
-            "query": self.query,
-        })
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "tool_name".to_string(),
+            serde_json::json!(self.tool_name.as_deref().unwrap_or("")),
+        );
+        map.insert(
+            "result".to_string(),
+            serde_json::json!(self.result.as_deref().unwrap_or("执行成功")),
+        );
+        if let Some(mutated) = &self.mutated_stats {
+            map.insert("mutated_stats".to_string(), mutated.clone());
+        } else {
+            map.insert("mutated_stats".to_string(), serde_json::json!({}));
+        }
+        map.insert("args".to_string(), args.clone());
+        map.insert("stats".to_string(), Value::Object(stats));
+        map.insert("inspect".to_string(), self.inspect.clone().unwrap_or(Value::Null));
+        map.insert("query".to_string(), self.query.clone().unwrap_or(Value::Null));
+        Value::Object(map)
     }
 }
 
@@ -614,7 +630,14 @@ where
         Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>,
 {
-    let mut ctx = StepContext::default();
+    let initial_stats = state.stats.clone();
+    let mut ctx = StepContext {
+        inspect: None,
+        query: None,
+        tool_name: Some(plan.tool_name.clone()),
+        result: Some("执行成功".to_string()),
+        mutated_stats: None,
+    };
     let mut outcome = ToolOutcome::success(String::new());
     for step in &plan.steps {
         match step {
@@ -699,6 +722,36 @@ where
         }
     }
 
+    // 收集执行过程中的属性变更，供 {mutated_stats} 占位符引用
+    let mut diff = serde_json::Map::new();
+    let mut diff_keys: Vec<String> = state
+        .stats
+        .iter()
+        .filter_map(|(k, v)| {
+            if initial_stats.get(k) != Some(v) {
+                Some(k.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    diff_keys.sort();
+    for k in diff_keys {
+        if let Some(v) = state.stats.get(&k) {
+            diff.insert(k, serde_json::json!(v));
+        }
+    }
+    let mut removed_keys: Vec<String> = initial_stats
+        .keys()
+        .filter(|k| !state.stats.contains_key(*k))
+        .cloned()
+        .collect();
+    removed_keys.sort();
+    for k in removed_keys {
+        diff.insert(k, Value::Null);
+    }
+    ctx.mutated_stats = Some(Value::Object(diff));
+
     if let Some(config) = &plan.success_return {
         if !config.return_template.trim().is_empty() {
             outcome.text = render_return_template(&config.return_template, args, state, &ctx)?;
@@ -714,13 +767,7 @@ where
         );
         return Ok(outcome);
     }
-    outcome.text = format!(
-        "【{}】执行成功。当前金币: {}G，当前负重: {}/{}kg",
-        plan.tool_name,
-        state.get_stat("gold"),
-        state.total_weight(),
-        state.get_stat("max_weight")
-    );
+    outcome.text = format!("【{}】执行成功。", plan.tool_name);
     Ok(outcome)
 }
 
@@ -872,9 +919,10 @@ fn build_item_from(config: &CalculatorConfig, args: &Value) -> Result<InventoryI
 }
 
 /// 渲染回执模版：`{点路径}` 占位符逐个求值——先在上下文栈（args / stats /
-/// inspect / query）里按点路径解析；解析不到再回退到动态操作数表达式
+/// inspect / query / tool_name / result / mutated_stats）里按点路径解析；
+/// 解析不到再尝试 args/stats 裸键，最后回退到动态操作数表达式
 /// （如 `{unit_price * count}` 等），保证动态计算与模板解析一致。
-fn render_return_template(
+pub(crate) fn render_return_template(
     template: &str,
     args: &Value,
     state: &DataContainer,
@@ -892,7 +940,15 @@ fn render_return_template(
         let key = tail[..end].trim();
         let value = match resolve_dotted(key, &ctx_json) {
             Some(value) => stringify_context_value(&value),
-            None => format_number(resolve_operand(key, args, state)?),
+            None => {
+                if let Some(arg_val) = args.get(key) {
+                    stringify_context_value(arg_val)
+                } else if let Some(&stat_val) = state.stats.get(key) {
+                    format_number(stat_val)
+                } else {
+                    format_number(resolve_operand(key, args, state)?)
+                }
+            }
         };
         out.push_str(&value);
         rest = &tail[end + 1..];
@@ -1200,6 +1256,7 @@ mod tests {
         let outcome_pass = run_plan_sync(&mut state, &plan_blocked, &args_pass, no_query).unwrap();
         assert!(!outcome_pass.is_blocked);
         assert_eq!(state.get_stat("credits"), 100.0, "放行后扣减 50 信用点");
+        assert_eq!(outcome_pass.text, "【warp_jump】执行成功。");
 
         // 3. 测试 inventory.len < max_slots 门禁
         let plan_slots = ToolPlan {
@@ -1217,6 +1274,7 @@ mod tests {
         };
         let outcome_slots = run_plan_sync(&mut state, &plan_slots, &json!({}), no_query).unwrap();
         assert!(!outcome_slots.is_blocked, "空背包应满足 len < 5");
+        assert_eq!(outcome_slots.text, "【pickup_mineral】执行成功。");
     }
 
     #[test]
@@ -1288,5 +1346,121 @@ mod tests {
         let args = json!({"stat": "radiation"});
         let outcome = run_plan_sync(&mut state, &plan, &args, no_query).unwrap();
         assert!(!outcome.is_blocked);
+    }
+
+    #[test]
+    fn neutral_fallback_receipt_without_fantasy_units() {
+        let mut state = DataContainer::default();
+        state.set_stat("sanity", 90.0);
+        let plan = ToolPlan {
+            tool_name: "meditate".into(),
+            steps: vec![ToolStep::Calculate(CalculatorConfig {
+                calc_mode: "math".into(),
+                target: "stats.sanity".into(),
+                op: "+".into(),
+                operand_a: "10".into(),
+                operand_b: None,
+                item_def: None,
+                is_locked: false,
+            })],
+            success_return: None,
+            parameters_schema: None,
+        };
+        let outcome = run_plan_sync(&mut state, &plan, &json!({}), no_query).unwrap();
+        assert_eq!(outcome.text, "【meditate】执行成功。");
+        assert!(!outcome.text.contains("金币"));
+        assert!(!outcome.text.contains("负重"));
+        assert!(!outcome.text.contains("kg"));
+        assert!(!outcome.text.contains('G'));
+
+        // 当 success_return 存在但模板仅包含空白字符时，也退回中性回执
+        let mut plan_empty_tpl = plan.clone();
+        plan_empty_tpl.success_return = Some(ToolReturnConfig {
+            return_template: "   ".into(),
+            is_blocked: false,
+            is_locked: false,
+        });
+        let outcome_empty = run_plan_sync(&mut state, &plan_empty_tpl, &json!({}), no_query).unwrap();
+        assert_eq!(outcome_empty.text, "【meditate】执行成功。");
+    }
+
+    #[test]
+    fn template_placeholders_render_all_execution_outputs() {
+        let mut state = DataContainer::default();
+        state.set_stat("credits", 500.0);
+        state.set_stat("sanity", 80.0);
+
+        let plan = ToolPlan {
+            tool_name: "cyber_upgrade".into(),
+            steps: vec![
+                ToolStep::Calculate(CalculatorConfig {
+                    calc_mode: "math".into(),
+                    target: "stats.credits".into(),
+                    op: "-".into(),
+                    operand_a: "cost".into(),
+                    operand_b: None,
+                    item_def: None,
+                    is_locked: false,
+                }),
+                ToolStep::Calculate(CalculatorConfig {
+                    calc_mode: "math".into(),
+                    target: "stats.sanity".into(),
+                    op: "-".into(),
+                    operand_a: "sanity_cost".into(),
+                    operand_b: None,
+                    item_def: None,
+                    is_locked: false,
+                }),
+            ],
+            success_return: Some(ToolReturnConfig {
+                return_template: "【{tool_name}】{result}！模块: {args.module}，扣除: {args.cost}点，剩余信用点: {stats.credits}，理智: {stats.sanity}，变更: {mutated_stats.credits}/{mutated_stats.sanity}".into(),
+                is_blocked: false,
+                is_locked: false,
+            }),
+            parameters_schema: None,
+        };
+
+        let args = json!({
+            "module": "神经加速器",
+            "cost": 150,
+            "sanity_cost": 10,
+        });
+
+        let outcome = run_plan_sync(&mut state, &plan, &args, no_query).unwrap();
+        assert!(!outcome.is_blocked);
+        assert_eq!(
+            outcome.text,
+            "【cyber_upgrade】执行成功！模块: 神经加速器，扣除: 150点，剩余信用点: 350，理智: 70，变更: 350/70"
+        );
+        assert_eq!(state.get_stat("credits"), 350.0);
+        assert_eq!(state.get_stat("sanity"), 70.0);
+    }
+
+    #[test]
+    fn empty_chain_neutral_receipt_and_template() {
+        let mut state = DataContainer::default();
+        // 1. 无模板空链：仅校验
+        let plan_no_tpl = ToolPlan {
+            tool_name: "ping".into(),
+            steps: vec![],
+            success_return: None,
+            parameters_schema: None,
+        };
+        let outcome = run_plan_sync(&mut state, &plan_no_tpl, &json!({}), no_query).unwrap();
+        assert_eq!(outcome.text, "【ping】参数校验通过（空链契约：仅注册校验，无容器变更）");
+
+        // 2. 有模板空链：正常渲染模板
+        let plan_with_tpl = ToolPlan {
+            tool_name: "ping".into(),
+            steps: vec![],
+            success_return: Some(ToolReturnConfig {
+                return_template: "【{tool_name}】{result}（参数 {args.seq}）".into(),
+                is_blocked: false,
+                is_locked: false,
+            }),
+            parameters_schema: None,
+        };
+        let outcome_tpl = run_plan_sync(&mut state, &plan_with_tpl, &json!({"seq": 42}), no_query).unwrap();
+        assert_eq!(outcome_tpl.text, "【ping】执行成功（参数 42）");
     }
 }
