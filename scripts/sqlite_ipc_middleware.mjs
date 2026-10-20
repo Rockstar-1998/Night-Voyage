@@ -353,6 +353,12 @@ function renderTemplate(template, ctx) {
     if (resolved !== undefined) {
       return stringifyValue(resolved);
     }
+    if (ctx && ctx.args && ctx.args[trimmed] !== undefined) {
+      return stringifyValue(ctx.args[trimmed]);
+    }
+    if (ctx && ctx.stats && ctx.stats[trimmed] !== undefined) {
+      return stringifyValue(ctx.stats[trimmed]);
+    }
     if (ctx && (ctx.args || ctx.stats)) {
       try {
         const val = resolveOperand(trimmed, ctx.args || {}, { stats: ctx.stats || {} });
@@ -498,7 +504,11 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
     }
   }
 
+  const initialStats = { ...(state.stats || {}) };
   const ctx = {
+    tool_name: toolName,
+    result: '执行成功',
+    mutated_stats: {},
     args: parsedArgs,
     stats: state.stats,
     inspect: null,
@@ -694,6 +704,8 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
 
       case 'Write': {
         const key = renderTemplate(cfg.key_expr || cfg.keyExpr || '', {
+          tool_name: toolName,
+          result: '执行成功',
           args: parsedArgs,
           stats: state.stats,
           inspect: ctx.inspect,
@@ -701,6 +713,8 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
         }).trim();
         if (!key) throw new Error('Writer 节点的 key_expr 渲染结果为空，拒绝写入（C2）');
         const value = renderTemplate(cfg.value_template || cfg.valueTemplate || '', {
+          tool_name: toolName,
+          result: '执行成功',
           args: parsedArgs,
           stats: state.stats,
           inspect: ctx.inspect,
@@ -711,6 +725,15 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
       }
     }
   }
+
+  // 收集执行过程中的属性变更，供 {mutated_stats} 占位符引用
+  const mutatedStats = {};
+  for (const [k, v] of Object.entries(state.stats || {})) {
+    if (initialStats[k] !== v) {
+      mutatedStats[k] = v;
+    }
+  }
+  ctx.mutated_stats = mutatedStats;
 
   // 6. 持久化写回 SQLite
   database
@@ -725,6 +748,9 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
     const tpl = (successReturn.return_template || successReturn.returnTemplate).trim();
     if (tpl) {
       return renderTemplate(tpl, {
+        tool_name: toolName,
+        result: '执行成功',
+        mutated_stats: mutatedStats,
         args: parsedArgs,
         stats: state.stats,
         inspect: ctx.inspect,
@@ -736,7 +762,7 @@ function executeBlueprintToolPlan(database, sessionId, graph, toolName, parsedAr
   if (steps.length === 0) {
     return `【${toolName}】参数校验通过（空链契约：仅注册校验，无容器变更）`;
   }
-  return `【${toolName}】执行成功。当前金币: ${getStat(state, 'gold')}G，当前负重: ${totalWeight(state)}/${getStat(state, 'max_weight')}kg`;
+  return `【${toolName}】执行成功。`;
 }
 
 function handleCommand(cmd, args) {
