@@ -90,6 +90,7 @@ import { QuerierNode } from './nodes/QuerierNode';
 import { ScriptwriterPipelineNode } from './nodes/ScriptwriterPipelineNode';
 import { MacroPinsNode } from './nodes/MacroPinsNode';
 import { MacroInstanceNode } from './nodes/MacroInstanceNode';
+import { ToolPermissionsCard } from './ToolPermissionsCard';
 import type {
   BlueprintMacro,
   MacroInstanceConfig,
@@ -590,6 +591,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                       value={(node().config as DirectorConfig).tools.join(', ')}
                       onChange={(e) => updateNode(node().id, { tools: e.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean) })}
                     />
+                    <ToolPermissionsCard
+                      permissions={(node().config as DirectorConfig).tool_permissions}
+                      isLocked={isLocked()}
+                      onUpdate={(tool_permissions) => updateNode(node().id, { tool_permissions })}
+                    />
                   </div>
                 </Match>
                 <Match when={node().type === 'actor_definition'}>
@@ -608,6 +614,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     <input class="w-full rounded-lg border border-white/10 bg-ink-deep px-3 py-2 text-sm text-white"
                       value={(node().config as ActorDefinition).tools.join(', ')}
                       onChange={(e) => updateNode(node().id, { tools: e.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    />
+                    <ToolPermissionsCard
+                      permissions={(node().config as ActorDefinition).tool_permissions}
+                      isLocked={isLocked()}
+                      onUpdate={(tool_permissions) => updateNode(node().id, { tool_permissions })}
                     />
                   </div>
                 </Match>

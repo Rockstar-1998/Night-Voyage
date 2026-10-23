@@ -632,6 +632,20 @@ fn default_nudge_instruction_template() -> String {
 /// `workspace_key`：该阶段产出写入的共享工作区变量；`prompt`：该阶段指令（与
 /// 主链 compile_prompt 装配的系统设定叠加）；`tools`：该阶段子代理可用的契约
 /// 引用数组（按 tool_name 指向图中 ToolDefinition，编译期校验存在）。
+/// 智能体工具权限配置（Ticket 04: 全局能力池与单智能体白名单）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AgentToolPermissions {
+    /// 是否允许所有全局已注册工具（若为 true，则拥有所有全局可用能力）
+    #[serde(default)]
+    pub allow_all: bool,
+    /// 允许免审批调用的工具名称列表
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// 需要人工/系统审批后方可执行的高危工具列表
+    #[serde(default)]
+    pub require_approval: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScriptwriterStage {
     pub stage: String,
@@ -639,6 +653,29 @@ pub struct ScriptwriterStage {
     pub prompt: String,
     #[serde(default)]
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_permissions: Option<AgentToolPermissions>,
+}
+
+impl ScriptwriterStage {
+    pub fn effective_tools(&self) -> Vec<String> {
+        if let Some(perms) = &self.tool_permissions {
+            perms.allowed_tools.clone()
+        } else {
+            self.tools.clone()
+        }
+    }
+
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        if let Some(perms) = &self.tool_permissions {
+            if perms.allow_all {
+                return true;
+            }
+            perms.allowed_tools.iter().any(|t| t == tool_name)
+        } else {
+            self.tools.iter().any(|t| t == tool_name)
+        }
+    }
 }
 
 /// 剧本流水线参数节点（编排资产，计划 §6.2）。
@@ -699,8 +736,31 @@ pub struct DirectorConfig {
     pub director_prompt: String,
     #[serde(default)]
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_permissions: Option<AgentToolPermissions>,
     #[serde(default)]
     pub is_locked: bool,
+}
+
+impl DirectorConfig {
+    pub fn effective_tools(&self) -> Vec<String> {
+        if let Some(perms) = &self.tool_permissions {
+            perms.allowed_tools.clone()
+        } else {
+            self.tools.clone()
+        }
+    }
+
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        if let Some(perms) = &self.tool_permissions {
+            if perms.allow_all {
+                return true;
+            }
+            perms.allowed_tools.iter().any(|t| t == tool_name)
+        } else {
+            self.tools.iter().any(|t| t == tool_name)
+        }
+    }
 }
 
 /// 演员定义节点配置（编排资产，计划 §6.1）。每演员一节点。
@@ -715,8 +775,31 @@ pub struct ActorDefinition {
     pub persona: String,
     #[serde(default)]
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_permissions: Option<AgentToolPermissions>,
     #[serde(default)]
     pub is_locked: bool,
+}
+
+impl ActorDefinition {
+    pub fn effective_tools(&self) -> Vec<String> {
+        if let Some(perms) = &self.tool_permissions {
+            perms.allowed_tools.clone()
+        } else {
+            self.tools.clone()
+        }
+    }
+
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        if let Some(perms) = &self.tool_permissions {
+            if perms.allow_all {
+                return true;
+            }
+            perms.allowed_tools.iter().any(|t| t == tool_name)
+        } else {
+            self.tools.iter().any(|t| t == tool_name)
+        }
+    }
 }
 
 impl Default for BannedWordsConfig {

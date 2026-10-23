@@ -2021,10 +2021,22 @@ pub fn extract_orchestration_configs(
         Ok(())
     };
     if let Some(dir) = &director {
-        validate_tools("导演", &dir.tools)?;
+        if let Some(perms) = &dir.tool_permissions {
+            if !perms.allow_all {
+                validate_tools("导演", &perms.allowed_tools)?;
+            }
+        } else {
+            validate_tools("导演", &dir.tools)?;
+        }
     }
     for actor in &actors {
-        validate_tools(&actor.actor_name, &actor.tools)?;
+        if let Some(perms) = &actor.tool_permissions {
+            if !perms.allow_all {
+                validate_tools(&actor.actor_name, &perms.allowed_tools)?;
+            }
+        } else {
+            validate_tools(&actor.actor_name, &actor.tools)?;
+        }
     }
 
     Ok(OrchestrationConfigs {
@@ -4391,5 +4403,107 @@ mod tests {
         assert!(inlined.nodes.iter().any(|n| n.id.contains("c_inner")));
         assert_eq!(inlined.nodes.len(), 4); // start, outer_calc, inner_calc, end
         assert_eq!(inlined.edges.len(), 3); // start -> outer_calc -> inner_calc -> end
+    }
+
+    #[test]
+    fn test_agent_tool_permissions_validation() {
+        use crate::models::blueprint::{
+            ActorDefinition, AgentToolPermissions, DirectorConfig, ToolDefinitionConfig,
+        };
+
+        // 1. Tool defined, actor with tool_permissions whitelisting it -> OK
+        let graph_ok = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "tool_buy".to_string(),
+                    config: NodeConfig::ToolDefinition(ToolDefinitionConfig {
+                        tool_name: "buy_item".to_string(),
+                        description: "购买物品".to_string(),
+                        parameters_schema: "{}".to_string(),
+                        is_locked: false,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "actor_trader".to_string(),
+                    config: NodeConfig::ActorDefinition(ActorDefinition {
+                        actor_name: "商人".to_string(),
+                        persona: "精明的商人".to_string(),
+                        tools: vec![],
+                        tool_permissions: Some(AgentToolPermissions {
+                            allow_all: false,
+                            allowed_tools: vec!["buy_item".to_string()],
+                            require_approval: vec![],
+                        }),
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "director_node".to_string(),
+                    config: NodeConfig::DirectorConfig(DirectorConfig {
+                        director_prompt: "统筹全局".to_string(),
+                        tools: vec![],
+                        tool_permissions: Some(AgentToolPermissions {
+                            allow_all: true,
+                            allowed_tools: vec![],
+                            require_approval: vec![],
+                        }),
+                        is_locked: false,
+                    }),
+                    position: pos(200.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![edge("e1", "n_start", "out", "n_end", "in")],
+            comments: Vec::new(),
+            macros: Vec::new(),
+        };
+
+        let configs = extract_orchestration_configs(&graph_ok)
+            .expect("Valid tool_permissions must pass orchestration validation");
+        assert_eq!(configs.actors.len(), 1);
+        assert!(configs.actors[0].is_tool_allowed("buy_item"));
+        assert!(!configs.actors[0].is_tool_allowed("cast_spell"));
+        assert!(configs.director_config.as_ref().unwrap().is_tool_allowed("any_tool_allowed_by_allow_all"));
+
+        // 2. Actor with non-existent tool in allowed_tools and allow_all=false -> Error
+        let graph_err = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "actor_trader".to_string(),
+                    config: NodeConfig::ActorDefinition(ActorDefinition {
+                        actor_name: "商人".to_string(),
+                        persona: "精明的商人".to_string(),
+                        tools: vec![],
+                        tool_permissions: Some(AgentToolPermissions {
+                            allow_all: false,
+                            allowed_tools: vec!["non_existent_tool".to_string()],
+                            require_approval: vec![],
+                        }),
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![edge("e1", "n_start", "out", "n_end", "in")],
+            comments: Vec::new(),
+            macros: Vec::new(),
+        };
+
+        let err = extract_orchestration_configs(&graph_err)
+            .expect_err("Missing tool in tool_permissions whitelist must fail validation");
+        match err {
+            BlueprintError::ToolReferenceNotFound { owner, tool } => {
+                assert_eq!(owner, "商人");
+                assert_eq!(tool, "non_existent_tool");
+            }
+            other => panic!("Expected ToolReferenceNotFound, got: {:?}", other),
+        }
     }
 }

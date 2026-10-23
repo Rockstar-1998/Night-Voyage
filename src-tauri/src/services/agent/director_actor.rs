@@ -177,11 +177,23 @@ pub async fn run_director_actor_pipeline(
         })
         .collect();
 
-    let director_tools: Vec<crate::llm::LlmToolDefinition> = director_cfg
-        .tools
-        .iter()
-        .filter_map(|name| tool_defs_by_name.get(name).cloned())
-        .collect();
+    let director_tools: Vec<crate::llm::LlmToolDefinition> = if let Some(perms) = &director_cfg.tool_permissions {
+        if perms.allow_all {
+            tool_defs_by_name.values().cloned().collect()
+        } else {
+            perms
+                .allowed_tools
+                .iter()
+                .filter_map(|name| tool_defs_by_name.get(name).cloned())
+                .collect()
+        }
+    } else {
+        director_cfg
+            .tools
+            .iter()
+            .filter_map(|name| tool_defs_by_name.get(name).cloned())
+            .collect()
+    };
 
     let schema_json = serde_json::to_string(&director_plan_schema())
         .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}"))?;
@@ -353,13 +365,25 @@ pub async fn run_director_actor_pipeline(
             beat.focus, user_input
         ));
 
-        // 工具循环：蓝图 tools 非空的演员启用 function-calling 闭环。
+        // 工具循环：蓝图 tools / tool_permissions 非空的演员启用 function-calling 闭环。
         let actor_tools: Vec<crate::llm::LlmToolDefinition> = actor_def
             .map(|def| {
-                def.tools
-                    .iter()
-                    .filter_map(|name| tool_defs_by_name.get(name).cloned())
-                    .collect()
+                if let Some(perms) = &def.tool_permissions {
+                    if perms.allow_all {
+                        tool_defs_by_name.values().cloned().collect()
+                    } else {
+                        perms
+                            .allowed_tools
+                            .iter()
+                            .filter_map(|name| tool_defs_by_name.get(name).cloned())
+                            .collect()
+                    }
+                } else {
+                    def.tools
+                        .iter()
+                        .filter_map(|name| tool_defs_by_name.get(name).cloned())
+                        .collect()
+                }
             })
             .unwrap_or_default();
 

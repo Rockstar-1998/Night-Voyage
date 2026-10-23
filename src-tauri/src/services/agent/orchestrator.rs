@@ -660,12 +660,14 @@ mod tests {
                 workspace_key: "draft".to_string(),
                 prompt: "你是初稿编写者".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
             ScriptwriterStage {
                 stage: "refiner".to_string(),
                 workspace_key: "final".to_string(),
                 prompt: "你是定稿润色者".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
         ];
 
@@ -723,24 +725,28 @@ mod tests {
                 workspace_key: "outline".to_string(),
                 prompt: "提炼分镜大纲".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
             ScriptwriterStage {
                 stage: "draft".to_string(),
                 workspace_key: "draft_content".to_string(),
                 prompt: "展开剧情初稿".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
             ScriptwriterStage {
                 stage: "critique".to_string(),
                 workspace_key: "critique_notes".to_string(),
                 prompt: "检查逻辑漏洞与节奏".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
             ScriptwriterStage {
                 stage: "polish".to_string(),
                 workspace_key: "final".to_string(),
                 prompt: "终稿修辞打磨".to_string(),
                 tools: vec![],
+                tool_permissions: None,
             },
         ];
 

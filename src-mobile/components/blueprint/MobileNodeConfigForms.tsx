@@ -57,6 +57,7 @@ import type {
   PinType,
 } from '../../../src/lib/blueprint/types';
 import { PIN_TYPE_COLORS } from './mobileNodeLayout';
+import { MobileToolPermissionsCard } from './MobileToolPermissionsModal';
 
 // ─── 公共 Props ───
 
@@ -1973,6 +1974,11 @@ const ScriptwriterPipelineForm: Component<{
                   }}
                 />
               </div>
+
+              <MobileToolPermissionsCard
+                permissions={stage.tool_permissions}
+                onUpdate={(perms) => handleUpdateStage(idx(), { tool_permissions: perms })}
+              />
             </div>
           )}
         </For>
@@ -2087,6 +2093,11 @@ const DirectorConfigForm: Component<{
         />
       </div>
 
+      <MobileToolPermissionsCard
+        permissions={props.config.tool_permissions}
+        onUpdate={(perms) => props.onChange({ ...props.config, tool_permissions: perms })}
+      />
+
       <div>
         <Toggle
           checked={props.config.is_locked}
@@ -2143,6 +2154,11 @@ const ActorDefinitionForm: Component<{
           }}
         />
       </div>
+
+      <MobileToolPermissionsCard
+        permissions={props.config.tool_permissions}
+        onUpdate={(perms) => props.onChange({ ...props.config, tool_permissions: perms })}
+      />
 
       <div>
         <Toggle

@@ -285,11 +285,18 @@ export interface BannedWordsConfig {
   is_locked: boolean;
 }
 
+export interface AgentToolPermissions {
+  allow_all?: boolean;
+  allowed_tools?: string[];
+  require_approval?: string[];
+}
+
 export interface ScriptwriterStage {
   stage: string;
   workspace_key: string;
   prompt: string;
   tools: string[];
+  tool_permissions?: AgentToolPermissions;
 }
 
 export interface ScriptwriterPipelineConfig {
@@ -308,6 +315,7 @@ export interface AgentModeSwitchConfig {
 export interface DirectorConfig {
   director_prompt: string;
   tools: string[];
+  tool_permissions?: AgentToolPermissions;
   is_locked: boolean;
 }
 
@@ -315,6 +323,7 @@ export interface ActorDefinition {
   actor_name: string;
   persona: string;
   tools: string[];
+  tool_permissions?: AgentToolPermissions;
   is_locked: boolean;
 }
 

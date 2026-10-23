@@ -2,6 +2,7 @@ import { Component, For, Show } from 'solid-js';
 import type { ScriptwriterPipelineConfig, ScriptwriterStage } from '../../../lib/blueprint/types';
 import type { NodeConfigComponentProps } from '../NodeConfigPanel';
 import { ArrowUp, ArrowDown, Plus, Trash2, Layers3 } from '../../../lib/icons';
+import { ToolPermissionsCard } from '../ToolPermissionsCard';
 
 const INPUT_CLASS =
   'w-full bg-black/30 border border-white/15 rounded-lg py-1.5 px-2.5 text-xs font-mono text-mist-solid focus:outline-none focus:border-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed';
@@ -191,6 +192,13 @@ export const ScriptwriterPipelineNode: Component<NodeConfigComponentProps<Script
                       onInput={(e) => handleUpdateStage(idx(), { prompt: e.currentTarget.value })}
                     />
                   </div>
+
+                  {/* 阶段工具权限 */}
+                  <ToolPermissionsCard
+                    permissions={stageItem.tool_permissions}
+                    isLocked={props.isLocked}
+                    onUpdate={(perms) => handleUpdateStage(idx(), { tool_permissions: perms })}
+                  />
                 </div>
               )}
             </For>
