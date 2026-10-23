@@ -931,6 +931,10 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         }
     }
 
+    // 7c. DAG 循环检测与 Reject 反向边放行（Spec §3: Rejection Loop & Circuit Breakers）
+    // 仅放行 source_port 为 "reject" / "Reject" 的打回反向边；前向边构成的环直接硬报错（C2 零回退）。
+    validate_dag_cycles(graph)?;
+
     // 8. Reachability: Start → End
     let start_id = graph
         .nodes
@@ -956,6 +960,43 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
     // references a preset owning such a node (e.g. an isolated rules node).
     // Reachability of the Start→End path is already enforced by check #8 above.
     let _ = &reachable_from_start;
+
+    Ok(())
+}
+
+/// 拓扑有向无环（DAG）校验器：
+/// 检测图执行流中是否存在非法死循环，但针对从 `reject` / `Reject` 引脚发出的打回反向边进行特例放行。
+fn validate_dag_cycles(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
+    let mut state: HashMap<&str, u8> = HashMap::new();
+
+    fn dfs<'a>(
+        node_id: &'a str,
+        graph: &'a BlueprintGraph,
+        state: &mut HashMap<&'a str, u8>,
+    ) -> Result<(), BlueprintError> {
+        state.insert(node_id, 1);
+
+        for edge in &graph.edges {
+            // 放行 Reject 反向边：不视为主流死循环
+            if edge.source == node_id && edge.source_port.to_lowercase() != "reject" {
+                let target = edge.target.as_str();
+                match state.get(target).copied().unwrap_or(0) {
+                    1 => return Err(BlueprintError::CycleDetected(target.to_string())),
+                    0 => dfs(target, graph, state)?,
+                    _ => {}
+                }
+            }
+        }
+
+        state.insert(node_id, 2);
+        Ok(())
+    }
+
+    for node in &graph.nodes {
+        if state.get(node.id.as_str()).copied().unwrap_or(0) == 0 {
+            dfs(node.id.as_str(), graph, &mut state)?;
+        }
+    }
 
     Ok(())
 }
@@ -2060,7 +2101,11 @@ fn next_node_id(
     graph
         .edges
         .iter()
-        .find(|e| e.source == node_id && e.source_port == port)
+        .find(|e| {
+            e.source == node_id
+                && (e.source_port == port
+                    || (port == "out" && (e.source_port == "approved" || e.source_port == "pass")))
+        })
         .map(|e| e.target.clone())
         .ok_or_else(|| BlueprintError::NoOutgoingEdge {
             node: node_id.to_string(),
@@ -3028,6 +3073,44 @@ mod tests {
                     id == "n_a2" || id == "n_b2",
                     "cycle should be detected at n_a2 or n_b2, got {id}"
                 );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dag_cycle_validation_relaxing_reject_pin() {
+        // Graph with a rejection feedback loop:
+        // Start -> Drafter -> Reviewer -> End
+        // AND back-edge: Reviewer (reject) -> Drafter (in)
+        let mut g = graph(
+            vec![
+                start("n_start"),
+                prompt("n_draft", "draft_p", "system", "drafting"),
+                prompt("n_review", "review_p", "system", "reviewing"),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_draft", "in"),
+                edge("e2", "n_draft", "out", "n_review", "in"),
+                edge("e3", "n_review", "out", "n_end", "in"),
+                // Rejection back-edge: must be relaxed by DAG cycle validation!
+                edge("e_reject", "n_review", "reject", "n_draft", "in"),
+            ],
+        );
+
+        // 验证执行与静态 DAG 校验放行
+        let result = execute_blueprint(&g, &ctx("legacy")).await;
+        assert!(result.is_ok(), "rejection loop back-edge must be permitted, got {result:?}");
+
+        // 若将打回引脚改为普通前向引脚（如 out），则必须被判定为非法死循环
+        g.edges[3] = edge("e_reject", "n_review", "out", "n_draft", "in");
+        let err = execute_blueprint(&g, &ctx("legacy"))
+            .await
+            .expect_err("cycle without reject pin must be rejected");
+        match err {
+            BlueprintError::CycleDetected(id) => {
+                assert!(id == "n_draft" || id == "n_review");
             }
             other => panic!("expected CycleDetected, got {other:?}"),
         }

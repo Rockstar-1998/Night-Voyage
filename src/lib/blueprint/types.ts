@@ -297,6 +297,8 @@ export interface ScriptwriterStage {
   prompt: string;
   tools: string[];
   tool_permissions?: AgentToolPermissions;
+  reject_target?: string;
+  max_loop_count?: number;
 }
 
 export interface ScriptwriterPipelineConfig {

@@ -197,6 +197,18 @@ where
     let mut prev_output = draft.clone();
     let mut accumulated_critiques: Vec<(String, String)> = Vec::new();
 
+    let is_verdict_reject = |text: &str| -> bool {
+        let upper = text.to_uppercase();
+        upper.contains("[REJECT]")
+            || upper.contains("[REJECTED]")
+            || upper.contains("[VERDICT: REJECT]")
+            || upper.contains("[VERDICT:REJECT]")
+            || text.contains("[打回]")
+            || text.contains("【打回】")
+            || text.starts_with("打回：")
+            || text.starts_with("打回:")
+    };
+
     for stage_cfg in &stages[1..num_stages - 1] {
         let stage_label = format!("阶段 {}", stage_cfg.stage);
         let stage_key = if !stage_cfg.workspace_key.trim().is_empty() {
@@ -205,17 +217,86 @@ where
             stage_cfg.stage.trim()
         };
 
-        let output = call_stage(
-            stage_label,
+        let mut output = call_stage(
+            stage_label.clone(),
             stage_cfg.prompt.clone(),
             prev_output.clone(),
             scratchpad.clone(),
         )
         .await?;
 
+        // 审阅打回机制与熔断保护 (Rejection Loop & Circuit Breaker)
+        let max_loops = stage_cfg.max_loop_count.unwrap_or(2);
+        let mut loop_count = 0u32;
+
+        let target_stage_name = stage_cfg.reject_target.as_deref().unwrap_or("draft");
+        let target_stage = stages
+            .iter()
+            .find(|s| s.stage == target_stage_name || s.workspace_key == target_stage_name)
+            .unwrap_or(&stages[0]);
+
+        while is_verdict_reject(&output) {
+            loop_count += 1;
+            if loop_count > max_loops {
+                // 熔断触发
+                scratchpad.write_text("circuit_breaker_tripped", "true");
+                scratchpad.write_text(&format!("{}.circuit_breaker_tripped", stage_cfg.stage), "true");
+                crate::dbg_eprintln!(
+                    "[scriptwriter-pipeline] 阶段 {} 打回循环触发熔断（已达上限 {} 次），安全推进至下一阶段",
+                    stage_cfg.stage,
+                    max_loops
+                );
+                accumulated_critiques.push((
+                    stage_cfg.stage.clone(),
+                    format!("【熔断保护生效】已达最大打回次数 {} 次，强制推进至润色阶段。\n最后审阅意见：{}", max_loops, output),
+                ));
+                break;
+            }
+
+            // 反馈注入协议：注入 {feedback} 与 {stage_id.critique}
+            scratchpad.write_text("feedback", &output);
+            scratchpad.write_text(&format!("{}.critique", stage_cfg.stage), &output);
+
+            // 重新调用生成阶段进行修改
+            let target_label = format!("阶段 {} (打回重写 #{})", target_stage.stage, loop_count);
+            let revision_input = format!(
+                "{}\n\n【审阅打回意见 · 第 {} 次打回】\n{}\n\n请严格依据上述打回意见对草稿进行全面修正重写。",
+                user_input,
+                loop_count,
+                output
+            );
+            let revised_draft = call_stage(
+                target_label,
+                target_stage.prompt.clone(),
+                revision_input,
+                scratchpad.clone(),
+            )
+            .await?;
+
+            scratchpad.write_text("draft", &revised_draft);
+            scratchpad.write_text(&target_stage.stage, &revised_draft);
+            if !target_stage.workspace_key.trim().is_empty() {
+                scratchpad.write_text(target_stage.workspace_key.trim(), &revised_draft);
+            }
+            prev_output = revised_draft.clone();
+
+            // 再次调用评审阶段
+            output = call_stage(
+                format!("{} (复审 #{})", stage_label, loop_count),
+                stage_cfg.prompt.clone(),
+                prev_output.clone(),
+                scratchpad.clone(),
+            )
+            .await?;
+        }
+
+        if !is_verdict_reject(&output) {
+            let _ = scratchpad.write_text("feedback", "");
+            accumulated_critiques.push((stage_cfg.stage.clone(), output.clone()));
+        }
+
         scratchpad.write_text(stage_key, &output);
         scratchpad.write_text(&stage_cfg.stage, &output);
-        accumulated_critiques.push((stage_cfg.stage.clone(), output.clone()));
         prev_output = output;
     }
 
@@ -346,6 +427,18 @@ pub async fn run_scriptwriter_pipeline(
         },
     )
     .await;
+
+    if scratchpad.read_text("circuit_breaker_tripped").is_ok() {
+        crate::services::agent::timeline::emit(
+            app,
+            conversation_id,
+            round_id,
+            crate::services::agent::timeline::TimelineKind::LoopReject,
+            crate::services::agent::timeline::TimelineStatus::Blocked,
+            "打回循环熔断 (Circuit Breaker Tripped)",
+            "审阅打回已达上限次数，触发熔断保护并安全推进至终稿",
+        );
+    }
 
     // 回合结束：释放纯内存缓冲，彻底丢弃工作区（零磁盘残留）
     scratchpad.clear();
@@ -661,6 +754,8 @@ mod tests {
                 prompt: "你是初稿编写者".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
             ScriptwriterStage {
                 stage: "refiner".to_string(),
@@ -668,6 +763,8 @@ mod tests {
                 prompt: "你是定稿润色者".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
         ];
 
@@ -726,6 +823,8 @@ mod tests {
                 prompt: "提炼分镜大纲".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
             ScriptwriterStage {
                 stage: "draft".to_string(),
@@ -733,6 +832,8 @@ mod tests {
                 prompt: "展开剧情初稿".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
             ScriptwriterStage {
                 stage: "critique".to_string(),
@@ -740,6 +841,8 @@ mod tests {
                 prompt: "检查逻辑漏洞与节奏".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
             ScriptwriterStage {
                 stage: "polish".to_string(),
@@ -747,6 +850,8 @@ mod tests {
                 prompt: "终稿修辞打磨".to_string(),
                 tools: vec![],
                 tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
             },
         ];
 
@@ -817,5 +922,171 @@ mod tests {
         .await;
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("至少需要 2 个阶段"));
+    }
+
+    #[tokio::test]
+    async fn test_rejection_pipeline_and_circuit_breaker() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "你是初稿编写者".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+            ScriptwriterStage {
+                stage: "critic".to_string(),
+                workspace_key: "critique".to_string(),
+                prompt: "你是严格审核者".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("draft".to_string()),
+                max_loop_count: Some(2),
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "你是定稿润色者".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let draft_invocations = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let critic_invocations = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let received_feedbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let d_clone = draft_invocations.clone();
+        let c_clone = critic_invocations.clone();
+        let f_clone = received_feedbacks.clone();
+
+        let final_result = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            20,
+            "【前情锁定】",
+            "探索古代遗迹",
+            &scratchpad,
+            move |label, _instruction, _payload, pad| {
+                let d = d_clone.clone();
+                let c = c_clone.clone();
+                let f = f_clone.clone();
+                async move {
+                    if label.contains("draft") {
+                        let mut count = d.lock().unwrap();
+                        *count += 1;
+                        if let Ok(fb) = pad.read_text("feedback") {
+                            f.lock().unwrap().push(fb);
+                        }
+                        Ok(format!("遗迹初稿版本 #{}", *count))
+                    } else if label.contains("critic") {
+                        let mut count = c.lock().unwrap();
+                        *count += 1;
+                        // 始终返回打回意见，触发循环并最终触发熔断
+                        Ok(format!("[REJECT] 审核不通过 #{}: 描写不够生动", *count))
+                    } else {
+                        // polish 定稿
+                        assert!(pad.read_text("circuit_breaker_tripped").is_ok());
+                        Ok("遗迹终稿定案".to_string())
+                    }
+                }
+            },
+        )
+        .await
+        .expect("pipeline with circuit breaker must complete safely");
+
+        assert_eq!(final_result, "遗迹终稿定案");
+        // 初稿生成 1 次 + 打回重写 2 次 = 3 次
+        assert_eq!(*draft_invocations.lock().unwrap(), 3);
+        // 审阅初次 1 次 + 复审 2 次 = 3 次
+        assert_eq!(*critic_invocations.lock().unwrap(), 3);
+        // 验证第 1、2 次打回均成功将反馈文本注入 scratchpad
+        let feedbacks = received_feedbacks.lock().unwrap();
+        assert_eq!(feedbacks.len(), 2);
+        assert!(feedbacks[0].contains("[REJECT] 审核不通过 #1"));
+        assert!(feedbacks[1].contains("[REJECT] 审核不通过 #2"));
+
+        // 验证熔断标记被正确记录
+        assert_eq!(scratchpad.read_text("circuit_breaker_tripped").unwrap(), "true");
+        assert_eq!(scratchpad.read_text("critic.circuit_breaker_tripped").unwrap(), "true");
+    }
+
+    #[tokio::test]
+    async fn test_rejection_pipeline_success_after_revision() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "初稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("draft".to_string()),
+                max_loop_count: Some(2),
+            },
+            ScriptwriterStage {
+                stage: "critic".to_string(),
+                workspace_key: "critique".to_string(),
+                prompt: "审阅".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("draft".to_string()),
+                max_loop_count: Some(2),
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "定稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let critic_count = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let c_clone = critic_count.clone();
+
+        let final_result = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            20,
+            "【前情锁定】",
+            "调查现场",
+            &scratchpad,
+            move |label, _instruction, payload, _pad| {
+                let c = c_clone.clone();
+                async move {
+                    if label.contains("draft") {
+                        if payload.contains("【审阅打回意见") {
+                            Ok("修正后的初稿：包含更多细节".to_string())
+                        } else {
+                            Ok("初始初稿".to_string())
+                        }
+                    } else if label.contains("critic") {
+                        let mut count = c.lock().unwrap();
+                        *count += 1;
+                        if *count == 1 {
+                            Ok("[REJECT] 细节不足，打回修正".to_string())
+                        } else {
+                            Ok("合格通过，细节描写充分".to_string())
+                        }
+                    } else {
+                        Ok(format!("最终定稿（基于：{}）", payload.lines().next().unwrap_or("")))
+                    }
+                }
+            },
+        )
+        .await
+        .expect("pipeline should succeed");
+
+        assert_eq!(*critic_count.lock().unwrap(), 2);
+        assert!(scratchpad.read_text("circuit_breaker_tripped").is_err());
+        assert!(final_result.contains("最终定稿"));
     }
 }

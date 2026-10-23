@@ -655,6 +655,21 @@ pub struct ScriptwriterStage {
     pub tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_permissions: Option<AgentToolPermissions>,
+    /// 打回目标阶段标识（例如 "draft"）。若该阶段判定为不合格则打回目标阶段重写
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reject_target: Option<String>,
+    /// 最大循环打回次数，防死循环熔断保护（默认 2 次）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_loop_count: Option<u32>,
+}
+
+/// 运行时审阅打回循环上下文状态（Spec §3）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RejectionLoopState {
+    pub loop_id: String,
+    pub current_iteration: u32,
+    pub max_iterations: u32,
+    pub last_critique: Option<String>,
 }
 
 impl ScriptwriterStage {

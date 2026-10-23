@@ -193,6 +193,34 @@ export const ScriptwriterPipelineNode: Component<NodeConfigComponentProps<Script
                     />
                   </div>
 
+                  {/* 审阅打回与熔断配置 (Rejection Loop & Circuit Breaker) */}
+                  <div class="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label class="mb-0.5 block text-[9px] text-mist-solid/40">打回目标阶段 (Reject Target):</label>
+                      <input
+                        type="text"
+                        class="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[11px] font-mono text-mist-solid focus:border-amber-400 focus:outline-none disabled:opacity-50"
+                        value={stageItem.reject_target ?? ''}
+                        disabled={props.isLocked}
+                        placeholder="可选，如 draft"
+                        onInput={(e) => handleUpdateStage(idx(), { reject_target: e.currentTarget.value || undefined })}
+                      />
+                    </div>
+                    <div>
+                      <label class="mb-0.5 block text-[9px] text-mist-solid/40">熔断上限 (Max Loops):</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        class="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[11px] font-mono text-mist-solid focus:border-amber-400 focus:outline-none disabled:opacity-50"
+                        value={stageItem.max_loop_count ?? 2}
+                        disabled={props.isLocked}
+                        placeholder="默认 2"
+                        onInput={(e) => handleUpdateStage(idx(), { max_loop_count: Number(e.currentTarget.value) || 2 })}
+                      />
+                    </div>
+                  </div>
+
                   {/* 阶段工具权限 */}
                   <ToolPermissionsCard
                     permissions={stageItem.tool_permissions}

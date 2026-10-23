@@ -26,6 +26,8 @@ pub enum TimelineKind {
     NudgeRetry,
     /// 多智能体子任务（导演/演员/初稿/批注/润色）
     SubAgent,
+    /// 审阅打回与熔断保护
+    LoopReject,
 }
 
 /// 条目状态：成功 / 被拦截 / 失败 / 仅信息。

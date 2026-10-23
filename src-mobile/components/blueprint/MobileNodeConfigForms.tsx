@@ -1975,6 +1975,26 @@ const ScriptwriterPipelineForm: Component<{
                 />
               </div>
 
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <FieldLabel label="打回目标阶段" hint="可选" />
+                  <TextInput
+                    value={stage.reject_target || ''}
+                    placeholder="如 draft"
+                    onInput={(v) => handleUpdateStage(idx(), { reject_target: v || undefined })}
+                  />
+                </div>
+                <div>
+                  <FieldLabel label="熔断上限 (轮)" hint="默认 2" />
+                  <NumberInput
+                    value={stage.max_loop_count ?? 2}
+                    placeholder="2"
+                    step="1"
+                    onInput={(v) => handleUpdateStage(idx(), { max_loop_count: v ? Math.max(1, Math.round(v)) : 2 })}
+                  />
+                </div>
+              </div>
+
               <MobileToolPermissionsCard
                 permissions={stage.tool_permissions}
                 onUpdate={(perms) => handleUpdateStage(idx(), { tool_permissions: perms })}
