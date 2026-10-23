@@ -46,7 +46,7 @@ fn row_to_ui_layout(row: &sqlx::sqlite::SqliteRow) -> Result<UILayoutDefinition,
     let root_container: LayoutContainer = serde_json::from_str(&layout_json)
         .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
 
-    Ok(UILayoutDefinition {
+    let mut def = UILayoutDefinition {
         id,
         preset_id,
         name,
@@ -54,7 +54,10 @@ fn row_to_ui_layout(row: &sqlx::sqlite::SqliteRow) -> Result<UILayoutDefinition,
         theme,
         custom_css,
         root_container,
-    })
+        required_data_interface: None,
+    };
+    def.required_data_interface = Some(def.extract_required_data_interface());
+    Ok(def)
 }
 
 /// 获取指定预设下的所有常驻 UI 布局模板
@@ -150,6 +153,7 @@ pub async fn preset_ui_layout_save(
 
     let mut saved = layout;
     saved.id = id;
+    saved.required_data_interface = Some(saved.extract_required_data_interface());
     Ok(saved)
 }
 

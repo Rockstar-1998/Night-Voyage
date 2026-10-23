@@ -8,10 +8,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
-    BlueprintEdge, BlueprintExecutionContext, BlueprintExecutionResult, BlueprintGraph,
-    AnthropicSamplingParamsConfig, CompiledBlock, CompiledSamplingParams,
-    InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig, SamplingParamsConfig, SchemaFieldConfig,
-    ToolDefinitionConfig, ToolReturnConfig,
+    AnthropicSamplingParamsConfig, BlueprintEdge, BlueprintExecutionContext,
+    BlueprintExecutionResult, BlueprintGraph, CompiledBlock, CompiledSamplingParams,
+    ContractValidationResultDto, InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig,
+    SamplingParamsConfig, SchemaFieldConfig, ToolDefinitionConfig, ToolReturnConfig,
 };
 
 /// Graph execution error. Maps 1:1 to the failure modes enumerated in the
@@ -915,6 +915,104 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
     let _ = &reachable_from_start;
 
     Ok(())
+}
+
+/// 静态比对蓝图图数据定义（InitialStateConfig）与 UI 导出的数据契约（RequiredDataInterface）。
+///
+/// 任何缺失的字段或类型不兼容均生成结构化错误（C2 零回退：严禁静默容缺），
+/// 校验未通过将物理阻止保存和发布。
+pub fn validate_blueprint_ui_contract(
+    graph: &BlueprintGraph,
+    contract: &crate::models::ui_layout::RequiredDataInterface,
+) -> ContractValidationResultDto {
+    let mut missing_stats = Vec::new();
+    let mut missing_flags = Vec::new();
+    let mut missing_inventory = false;
+    let mut errors = Vec::new();
+
+    // 若 UI 契约没有任何依赖声明，则视为无约束直接通过
+    if contract.required_stats.is_empty() && contract.required_flags.is_empty() && !contract.required_inventory {
+        return ContractValidationResultDto {
+            is_valid: true,
+            missing_stats,
+            missing_flags,
+            missing_inventory,
+            errors,
+        };
+    }
+
+    let initial_state = graph.nodes.iter().find_map(|node| {
+        if let NodeConfig::InitialStateConfig(cfg) = &node.config {
+            Some(cfg)
+        } else {
+            None
+        }
+    });
+
+    match initial_state {
+        None => {
+            for stat in contract.required_stats.keys() {
+                missing_stats.push(stat.clone());
+                errors.push(format!("缺少必需数值属性: stats.{stat}"));
+            }
+            for flag in &contract.required_flags {
+                missing_flags.push(flag.clone());
+                errors.push(format!("缺少必需剧情标志位: flags.{flag}"));
+            }
+            if contract.required_inventory {
+                missing_inventory = true;
+                errors.push("UI 布局依赖背包槽位，但蓝图中缺少 InitialStateConfig 初始状态节点".to_string());
+            }
+            errors.push("蓝图缺少 InitialStateConfig 初始状态节点，无法满足 UI 数据契约".to_string());
+        }
+        Some(cfg) => {
+            for (stat_name, req) in &contract.required_stats {
+                match cfg.stats.get(stat_name) {
+                    None => {
+                        missing_stats.push(stat_name.clone());
+                        errors.push(format!("缺少必需数值属性: stats.{stat_name}"));
+                    }
+                    Some(stat_def) => {
+                        if let Some(min_val) = req.min {
+                            if stat_def.initial < min_val {
+                                errors.push(format!(
+                                    "属性 stats.{} 初始值 {} 低于 UI 声明的最小值 {}",
+                                    stat_name, stat_def.initial, min_val
+                                ));
+                            }
+                        }
+                        if let Some(max_val) = req.max {
+                            if stat_def.initial > max_val {
+                                errors.push(format!(
+                                    "属性 stats.{} 初始值 {} 高于 UI 声明的最大值 {}",
+                                    stat_name, stat_def.initial, max_val
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            for flag in &contract.required_flags {
+                if !cfg.flags.contains_key(flag) {
+                    missing_flags.push(flag.clone());
+                    errors.push(format!("缺少必需剧情标志位: flags.{flag}"));
+                }
+            }
+        }
+    }
+
+    missing_stats.sort();
+    missing_flags.sort();
+    let is_valid = errors.is_empty();
+
+    ContractValidationResultDto {
+        is_valid,
+        missing_stats,
+        missing_flags,
+        missing_inventory,
+        errors,
+    }
 }
 
 /// Find the merge node for a Gate/ModeSwitch: the nearest common descendant
@@ -3366,5 +3464,82 @@ mod tests {
             "text schema must NOT be injected when not in blueprint"
         );
         assert!(props.is_empty());
+    }
+
+    #[test]
+    fn test_ui_contract_validation() {
+        use crate::models::ui_layout::{RequiredDataInterface, StatRequirement};
+        use crate::models::blueprint::{InitialStateConfig, InitialStatDef, Position};
+
+        // 1. Empty contract passes trivially
+        let empty_graph = graph(vec![start("s"), end("e")], vec![edge("e1", "s", "out", "e", "in")]);
+        let empty_contract = RequiredDataInterface::default();
+        let res = validate_blueprint_ui_contract(&empty_graph, &empty_contract);
+        assert!(res.is_valid);
+        assert!(res.errors.is_empty());
+
+        // 2. Contract requiring credits and location against graph without InitialStateConfig fails
+        let mut contract = RequiredDataInterface::default();
+        contract.required_stats.insert("credits".to_string(), StatRequirement {
+            field_type: "number".to_string(),
+            min: Some(10.0),
+            max: Some(1000.0),
+        });
+        contract.required_flags.push("location".to_string());
+        contract.required_inventory = true;
+
+        let res_fail = validate_blueprint_ui_contract(&empty_graph, &contract);
+        assert!(!res_fail.is_valid);
+        assert_eq!(res_fail.missing_stats, vec!["credits".to_string()]);
+        assert_eq!(res_fail.missing_flags, vec!["location".to_string()]);
+        assert!(res_fail.missing_inventory);
+
+        // 3. Graph with matching InitialStateConfig passes
+        let mut stats = HashMap::new();
+        stats.insert("credits".to_string(), InitialStatDef {
+            initial: 50.0,
+            min: Some(0.0),
+            max: Some(1000.0),
+        });
+        let mut flags = HashMap::new();
+        flags.insert("location".to_string(), "cyber_city".to_string());
+
+        let mut satisfied_graph = empty_graph.clone();
+        satisfied_graph.nodes.push(crate::models::blueprint::BlueprintNode {
+            id: "n_init".to_string(),
+            position: Position { x: 100.0, y: 100.0 },
+            config: NodeConfig::InitialStateConfig(InitialStateConfig {
+                stats,
+                flags: flags.clone(),
+                inventory: Vec::new(),
+                is_locked: false,
+            }),
+        });
+
+        let res_pass = validate_blueprint_ui_contract(&satisfied_graph, &contract);
+        assert!(res_pass.is_valid);
+        assert!(res_pass.errors.is_empty());
+
+        // 4. Initial value below min fails validation
+        let mut bad_stats = HashMap::new();
+        bad_stats.insert("credits".to_string(), InitialStatDef {
+            initial: 5.0, // below min 10.0
+            min: Some(0.0),
+            max: Some(1000.0),
+        });
+        let mut bad_graph = empty_graph.clone();
+        bad_graph.nodes.push(crate::models::blueprint::BlueprintNode {
+            id: "n_init".to_string(),
+            position: Position { x: 100.0, y: 100.0 },
+            config: NodeConfig::InitialStateConfig(InitialStateConfig {
+                stats: bad_stats,
+                flags: flags.clone(),
+                inventory: Vec::new(),
+                is_locked: false,
+            }),
+        });
+        let res_bad = validate_blueprint_ui_contract(&bad_graph, &contract);
+        assert!(!res_bad.is_valid);
+        assert!(res_bad.errors.iter().any(|e| e.contains("低于 UI 声明的最小值")));
     }
 }

@@ -46,6 +46,27 @@ pub enum WidgetType {
     ActionButton,
 }
 
+/// 单个数值属性契约要求
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StatRequirement {
+    #[serde(rename = "type")]
+    pub field_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// UI 布局导出的形式化数据契约规格 (RequiredDataInterface)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredDataInterface {
+    pub required_stats: HashMap<String, StatRequirement>,
+    pub required_flags: Vec<String>,
+    pub required_inventory: bool,
+}
+
 /// 原子交互与展示控件
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +137,9 @@ pub struct UILayoutDefinition {
     /// 自定义 CSS 样式代码，仅在 Shadow DOM 内部隔离注入
     pub custom_css: String,
     pub root_container: LayoutContainer,
+    /// 自动提取导出的数据契约接口
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_data_interface: Option<RequiredDataInterface>,
 }
 
 impl Default for UILayoutDefinition {
@@ -179,6 +203,92 @@ impl Default for UILayoutDefinition {
                     }),
                 ],
             },
+            required_data_interface: None,
         }
+    }
+}
+
+impl LayoutContainer {
+    pub fn collect_data_interface(&self, interface: &mut RequiredDataInterface) {
+        for child in &self.children {
+            match child {
+                LayoutNode::Container(c) => c.collect_data_interface(interface),
+                LayoutNode::Widget(w) => w.collect_data_interface(interface),
+            }
+        }
+    }
+}
+
+impl WidgetDefinition {
+    pub fn collect_data_interface(&self, interface: &mut RequiredDataInterface) {
+        if self.widget_type == WidgetType::InventorySlotGrid {
+            interface.required_inventory = true;
+        }
+
+        let db = self.data_binding.trim();
+        if db == "inventory" {
+            interface.required_inventory = true;
+        } else if let Some(stat_key) = db.strip_prefix("stats.") {
+            let key = stat_key.trim();
+            if !key.is_empty() {
+                let min_val = self.config.get("min").and_then(|v| v.as_f64());
+                let max_val = self.config.get("max").and_then(|v| v.as_f64());
+                interface.required_stats.entry(key.to_string()).or_insert_with(|| StatRequirement {
+                    field_type: "number".to_string(),
+                    min: min_val,
+                    max: max_val,
+                });
+            }
+        } else if let Some(flag_key) = db.strip_prefix("flags.") {
+            let key = flag_key.trim();
+            if !key.is_empty() && !interface.required_flags.contains(&key.to_string()) {
+                interface.required_flags.push(key.to_string());
+            }
+        }
+
+        for (_k, v) in &self.config {
+            if let Some(s) = v.as_str() {
+                let s = s.trim();
+                if let Some(stat_key) = s.strip_prefix("stats.") {
+                    let key = stat_key.trim();
+                    if !key.is_empty() {
+                        interface.required_stats.entry(key.to_string()).or_insert_with(|| StatRequirement {
+                            field_type: "number".to_string(),
+                            min: None,
+                            max: None,
+                        });
+                    }
+                } else if let Some(flag_key) = s.strip_prefix("flags.") {
+                    let key = flag_key.trim();
+                    if !key.is_empty() && !interface.required_flags.contains(&key.to_string()) {
+                        interface.required_flags.push(key.to_string());
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl UILayoutDefinition {
+    pub fn extract_required_data_interface(&self) -> RequiredDataInterface {
+        let mut interface = RequiredDataInterface::default();
+        self.root_container.collect_data_interface(&mut interface);
+        interface.required_flags.sort();
+        interface
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_required_data_interface_from_default_layout() {
+        let layout = UILayoutDefinition::default();
+        let interface = layout.extract_required_data_interface();
+        assert!(interface.required_stats.contains_key("hp"));
+        assert!(interface.required_stats.contains_key("max_hp"));
+        assert!(interface.required_stats.contains_key("gold"));
+        assert!(interface.required_inventory);
     }
 }

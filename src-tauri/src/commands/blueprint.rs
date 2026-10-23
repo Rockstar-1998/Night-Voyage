@@ -3,7 +3,8 @@ use serde::Serialize;
 
 use crate::models::blueprint::{
     BlueprintCompilePreviewDto, BlueprintExecutionContext, BlueprintGraph, BlueprintPreviewBlockDto,
-    GateOption, GateSelection, GroupGateConfig, MutexGateConfig, NodeConfig, PresetConversationOptionDto,
+    ContractValidationResultDto, GateOption, GateSelection, GroupGateConfig, MutexGateConfig, NodeConfig,
+    PresetConversationOptionDto,
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::preset_gate_repository::PresetGateRepository;
@@ -469,4 +470,54 @@ pub async fn preview_blueprint_with_session(
         active_ui_layout: blueprint_result.active_ui_layout,
         tool_plans,
     })
+}
+
+/// 静态校验蓝图图数据定义与 UI 数据契约（Ticket 01 & spec §1）。
+///
+/// 创作者在前端设计 UI 控件并绑定 `stats.*` / `flags.*` / `inventory` 时，
+/// 后端以此命令进行静态对比，如果字段缺失或上下限越界则返回结构化错误。
+#[tauri::command]
+pub async fn blueprint_validate_ui_contract(
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+    graph_json: String,
+) -> Result<ContractValidationResultDto, String> {
+    let graph: BlueprintGraph = serde_json::from_str(&graph_json).map_err(|err| {
+        format!(
+            "blueprint_graph JSON invalid: {}",
+            err.to_string().replace('\\', "/")
+        )
+    })?;
+
+    // 1. 若图中显式存在 UiLayoutConfig 节点，优先按该 layout_id 查询
+    let layout_id_from_node = graph.nodes.iter().find_map(|node| {
+        if let NodeConfig::UiLayoutConfig(cfg) = &node.config {
+            if !cfg.layout_id.trim().is_empty() {
+                Some(cfg.layout_id.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
+    let layout_def = if let Some(layout_id) = layout_id_from_node {
+        crate::commands::ui_layout::preset_ui_layout_get(layout_id, state.clone())
+            .await
+            .ok()
+    } else {
+        // 2. 否则查找该 preset 下已创建的 UI 模板
+        let layouts = crate::commands::ui_layout::preset_ui_layout_list(preset_id, state.clone())
+            .await
+            .unwrap_or_default();
+        layouts.into_iter().next()
+    };
+
+    let contract = layout_def
+        .map(|l| l.extract_required_data_interface())
+        .unwrap_or_default();
+
+    let result = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &contract);
+    Ok(result)
 }

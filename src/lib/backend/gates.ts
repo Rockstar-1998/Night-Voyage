@@ -12,7 +12,7 @@
  */
 
 import { invokeCommand } from './internal';
-import type { BlueprintGate, PresetGateSelection } from './types';
+import type { BlueprintGate, PresetGateSelection, ContractValidationResultDto } from './types';
 
 /**
  * 更新（或清除）某预设下指定 Gate 节点的选择。
@@ -148,5 +148,18 @@ export async function previewBlueprintWithSession(
     presetId,
     graphJson,
     conversationId: conversationId ?? null,
+  });
+}
+
+/**
+ * 静态校验蓝图图数据定义与 UI 数据契约（Ticket 01 & spec §1）。
+ */
+export async function blueprintValidateUiContract(
+  presetId: number,
+  graphJson: string,
+): Promise<ContractValidationResultDto> {
+  return invokeCommand<ContractValidationResultDto>('blueprint_validate_ui_contract', {
+    presetId,
+    graphJson,
   });
 }

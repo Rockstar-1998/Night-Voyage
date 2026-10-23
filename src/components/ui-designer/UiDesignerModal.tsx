@@ -717,6 +717,32 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
                   </Show>
                 </div>
               </div>
+              <Show when={current()}>
+                {(layout) => {
+                  const reqStats = Object.keys(layout().requiredDataInterface?.requiredStats ?? {});
+                  const reqFlags = layout().requiredDataInterface?.requiredFlags ?? [];
+                  const reqInv = layout().requiredDataInterface?.requiredInventory ?? false;
+                  return (
+                    <div class="border-b border-white/10 p-3 bg-white/2 text-[11px]">
+                      <div class={LABEL}>导出的数据契约 (RequiredDataInterface)</div>
+                      <div class="mt-1 space-y-1 text-mist-solid/80">
+                        <div>
+                          <span class="text-mist-solid/40">必需数值: </span>
+                          <span class="text-accent">{reqStats.length > 0 ? reqStats.join(', ') : '无'}</span>
+                        </div>
+                        <div>
+                          <span class="text-mist-solid/40">必需标志: </span>
+                          <span class="text-purple-300">{reqFlags.length > 0 ? reqFlags.join(', ') : '无'}</span>
+                        </div>
+                        <div>
+                          <span class="text-mist-solid/40">背包依赖: </span>
+                          <span class="text-amber-300">{reqInv ? '是 (需槽位)' : '否'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }}
+              </Show>
               <div class="space-y-2 p-3">
                 <button class="w-full rounded border border-accent/40 px-2 py-1.5 text-[11px] text-accent disabled:opacity-50" disabled={busy()} onClick={() => void save()}>
                   保存布局

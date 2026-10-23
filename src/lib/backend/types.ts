@@ -1187,6 +1187,26 @@ export interface LayoutContainer {
   children?: LayoutNode[];
 }
 
+export interface StatRequirement {
+  type: string;
+  min?: number;
+  max?: number;
+}
+
+export interface RequiredDataInterface {
+  requiredStats: Record<string, StatRequirement>;
+  requiredFlags: string[];
+  requiredInventory: boolean;
+}
+
+export interface ContractValidationResultDto {
+  isValid: boolean;
+  missingStats: string[];
+  missingFlags: string[];
+  missingInventory: boolean;
+  errors: string[];
+}
+
 export interface UILayoutDefinition {
   id: string;
   presetId: number;
@@ -1195,6 +1215,7 @@ export interface UILayoutDefinition {
   theme: string;
   customCss: string;
   rootContainer: LayoutContainer;
+  requiredDataInterface?: RequiredDataInterface;
 }
 
 

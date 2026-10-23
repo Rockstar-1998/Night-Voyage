@@ -662,6 +662,7 @@ export const MobilePresetBlueprintEntry: Component<MobilePresetBlueprintEntryPro
       {(ep) => (
         <BlueprintEditor
           initialGraph={ep().graph}
+          presetId={ep().presetId}
           title={ep().title}
           onSave={handleSaveGraph}
           onBack={handleBackToEntry}

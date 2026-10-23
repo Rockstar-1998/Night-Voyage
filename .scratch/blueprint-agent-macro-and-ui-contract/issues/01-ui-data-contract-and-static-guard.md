@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] UI Designer serializes a `RequiredDataInterface` containing all `stats.*`, `flags.*`, and `inventory` dependencies declared by widgets in the layout.
-- [ ] Backend blueprint compiler implements static contract validation comparing graph data definitions against the UI contract.
-- [ ] Blueprint canvas header renders a reactive status indicator ("Contract Aligned" vs "N Missing Fields").
-- [ ] Missing required attributes or type mismatches trigger structured error lists and disable the Save/Publish button.
-- [ ] Dual-platform coverage: both desktop (`src/`) and mobile (`src-mobile/`) enforce contract verification prior to saving.
+- [x] UI Designer serializes a `RequiredDataInterface` containing all `stats.*`, `flags.*`, and `inventory` dependencies declared by widgets in the layout.
+- [x] Backend blueprint compiler implements static contract validation comparing graph data definitions against the UI contract.
+- [x] Blueprint canvas header renders a reactive status indicator ("Contract Aligned" vs "N Missing Fields").
+- [x] Missing required attributes or type mismatches trigger structured error lists and disable the Save/Publish button.
+- [x] Dual-platform coverage: both desktop (`src/`) and mobile (`src-mobile/`) enforce contract verification prior to saving.

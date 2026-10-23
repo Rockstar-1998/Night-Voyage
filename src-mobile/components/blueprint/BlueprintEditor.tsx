@@ -22,6 +22,7 @@ import {
   Component,
   For,
   Show,
+  createEffect,
   createMemo,
   createSignal,
 } from 'solid-js';
@@ -35,6 +36,10 @@ import type {
   NodeType,
   Position,
 } from '../../../src/lib/blueprint/types';
+import {
+  blueprintValidateUiContract,
+  type ContractValidationResultDto,
+} from '../../../src/lib/backend';
 import {
   clampZoom,
   createNode,
@@ -52,6 +57,8 @@ import { showToast } from '../Toast';
 export interface BlueprintEditorProps {
   /** 初始图（父级加载 / 迁移后传入） */
   initialGraph: BlueprintGraph;
+  /** 预设 ID（用于 UI 数据契约静态校验） */
+  presetId?: number | null;
   /** 保存回调：父级持久化已提交的图 */
   onSave: (graph: BlueprintGraph) => void;
   /** 返回回调（导航返回） */
@@ -96,6 +103,26 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   });
   const [isAddSheetOpen, setIsAddSheetOpen] = createSignal(false);
   const [isDirty, setIsDirty] = createSignal(false);
+  const [contractValidation, setContractValidation] = createSignal<ContractValidationResultDto | null>(null);
+
+  const runContractValidation = async () => {
+    if (!props.presetId) return;
+    try {
+      const json = JSON.stringify(graph());
+      const res = await blueprintValidateUiContract(props.presetId, json);
+      setContractValidation(res);
+    } catch (err) {
+      console.error('Failed to validate UI contract on mobile:', err);
+    }
+  };
+
+  createEffect(() => {
+    // 监听图结构与预设变动
+    const _g = graph();
+    if (props.presetId) {
+      void runContractValidation();
+    }
+  });
 
   // ─── 选中节点（含草稿配置）───
 
@@ -478,6 +505,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
   const handleSaveGraph = () => {
     const g = graph();
+    if (contractValidation() && !contractValidation()!.isValid) {
+      showToast('UI 数据契约未对齐，存在缺失属性，无法保存', 'error');
+      return;
+    }
     // 基本校验：必须有 Start 和 End
     if (!g.nodes.some((n) => n.type === 'start')) {
       showToast('蓝图缺少 Start 节点', 'error');
@@ -528,7 +559,23 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
         <div class="flex-1 min-w-0 flex flex-col">
-          <span class="text-[13px] font-bold text-white truncate">{props.title}</span>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[13px] font-bold text-white truncate">{props.title}</span>
+            <Show when={contractValidation()}>
+              <Show
+                when={contractValidation()!.isValid}
+                fallback={
+                  <span class="shrink-0 text-[9px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 px-1 py-0.2 rounded-full animate-pulse">
+                    缺少字段 ({contractValidation()!.missingStats.length + contractValidation()!.missingFlags.length + (contractValidation()!.missingInventory ? 1 : 0)})
+                  </span>
+                }
+              >
+                <span class="shrink-0 text-[9px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-1 py-0.2 rounded-full">
+                  契约对齐
+                </span>
+              </Show>
+            </Show>
+          </div>
           <span class="text-[10px] text-mist-solid/45">
             {nodeCount()} 节点 · {edgeCount()} 连线{isDirty() ? ' · 未保存' : ''}
           </span>
@@ -569,11 +616,26 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         </button>
         <button
           onClick={handleSaveGraph}
-          class="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-[12px] font-bold active:scale-95 transition-transform shadow-[0_2px_8px_rgba(58,109,140,0.3)]"
+          disabled={contractValidation() !== null && !contractValidation()!.isValid}
+          class={`shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-bold active:scale-95 transition-transform ${
+            contractValidation() && !contractValidation()!.isValid
+              ? 'bg-rose-500/20 text-rose-300/60 border border-rose-500/30 cursor-not-allowed'
+              : 'bg-accent text-white shadow-[0_2px_8px_rgba(58,109,140,0.3)]'
+          }`}
         >
           保存
         </button>
       </header>
+
+      {/* UI 契约错误横幅 */}
+      <Show when={contractValidation() && !contractValidation()!.isValid}>
+        <div class="px-4 py-2 border-b border-rose-500/30 bg-rose-950/40 text-[11px] text-rose-200 shrink-0 z-20">
+          <div class="font-bold text-rose-400 mb-0.5">UI 数据契约未对齐（禁止保存）：</div>
+          <For each={contractValidation()!.errors}>
+            {(err) => <div class="truncate">• {err}</div>}
+          </For>
+        </div>
+      </Show>
 
       {/* 画布 */}
       <div

@@ -365,6 +365,23 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                   使用模拟快照数据进行实时渲染预览（数值不伪造，未命中绑定将显式报错）：
                 </div>
                 <Show when={current()}>
+                  {(lay) => {
+                    const reqStats = Object.keys(lay().requiredDataInterface?.requiredStats ?? {});
+                    const reqFlags = lay().requiredDataInterface?.requiredFlags ?? [];
+                    const reqInv = lay().requiredDataInterface?.requiredInventory ?? false;
+                    return (
+                      <div class="p-3 rounded-xl bg-white/5 border border-white/10 text-xs space-y-1">
+                        <div class="text-[11px] font-bold text-purple-300 uppercase tracking-wider mb-1">
+                          导出的数据契约 (RequiredDataInterface)
+                        </div>
+                        <div class="text-mist-solid/70">必需数值: <span class="text-accent">{reqStats.length > 0 ? reqStats.join(', ') : '无'}</span></div>
+                        <div class="text-mist-solid/70">必需标志: <span class="text-purple-300">{reqFlags.length > 0 ? reqFlags.join(', ') : '无'}</span></div>
+                        <div class="text-mist-solid/70">背包依赖: <span class="text-amber-300">{reqInv ? '是 (需槽位)' : '否'}</span></div>
+                      </div>
+                    );
+                  }}
+                </Show>
+                <Show when={current()}>
                   {(lay) => (
                     <div class="p-4 rounded-2xl border border-white/10 bg-black/40 overflow-x-auto min-h-[220px]">
                       <MobileLayoutTree

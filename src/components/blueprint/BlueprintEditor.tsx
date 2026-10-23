@@ -32,7 +32,7 @@
  *   editor (Task 13) is a separate implementation under `src-mobile/`.
  */
 
-import { Component, Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, For, Show, createEffect, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { ArrowLeft, Eye, FileText, LayoutGrid, Save } from '../../lib/icons';
 import {
@@ -48,9 +48,11 @@ import {
   deriveStructuredOutputDisplayFromGraphJson,
 } from '../../lib/blueprint/types';
 import {
+  blueprintValidateUiContract,
   normalizeBlueprintGraph,
   presetsGet,
   presetsUpdate,
+  type ContractValidationResultDto,
   type CreatePresetPayload,
   type PresetDetail,
 } from '../../lib/backend';
@@ -444,6 +446,29 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
   const [showCompilePreview, setShowCompilePreview] = createSignal(false);
+  const [contractValidation, setContractValidation] = createSignal<ContractValidationResultDto | null>(null);
+
+  const runContractValidation = async () => {
+    const detail = presetDetail();
+    if (!detail) return;
+    try {
+      const json = serializeBlueprintGraph(graph);
+      const result = await blueprintValidateUiContract(detail.preset.id, json);
+      setContractValidation(result);
+    } catch (err) {
+      console.error('Failed to validate UI contract:', err);
+    }
+  };
+
+  createEffect(() => {
+    // Track graph nodes, configs and detail for reactive contract linting
+    const _nodesCount = graph.nodes.length;
+    const _configs = graph.nodes.map((n) => JSON.stringify(n.config)).join('|');
+    const detail = presetDetail();
+    if (detail && !isLoading()) {
+      void runContractValidation();
+    }
+  });
 
   let canvasContainerEl: HTMLDivElement | undefined;
 
@@ -867,6 +892,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       showToast('预设尚未加载完成，无法保存', 'error');
       return;
     }
+    if (contractValidation() && !contractValidation()!.isValid) {
+      showToast('UI 数据契约未对齐，存在缺失属性，无法保存', 'error');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -920,12 +949,31 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             <div class="text-[10px] font-black uppercase tracking-[0.3em] text-mist-solid/25">
               蓝图编辑器
             </div>
-            <div class="text-sm font-bold text-mist-solid truncate">
-              {presetDetail()?.preset.name ?? '加载中…'}
+            <div class="text-sm font-bold text-mist-solid truncate flex items-center gap-1.5">
+              <span>{presetDetail()?.preset.name ?? '加载中…'}</span>
               <Show when={isDirty()}>
-                <span class="ml-2 text-[10px] text-amber-300/90 border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 rounded-full align-middle">
+                <span class="text-[10px] text-amber-300/90 border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 rounded-full align-middle">
                   未保存
                 </span>
+              </Show>
+              <Show when={contractValidation()}>
+                <Show
+                  when={contractValidation()!.isValid}
+                  fallback={
+                    <span
+                      class="text-[10px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 rounded-full align-middle animate-pulse flex items-center gap-1"
+                      title={contractValidation()!.errors.join('\n')}
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                      缺少字段 ({contractValidation()!.missingStats.length + contractValidation()!.missingFlags.length + (contractValidation()!.missingInventory ? 1 : 0)})
+                    </span>
+                  }
+                >
+                  <span class="text-[10px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 rounded-full align-middle flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    契约对齐
+                  </span>
+                </Show>
               </Show>
             </div>
           </div>
@@ -959,8 +1007,19 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </IconButton>
           <IconButton
             onClick={() => void handleSave()}
-            disabled={isLoading() || isSaving() || !presetDetail()}
-            label={isSaving() ? '保存中…' : '保存蓝图'}
+            disabled={
+              isLoading() ||
+              isSaving() ||
+              !presetDetail() ||
+              (contractValidation() !== null && !contractValidation()!.isValid)
+            }
+            label={
+              isSaving()
+                ? '保存中…'
+                : contractValidation() && !contractValidation()!.isValid
+                ? '数据契约未对齐，禁止保存'
+                : '保存蓝图'
+            }
             tone="accent"
             size="sm"
           >
@@ -968,6 +1027,21 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </IconButton>
         </div>
       </header>
+
+      {/* UI Contract Error banner */}
+      <Show when={contractValidation() && !contractValidation()!.isValid}>
+        <div class="px-6 py-2 border-b border-rose-500/30 bg-rose-950/40 text-xs text-rose-200 flex items-start gap-2 flex-shrink-0 z-40">
+          <span class="font-bold text-rose-400 shrink-0">UI 数据契约未对齐：</span>
+          <div class="flex-1 space-y-0.5">
+            <For each={contractValidation()!.errors}>
+              {(err) => <div>• {err}</div>}
+            </For>
+          </div>
+          <span class="text-[10px] text-rose-400/90 shrink-0 border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 rounded">
+            必须在 InitialStateConfig 中声明方可保存
+          </span>
+        </div>
+      </Show>
 
       {/* Error banner */}
       <Show when={error()}>

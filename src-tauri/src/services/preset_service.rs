@@ -252,6 +252,49 @@ impl<'a> PresetService<'a> {
             .as_deref()
             .map(validate_blueprint_graph)
             .transpose()?;
+
+        if let Some(graph_str) = blueprint_graph.as_deref() {
+            if let Ok(graph) = serde_json::from_str::<crate::models::blueprint::BlueprintGraph>(graph_str) {
+                let layout_id_from_node = graph.nodes.iter().find_map(|node| {
+                    if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
+                        if !cfg.layout_id.trim().is_empty() {
+                            Some(cfg.layout_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                let layout_row = if let Some(ref layout_id) = layout_id_from_node {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
+                    )
+                    .bind(layout_id)
+                    .fetch_optional(self.db)
+                    .await
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                };
+
+                if let Some(layout_json) = layout_row {
+                    if let Ok(root_container) = serde_json::from_str::<crate::models::ui_layout::LayoutContainer>(&layout_json) {
+                        let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
+                        root_container.collect_data_interface(&mut interface);
+                        let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
+                        if !validation.is_valid {
+                            return Err(format!(
+                                "UI 数据契约校验失败，无法保存蓝图: {}",
+                                validation.errors.join("; ")
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         let structured_output_display = blueprint_graph
             .as_deref()
             .and_then(crate::models::blueprint::derive_blueprint_display_config)
@@ -355,6 +398,56 @@ impl<'a> PresetService<'a> {
             .as_deref()
             .map(validate_blueprint_graph)
             .transpose()?;
+
+        if let Some(graph_str) = blueprint_graph.as_deref() {
+            if let Ok(graph) = serde_json::from_str::<crate::models::blueprint::BlueprintGraph>(graph_str) {
+                let layout_id_from_node = graph.nodes.iter().find_map(|node| {
+                    if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
+                        if !cfg.layout_id.trim().is_empty() {
+                            Some(cfg.layout_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                let layout_row = if let Some(ref layout_id) = layout_id_from_node {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
+                    )
+                    .bind(layout_id)
+                    .fetch_optional(self.db)
+                    .await
+                    .ok()
+                    .flatten()
+                } else {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
+                    )
+                    .bind(id)
+                    .fetch_optional(self.db)
+                    .await
+                    .ok()
+                    .flatten()
+                };
+
+                if let Some(layout_json) = layout_row {
+                    if let Ok(root_container) = serde_json::from_str::<crate::models::ui_layout::LayoutContainer>(&layout_json) {
+                        let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
+                        root_container.collect_data_interface(&mut interface);
+                        let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
+                        if !validation.is_valid {
+                            return Err(format!(
+                                "UI 数据契约校验失败，无法保存蓝图: {}",
+                                validation.errors.join("; ")
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         let structured_output_display = blueprint_graph
             .as_deref()
             .and_then(crate::models::blueprint::derive_blueprint_display_config)

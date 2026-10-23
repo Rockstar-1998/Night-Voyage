@@ -351,6 +351,17 @@ pub fn derive_blueprint_display_config(blueprint_graph_json: &str) -> Option<Str
     graph.derive_display_config()
 }
 
+/// UI 数据契约静态校验结果 DTO
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContractValidationResultDto {
+    pub is_valid: bool,
+    pub missing_stats: Vec<String>,
+    pub missing_flags: Vec<String>,
+    pub missing_inventory: bool,
+    pub errors: Vec<String>,
+}
+
 /// 蓝图版本号反序列化校验：仅接受 v2 运行时执行架构。
 fn deserialize_blueprint_version<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
