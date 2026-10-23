@@ -1,0 +1,822 @@
+{
+  "schemaVersion": 1,
+  "format": "night-voyage-preset",
+  "exportedAt": 1789549999,
+  "preset": {
+    "name": "Night Voyage 全能核心预设 V3.0 (宏化智能体与契约驱动版)",
+    "description": "V3.0 宏化智能体与契约驱动版：基于首要 UI 数据契约与 UE5 风格宏子图封装，集成全域能力池、最小白名单权限管控、审阅打回流水线与熔断保护机制。全面淘汰 MutexGate 伪智能体反模式。",
+    "category": "官方核心",
+    "temperature": 0.8,
+    "maxOutputTokens": 16384,
+    "topP": 0.95,
+    "topK": 40,
+    "presencePenalty": 0.15,
+    "frequencyPenalty": 0.3,
+    "responseMode": "structured_json",
+    "thinkingEnabled": null,
+    "thinkingBudgetTokens": null,
+    "betaFeatures": null,
+    "structuredOutputSchema": null,
+    "structuredOutputDisplay": "{\"thinking\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":1},\"world_variables\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":6},\"text\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":true,\"order\":2},\"status_bar\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":3},\"todo_list\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":false,\"order\":4},\"plot_summary\":{\"defaultCollapsed\":false,\"hideLabel\":false,\"body\":false,\"order\":7},\"options\":{\"defaultCollapsed\":false,\"hideLabel\":true,\"body\":false,\"order\":5}}",
+    "contextIncludedKeys": null,
+    "blueprintGraph": {
+      "version": 2,
+      "macros": [
+        {
+          "id": "macro_buy_item_rule",
+          "name": "购买校验与结算规则宏",
+          "description": "校验当前信用点是否足以支付商品价格，扣减金币并生成购买回执",
+          "category": "RPG能力",
+          "inputs": [
+            {
+              "id": "pin_in_exec",
+              "name": "In",
+              "pin_type": "Exec"
+            },
+            {
+              "id": "pin_in_cost",
+              "name": "Cost",
+              "pin_type": "Number"
+            },
+            {
+              "id": "pin_in_item_id",
+              "name": "ItemId",
+              "pin_type": "String"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "pin_out_pass",
+              "name": "Pass",
+              "pin_type": "Exec"
+            },
+            {
+              "id": "pin_out_fail",
+              "name": "Fail",
+              "pin_type": "Exec"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "m_in",
+              "type": "macro_inputs",
+              "config": {
+                "pins": [
+                  {
+                    "id": "pin_in_exec",
+                    "name": "In",
+                    "pin_type": "Exec"
+                  },
+                  {
+                    "id": "pin_in_cost",
+                    "name": "Cost",
+                    "pin_type": "Number"
+                  },
+                  {
+                    "id": "pin_in_item_id",
+                    "name": "ItemId",
+                    "pin_type": "String"
+                  }
+                ],
+                "is_locked": false
+              },
+              "position": {
+                "x": 40,
+                "y": 100
+              }
+            },
+            {
+              "id": "m_gate",
+              "type": "condition_gate",
+              "config": {
+                "gate_type": "stats.credits",
+                "expression": "0",
+                "is_locked": false
+              },
+              "position": {
+                "x": 260,
+                "y": 100
+              }
+            },
+            {
+              "id": "m_calc",
+              "type": "calculator",
+              "config": {
+                "calc_mode": "math",
+                "target": "stats.credits",
+                "op": "-",
+                "operand_a": "args.cost",
+                "operand_b": null,
+                "item_def": null,
+                "is_locked": false
+              },
+              "position": {
+                "x": 480,
+                "y": 60
+              }
+            },
+            {
+              "id": "m_ret_pass",
+              "type": "tool_return",
+              "config": {
+                "return_template": "购买成功：已扣除相应信用点并交付道具",
+                "is_blocked": false,
+                "is_locked": false
+              },
+              "position": {
+                "x": 700,
+                "y": 60
+              }
+            },
+            {
+              "id": "m_ret_fail",
+              "type": "tool_return",
+              "config": {
+                "return_template": "购买失败：当前信用点不足",
+                "is_blocked": true,
+                "is_locked": false
+              },
+              "position": {
+                "x": 480,
+                "y": 200
+              }
+            },
+            {
+              "id": "m_out",
+              "type": "macro_outputs",
+              "config": {
+                "pins": [
+                  {
+                    "id": "pin_out_pass",
+                    "name": "Pass",
+                    "pin_type": "Exec"
+                  },
+                  {
+                    "id": "pin_out_fail",
+                    "name": "Fail",
+                    "pin_type": "Exec"
+                  }
+                ],
+                "is_locked": false
+              },
+              "position": {
+                "x": 920,
+                "y": 120
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "me1",
+              "source": "m_in",
+              "source_port": "pin_in_exec",
+              "target": "m_gate",
+              "target_port": "in",
+              "order": 0
+            },
+            {
+              "id": "me2",
+              "source": "m_gate",
+              "source_port": "pass",
+              "target": "m_calc",
+              "target_port": "in",
+              "order": 0
+            },
+            {
+              "id": "me3",
+              "source": "m_calc",
+              "source_port": "out",
+              "target": "m_ret_pass",
+              "target_port": "in",
+              "order": 0
+            },
+            {
+              "id": "me4",
+              "source": "m_ret_pass",
+              "source_port": "out",
+              "target": "m_out",
+              "target_port": "pin_out_pass",
+              "order": 0
+            },
+            {
+              "id": "me5",
+              "source": "m_gate",
+              "source_port": "blocked",
+              "target": "m_ret_fail",
+              "target_port": "in",
+              "order": 0
+            },
+            {
+              "id": "me6",
+              "source": "m_ret_fail",
+              "source_port": "out",
+              "target": "m_out",
+              "target_port": "pin_out_fail",
+              "order": 0
+            }
+          ]
+        }
+      ],
+      "nodes": [
+        {
+          "id": "n_start",
+          "type": "start",
+          "position": {
+            "x": 40,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_core",
+          "type": "prompt",
+          "config": {
+            "identifier": "core_identity",
+            "block_type": "system",
+            "content": [
+              "【Night Voyage 叙事引擎 V3.0】",
+              "你是 Night Voyage 全能核心叙事引擎，拥有主权蓝图拓扑编排、全局工具调用能力与多智能体分镜调度权限。",
+              "本预设已全面接入宏化能力池、UI 数据契约门禁、审阅打回循环与熔断保护机制。"
+            ],
+            "priority": 100,
+            "is_locked": false,
+            "lock_reason": null
+          },
+          "position": {
+            "x": 240,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_const_conv",
+          "type": "constant",
+          "config": {
+            "label": "会话模式",
+            "source": "conversation_type"
+          },
+          "position": {
+            "x": 240,
+            "y": 280
+          }
+        },
+        {
+          "id": "n_branch_conv",
+          "type": "branch",
+          "config": {
+            "label": "单人/多人分支",
+            "cases": [
+              {
+                "match_value": "single",
+                "port": "out_single"
+              },
+              {
+                "match_value": "online",
+                "port": "out_online"
+              }
+            ],
+            "default_port": "out_single"
+          },
+          "position": {
+            "x": 460,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_initial_state",
+          "type": "initial_state_config",
+          "config": {
+            "stats": {
+              "credits": {
+                "initial": 1000,
+                "min": 0
+              },
+              "sanity": {
+                "initial": 85,
+                "min": 0,
+                "max": 100
+              },
+              "hp": {
+                "initial": 100,
+                "min": 0,
+                "max": 100
+              },
+              "mp": {
+                "initial": 50,
+                "min": 0,
+                "max": 50
+              }
+            },
+            "inventory": [
+              {
+                "id": "potion_hp",
+                "name": "生命药水",
+                "count": 2,
+                "unitWeight": 0.5,
+                "unitPrice": 50.0,
+                "icon": null,
+                "properties": {}
+              }
+            ],
+            "flags": {
+              "location": "密斯卡托尼克大学图书馆",
+              "weather": "阴雨",
+              "danger_level": "low"
+            },
+            "is_locked": false
+          },
+          "position": {
+            "x": 700,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_ui_layout",
+          "type": "ui_layout_config",
+          "config": {
+            "layout_id": "rpg_hud_v3",
+            "mount_type": "RightDock",
+            "is_locked": false
+          },
+          "position": {
+            "x": 940,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_buy",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "buy_item",
+            "description": "在商店中购买指定道具并扣减信用点",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"item_id\":{\"type\":\"string\",\"description\":\"要购买的道具标识\"},\"cost\":{\"type\":\"number\",\"description\":\"道具单价（信用点）\"}},\"required\":[\"item_id\",\"cost\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 1160,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_buy_calc",
+          "type": "calculator",
+          "config": {
+            "calc_mode": "math",
+            "target": "stats.credits",
+            "op": "-",
+            "operand_a": "args.cost",
+            "operand_b": null,
+            "item_def": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 1380,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_buy_gate",
+          "type": "condition_gate",
+          "config": {
+            "gate_type": "stats.credits",
+            "expression": "10",
+            "is_locked": false
+          },
+          "position": {
+            "x": 1600,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_buy_ret",
+          "type": "tool_return",
+          "config": {
+            "return_template": "购买成功：已扣除对应信用点并放入背包",
+            "is_blocked": false,
+            "is_locked": false
+          },
+          "position": {
+            "x": 1820,
+            "y": 60
+          }
+        },
+        {
+          "id": "n_tool_buy_fail",
+          "type": "tool_return",
+          "config": {
+            "return_template": "购买失败：信用点不足，无法完成交易",
+            "is_blocked": true,
+            "is_locked": false
+          },
+          "position": {
+            "x": 1820,
+            "y": 160
+          }
+        },
+        {
+          "id": "n_tool_read",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "read_text",
+            "description": "读取工作区变量与前置草稿",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"工作区键名\"}},\"required\":[\"key\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 2040,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_read_ret",
+          "type": "tool_return",
+          "config": {
+            "return_template": "读取工作区内容成功",
+            "is_blocked": false,
+            "is_locked": false
+          },
+          "position": {
+            "x": 2260,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_write",
+          "type": "tool_definition",
+          "config": {
+            "tool_name": "write_text",
+            "description": "向工作区写入文本或阶段草稿",
+            "parameters_schema": "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"工作区键名\"},\"content\":{\"type\":\"string\",\"description\":\"写入的内容文本\"}},\"required\":[\"key\",\"content\"]}",
+            "is_locked": false
+          },
+          "position": {
+            "x": 2480,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_tool_write_ret",
+          "type": "tool_return",
+          "config": {
+            "return_template": "写入工作区内容成功",
+            "is_blocked": false,
+            "is_locked": false
+          },
+          "position": {
+            "x": 2700,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_mode_switch",
+          "type": "agent_mode_switch",
+          "config": {
+            "default_mode": "single",
+            "max_tool_rounds": 5,
+            "is_locked": false
+          },
+          "position": {
+            "x": 2920,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_director",
+          "type": "director_config",
+          "config": {
+            "director_prompt": "你是总导演智能体，负责解析玩家行为并调度槽位出演。",
+            "tools": [
+              "read_text",
+              "inspect_state"
+            ],
+            "tool_permissions": {
+              "allow_all": false,
+              "allowed_tools": [
+                "read_text",
+                "inspect_state"
+              ],
+              "require_approval": []
+            },
+            "is_locked": false
+          },
+          "position": {
+            "x": 3140,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_actor_detective",
+          "type": "actor_definition",
+          "config": {
+            "actor_name": "detective",
+            "persona": "沉着冷静的调查员，专注搜寻现场线索与细节。",
+            "tools": [
+              "read_text",
+              "dice_roll",
+              "check_inventory"
+            ],
+            "tool_permissions": {
+              "allow_all": false,
+              "allowed_tools": [
+                "read_text",
+                "dice_roll",
+                "check_inventory"
+              ],
+              "require_approval": []
+            },
+            "is_locked": false
+          },
+          "position": {
+            "x": 3360,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_pipeline",
+          "type": "scriptwriter_pipeline",
+          "config": {
+            "anchor_tail_chars": 50,
+            "blackout_marker": "【前文背景已锁定】",
+            "stages": [
+              {
+                "stage": "draft",
+                "workspace_key": "draft",
+                "prompt": "展开场景与角色交互初稿，注重环境氛围与动机铺垫。",
+                "tools": [
+                  "read_text",
+                  "write_text"
+                ],
+                "tool_permissions": {
+                  "allow_all": false,
+                  "allowed_tools": [
+                    "read_text",
+                    "write_text"
+                  ],
+                  "require_approval": []
+                }
+              },
+              {
+                "stage": "critic",
+                "workspace_key": "critique",
+                "prompt": "严格审核初稿逻辑、伏笔与节奏。若存在严重缺陷以 [REJECT] 开头打回，否则直接输出合格审阅意见。",
+                "tools": [
+                  "read_text"
+                ],
+                "tool_permissions": {
+                  "allow_all": false,
+                  "allowed_tools": [
+                    "read_text"
+                  ],
+                  "require_approval": []
+                },
+                "reject_target": "draft",
+                "max_loop_count": 2
+              },
+              {
+                "stage": "polish",
+                "workspace_key": "final",
+                "prompt": "综合初稿与审阅批注进行终稿修辞与情节润色，确保行文自然流畅。",
+                "tools": [
+                  "read_text",
+                  "write_text"
+                ],
+                "tool_permissions": {
+                  "allow_all": false,
+                  "allowed_tools": [
+                    "read_text",
+                    "write_text"
+                  ],
+                  "require_approval": []
+                }
+              }
+            ],
+            "is_locked": false
+          },
+          "position": {
+            "x": 3580,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_sampling",
+          "type": "sampling_params_openai",
+          "config": {
+            "temperature": 0.8,
+            "max_tokens": 4096,
+            "top_p": 0.95,
+            "frequency_penalty": 0.3,
+            "presence_penalty": 0.15,
+            "thinking": null,
+            "is_locked": false
+          },
+          "position": {
+            "x": 3800,
+            "y": 100
+          }
+        },
+        {
+          "id": "n_end",
+          "type": "end",
+          "position": {
+            "x": 4020,
+            "y": 100
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_start_to_core",
+          "source": "n_start",
+          "source_port": "out",
+          "target": "n_core",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_const_to_branch",
+          "source": "n_const_conv",
+          "source_port": "out",
+          "target": "n_branch_conv",
+          "target_port": "value",
+          "order": 0
+        },
+        {
+          "id": "e_core_to_branch",
+          "source": "n_core",
+          "source_port": "out",
+          "target": "n_branch_conv",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_branch_single_to_init",
+          "source": "n_branch_conv",
+          "source_port": "out_single",
+          "target": "n_initial_state",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_branch_online_to_init",
+          "source": "n_branch_conv",
+          "source_port": "out_online",
+          "target": "n_initial_state",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_init_to_ui",
+          "source": "n_initial_state",
+          "source_port": "out",
+          "target": "n_ui_layout",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_ui_to_tool_buy",
+          "source": "n_ui_layout",
+          "source_port": "out",
+          "target": "n_tool_buy",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_buy_to_calc",
+          "source": "n_tool_buy",
+          "source_port": "out",
+          "target": "n_tool_buy_calc",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_calc_to_gate",
+          "source": "n_tool_buy_calc",
+          "source_port": "out",
+          "target": "n_tool_buy_gate",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_gate_pass_to_ret",
+          "source": "n_tool_buy_gate",
+          "source_port": "pass",
+          "target": "n_tool_buy_ret",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_gate_blocked_to_fail",
+          "source": "n_tool_buy_gate",
+          "source_port": "blocked",
+          "target": "n_tool_buy_fail",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_buy_ret_to_read",
+          "source": "n_tool_buy_ret",
+          "source_port": "out",
+          "target": "n_tool_read",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_read_to_ret",
+          "source": "n_tool_read",
+          "source_port": "out",
+          "target": "n_tool_read_ret",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_read_ret_to_write",
+          "source": "n_tool_read_ret",
+          "source_port": "out",
+          "target": "n_tool_write",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_write_to_ret",
+          "source": "n_tool_write",
+          "source_port": "out",
+          "target": "n_tool_write_ret",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_write_ret_to_mode",
+          "source": "n_tool_write_ret",
+          "source_port": "out",
+          "target": "n_mode_switch",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_mode_to_director",
+          "source": "n_mode_switch",
+          "source_port": "out",
+          "target": "n_director",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_director_to_actor",
+          "source": "n_director",
+          "source_port": "out",
+          "target": "n_actor_detective",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_actor_to_pipeline",
+          "source": "n_actor_detective",
+          "source_port": "out",
+          "target": "n_pipeline",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_pipeline_to_sampling",
+          "source": "n_pipeline",
+          "source_port": "out",
+          "target": "n_sampling",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_sampling_to_end",
+          "source": "n_sampling",
+          "source_port": "out",
+          "target": "n_end",
+          "target_port": "in",
+          "order": 0
+        }
+      ],
+      "comments": [
+        {
+          "id": "c_macro",
+          "text": "RPG能力规则宏定义与UI契约门禁",
+          "position": {
+            "x": 680,
+            "y": 40
+          },
+          "width": 500,
+          "height": 400
+        },
+        {
+          "id": "c_agents",
+          "text": "多智能体主权编排与审阅打回流水线",
+          "position": {
+            "x": 2900,
+            "y": 40
+          },
+          "width": 900,
+          "height": 400
+        }
+      ]
+    }
+  },
+  "semanticGroups": [],
+  "blocks": [],
+  "stopSequences": [],
+  "providerOverrides": []
+}

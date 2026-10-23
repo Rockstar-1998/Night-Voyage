@@ -806,6 +806,42 @@ impl McpTool for NvBlueprintSave {
         ))
     }
 }
+
+/// 导入完整预设（PortablePresetFile JSON）。
+pub struct NvPresetImport;
+
+#[async_trait]
+impl McpTool for NvPresetImport {
+    fn name(&self) -> &'static str {
+        "nv_preset_import"
+    }
+
+    fn description(&self) -> &'static str {
+        "导入一份符合 PortablePresetFile 标准规范的预设 JSON（包含宏资产、UI 契约、全局能力池与智能体流水线）。"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "payloadJson": { "type": "string", "description": "符合 PortablePresetFile 规范的完整预设 JSON 文本" }
+            },
+            "required": ["payloadJson"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> Result<String, String> {
+        let payload_json = require_str(args, "payloadJson")?;
+        let service = crate::services::preset_service::PresetService::new(&ctx.db);
+        let detail = service.import(payload_json.to_string()).await?;
+        Ok(format!(
+            "已通过 MCP 导入预设: id={} name={} (类别: {})",
+            detail.preset.id, detail.preset.name, detail.preset.category
+        ))
+    }
+}
+
 /// 全部已注册工具。
 pub fn all_tools() -> Vec<Box<dyn McpTool>> {
     let mut tools: Vec<Box<dyn McpTool>> = vec![
@@ -819,6 +855,7 @@ pub fn all_tools() -> Vec<Box<dyn McpTool>> {
         Box::new(NvMessagesList),
         Box::new(NvBlueprintGet),
         Box::new(NvBlueprintSave),
+        Box::new(NvPresetImport),
     ];
     #[cfg(windows)]
     tools.push(Box::new(NvScreenshot));
@@ -865,4 +902,101 @@ pub fn mcp_tool_names() -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use crate::models::blueprint::{BlueprintExecutionContext, BlueprintGraph};
+    use crate::services::blueprint_executor::{
+        execute_blueprint, validate_blueprint_ui_contract,
+    };
+    use crate::models::ui_layout::{RequiredDataInterface, StatRequirement};
+    use std::collections::HashMap;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite::memory:");
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_mcp_delivery_and_validation_of_canonical_v3_preset() {
+        let db = setup_test_db().await;
+        // 1. 读取 V3.0 预设标准产物
+        let preset_path = "D:/data/Night Voyage/测试预设/Night Voyage 全能核心预设 V3.0 (宏化智能体与契约驱动版).nvpreset.json";
+        let preset_raw = std::fs::read_to_string(preset_path).expect("read canonical v3 preset");
+
+        // 2. 导入预设并验证
+        let service = crate::services::preset_service::PresetService::new(&db);
+        let detail = service.import(preset_raw.clone()).await.expect("import canonical v3 preset");
+        assert_eq!(detail.preset.name, "Night Voyage 全能核心预设 V3.0 (宏化智能体与契约驱动版)");
+        assert_eq!(detail.preset.category, "官方核心");
+
+        // 3. 校验蓝图图反序列化与结构完整性
+        let graph_json = detail.preset.blueprint_graph.expect("blueprint graph must exist");
+        let graph: BlueprintGraph = serde_json::from_str(&graph_json).expect("parse v3 graph");
+        assert_eq!(graph.version, 2);
+        assert!(!graph.nodes.is_empty());
+        assert!(!graph.edges.is_empty());
+        assert_eq!(graph.macros.len(), 1);
+
+        // 4. 校验 UI 数据契约静态门禁（Contract Aligned）
+        let mut required_stats = HashMap::new();
+        required_stats.insert("credits".to_string(), StatRequirement {
+            field_type: "number".to_string(),
+            min: Some(0.0),
+            max: None,
+        });
+        required_stats.insert("sanity".to_string(), StatRequirement {
+            field_type: "number".to_string(),
+            min: Some(0.0),
+            max: Some(100.0),
+        });
+        let contract = RequiredDataInterface {
+            required_stats,
+            required_inventory: true,
+            required_flags: vec!["location".to_string()],
+        };
+        let contract_val = validate_blueprint_ui_contract(&graph, &contract);
+        assert!(contract_val.is_valid, "v3 preset must be 100% aligned with UI contract, errors: {:?}", contract_val.errors);
+        assert_eq!(contract_val.missing_stats.len(), 0);
+        assert!(!contract_val.missing_inventory);
+        assert_eq!(contract_val.missing_flags.len(), 0);
+
+        // 5. 校验执行器端到端编译执行（单人会话）
+        let ctx = BlueprintExecutionContext {
+            memory_mode: "legacy".to_string(),
+            conversation_type: "single".to_string(),
+            protocol: "chat_completions".to_string(),
+            gate_selections: HashMap::new(),
+            game_state: None,
+            preset_schemas: HashMap::new(),
+        };
+        let exec_result = execute_blueprint(&graph, &ctx).await.expect("execute v3 blueprint");
+        assert!(!exec_result.blocks.is_empty());
+        assert_eq!(exec_result.blocks[0].identifier, "core_identity");
+        assert!(exec_result.active_ui_layout.is_some());
+        assert_eq!(exec_result.active_ui_layout.unwrap().layout_id, "rpg_hud_v3");
+
+        // 6. 校验执行器端到端编译执行（多人联机会话）
+        let ctx_online = BlueprintExecutionContext {
+            memory_mode: "legacy".to_string(),
+            conversation_type: "online".to_string(),
+            protocol: "chat_completions".to_string(),
+            gate_selections: HashMap::new(),
+            game_state: None,
+            preset_schemas: HashMap::new(),
+        };
+        let exec_online = execute_blueprint(&graph, &ctx_online).await.expect("execute v3 online");
+        assert!(!exec_online.blocks.is_empty());
+    }
 }
