@@ -225,6 +225,9 @@ pub async fn load_blueprint_gates(
             NodeConfig::ActorDefinition(_) => None,
             NodeConfig::UiLayoutConfig(_) => None,
             NodeConfig::InitialStateConfig(_) => None,
+            NodeConfig::MacroInstance(_) => None,
+            NodeConfig::MacroInputs(_) => None,
+            NodeConfig::MacroOutputs(_) => None,
         })
         .collect();
 

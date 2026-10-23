@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Preset and blueprint models define `BlueprintMacro`, `MacroPinDefinition`, and `PinType` (Exec, Number, String, Boolean, Object).
-- [ ] Compiler implements graph inline expansion algorithm replacing `NodeType::MacroInstance` nodes with inlined subgraphs and rewired pin connections.
-- [ ] Type validation checks verify that data pin connections match expected types and disallow incompatible wirings.
-- [ ] Comprehensive unit tests assert macro expansion correctness, pin remapping, and recursive macro cycle rejection.
+- [x] Preset and blueprint models define `BlueprintMacro`, `MacroPinDefinition`, and `PinType` (Exec, Number, String, Boolean, Object).
+- [x] Compiler implements graph inline expansion algorithm replacing `NodeType::MacroInstance` nodes with inlined subgraphs and rewired pin connections.
+- [x] Type validation checks verify that data pin connections match expected types and disallow incompatible wirings.
+- [x] Comprehensive unit tests assert macro expansion correctness, pin remapping, and recursive macro cycle rejection.

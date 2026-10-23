@@ -9,8 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::blueprint::{
     AnthropicSamplingParamsConfig, BlueprintEdge, BlueprintExecutionContext,
-    BlueprintExecutionResult, BlueprintGraph, CompiledBlock, CompiledSamplingParams,
-    ContractValidationResultDto, InvokeSchemaConfig, NodeConfig, OpenAiSamplingParamsConfig,
+    BlueprintExecutionResult, BlueprintGraph, BlueprintMacro, BlueprintNode, CompiledBlock,
+    CompiledSamplingParams, ContractValidationResultDto, InvokeSchemaConfig,
+    MacroPinDefinition, NodeConfig, OpenAiSamplingParamsConfig, PinType,
     SamplingParamsConfig, SchemaFieldConfig, ToolDefinitionConfig, ToolReturnConfig,
 };
 
@@ -101,6 +102,18 @@ pub enum BlueprintError {
     DuplicateActorName(String),
     /// 导演/演员的 tools 引用了图中不存在的 ToolCall 契约。
     ToolReferenceNotFound { owner: String, tool: String },
+    /// 宏实例引用的 macro_id 在宏库中未找到。
+    BlueprintMacroNotFound(String),
+    /// 检测到递归循环引用的宏调用链。
+    RecursiveMacroCycle(String),
+    /// 不兼容的引脚连接。
+    IncompatiblePinTypes {
+        edge_id: String,
+        source_port: String,
+        source_type: PinType,
+        target_port: String,
+        target_type: PinType,
+    },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -213,6 +226,24 @@ impl std::fmt::Display for BlueprintError {
                 f,
                 "`{owner}` 引用了未定义契约「{tool}」——请在蓝图中添加对应 ToolDefinition 链"
             ),
+            Self::BlueprintMacroNotFound(id) => {
+                write!(f, "blueprint macro `{id}` not found in macro library")
+            }
+            Self::RecursiveMacroCycle(cycle) => {
+                write!(f, "recursive macro cycle detected: {cycle}")
+            }
+            Self::IncompatiblePinTypes {
+                edge_id,
+                source_port,
+                source_type,
+                target_port,
+                target_type,
+            } => {
+                write!(
+                    f,
+                    "incompatible pin connection on edge `{edge_id}`: source port `{source_port}` ({source_type:?}) cannot connect to target port `{target_port}` ({target_type:?})"
+                )
+            }
         }
     }
 }
@@ -329,6 +360,8 @@ pub async fn execute_blueprint(
              save the preset to persist the migration"
         );
     }
+
+    working_graph = expand_macros(&working_graph, None)?;
 
     validate_graph(&working_graph)?;
 
@@ -550,6 +583,16 @@ fn traverse(
                 node: node_id.to_string(),
                 node_type: "writer".to_string(),
             });
+        }
+        NodeConfig::MacroInstance(_) => {
+            return Err(BlueprintError::NodeNotFound(format!(
+                "macro_instance node {node_id} should have been inlined prior to execution"
+            )));
+        }
+        NodeConfig::MacroInputs(_) | NodeConfig::MacroOutputs(_) => {
+            return Err(BlueprintError::NodeNotFound(format!(
+                "macro proxy node {node_id} should have been inlined prior to execution"
+            )));
         }
         // 编排资产节点在主流程中是惰性占位：语义由 extract_orchestration_configs
         // 全图扫描读取（与执行流无关），这里只要求它接有出边以保持图连通。
@@ -925,6 +968,12 @@ pub fn validate_blueprint_ui_contract(
     graph: &BlueprintGraph,
     contract: &crate::models::ui_layout::RequiredDataInterface,
 ) -> ContractValidationResultDto {
+    let inlined_graph = if graph.nodes.iter().any(|n| matches!(n.config, NodeConfig::MacroInstance(_))) {
+        expand_macros(graph, None).unwrap_or_else(|_| graph.clone())
+    } else {
+        graph.clone()
+    };
+
     let mut missing_stats = Vec::new();
     let mut missing_flags = Vec::new();
     let mut missing_inventory = false;
@@ -941,7 +990,7 @@ pub fn validate_blueprint_ui_contract(
         };
     }
 
-    let initial_state = graph.nodes.iter().find_map(|node| {
+    let initial_state = inlined_graph.nodes.iter().find_map(|node| {
         if let NodeConfig::InitialStateConfig(cfg) = &node.config {
             Some(cfg)
         } else {
@@ -1013,6 +1062,385 @@ pub fn validate_blueprint_ui_contract(
         missing_inventory,
         errors,
     }
+}
+
+// =========================================================================
+// UE5 Blueprint Macro Engine (Inline Expansion & Pin Typing)
+// =========================================================================
+
+/// 检查宏之间的依赖成环情况（拓扑排序 / 3 色 DFS 检测）。
+fn check_macro_cycles(macro_map: &HashMap<String, &BlueprintMacro>) -> Result<(), BlueprintError> {
+    let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+    for (id, def) in macro_map {
+        for node in &def.nodes {
+            if let NodeConfig::MacroInstance(cfg) = &node.config {
+                if !macro_map.contains_key(&cfg.macro_id) {
+                    return Err(BlueprintError::BlueprintMacroNotFound(cfg.macro_id.clone()));
+                }
+                deps.entry(id.clone()).or_default().push(cfg.macro_id.clone());
+            }
+        }
+    }
+
+    let mut state: HashMap<String, u8> = HashMap::new(); // 0: 未访问, 1: 正在递归访问(灰色), 2: 访问完成(黑色)
+    let mut path: Vec<String> = Vec::new();
+
+    fn dfs(
+        node: &str,
+        deps: &HashMap<String, Vec<String>>,
+        state: &mut HashMap<String, u8>,
+        path: &mut Vec<String>,
+    ) -> Result<(), BlueprintError> {
+        state.insert(node.to_string(), 1);
+        path.push(node.to_string());
+
+        if let Some(neighbors) = deps.get(node) {
+            for next in neighbors {
+                match state.get(next).copied().unwrap_or(0) {
+                    1 => {
+                        path.push(next.clone());
+                        return Err(BlueprintError::RecursiveMacroCycle(path.join(" -> ")));
+                    }
+                    0 => {
+                        dfs(next, deps, state, path)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        path.pop();
+        state.insert(node.to_string(), 2);
+        Ok(())
+    }
+
+    for id in macro_map.keys() {
+        if state.get(id).copied().unwrap_or(0) == 0 {
+            dfs(id, &deps, &mut state, &mut path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// 解析指定节点端口所对应的引脚类型（PinType）。
+fn get_port_pin_type(
+    node: &BlueprintNode,
+    port: &str,
+    is_output: bool,
+    macro_map: &HashMap<String, &BlueprintMacro>,
+) -> Option<PinType> {
+    match &node.config {
+        NodeConfig::MacroInstance(cfg) => {
+            if let Some(m) = macro_map.get(&cfg.macro_id) {
+                if is_output {
+                    m.outputs
+                        .iter()
+                        .find(|p| p.id == port || p.name == port)
+                        .map(|p| p.pin_type)
+                } else {
+                    m.inputs
+                        .iter()
+                        .find(|p| p.id == port || p.name == port)
+                        .map(|p| p.pin_type)
+                }
+            } else {
+                None
+            }
+        }
+        NodeConfig::MacroInputs(cfg) => {
+            if is_output {
+                cfg.pins
+                    .iter()
+                    .find(|p| p.id == port || p.name == port)
+                    .map(|p| p.pin_type)
+            } else {
+                None
+            }
+        }
+        NodeConfig::MacroOutputs(cfg) => {
+            if !is_output {
+                cfg.pins
+                    .iter()
+                    .find(|p| p.id == port || p.name == port)
+                    .map(|p| p.pin_type)
+            } else {
+                None
+            }
+        }
+        _ => {
+            if port == "value" {
+                Some(PinType::Object)
+            } else if port == "in" || port == "out" || port.starts_with("out_") || port.starts_with("in_") {
+                Some(PinType::Exec)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// 校验图以及所有宏内部的引脚连接类型兼容性。
+fn validate_macro_pins(
+    graph: &BlueprintGraph,
+    macro_map: &HashMap<String, &BlueprintMacro>,
+) -> Result<(), BlueprintError> {
+    // 1. 校验顶层主图中的所有连线
+    for edge in &graph.edges {
+        let src = graph.nodes.iter().find(|n| n.id == edge.source);
+        let tgt = graph.nodes.iter().find(|n| n.id == edge.target);
+        if let (Some(s), Some(t)) = (src, tgt) {
+            let st = get_port_pin_type(s, &edge.source_port, true, macro_map);
+            let tt = get_port_pin_type(t, &edge.target_port, false, macro_map);
+            if let (Some(source_type), Some(target_type)) = (st, tt) {
+                if !source_type.is_compatible(&target_type) {
+                    return Err(BlueprintError::IncompatiblePinTypes {
+                        edge_id: edge.id.clone(),
+                        source_port: edge.source_port.clone(),
+                        source_type,
+                        target_port: edge.target_port.clone(),
+                        target_type,
+                    });
+                }
+            }
+        }
+    }
+
+    // 2. 校验每个宏资产内部的连线
+    for m in macro_map.values() {
+        for edge in &m.edges {
+            let src = m.nodes.iter().find(|n| n.id == edge.source);
+            let tgt = m.nodes.iter().find(|n| n.id == edge.target);
+            if let (Some(s), Some(t)) = (src, tgt) {
+                let st = get_port_pin_type(s, &edge.source_port, true, macro_map);
+                let tt = get_port_pin_type(t, &edge.target_port, false, macro_map);
+                if let (Some(source_type), Some(target_type)) = (st, tt) {
+                    if !source_type.is_compatible(&target_type) {
+                        return Err(BlueprintError::IncompatiblePinTypes {
+                            edge_id: edge.id.clone(),
+                            source_port: edge.source_port.clone(),
+                            source_type,
+                            target_port: edge.target_port.clone(),
+                            target_type,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 单个 MacroInstance 节点的内联展开。
+fn inline_single_macro_instance(
+    graph: &mut BlueprintGraph,
+    instance_id: &str,
+    macro_def: &BlueprintMacro,
+) -> Result<(), BlueprintError> {
+    let prefix = format!("m_{instance_id}_");
+
+    // 识别宏内部的 Inputs 代理节点与 Outputs 代理节点
+    let inputs_node = macro_def.nodes.iter().find(|n| {
+        matches!(n.config, NodeConfig::MacroInputs(_))
+            || n.node_type() == crate::models::blueprint::NodeType::MacroInputs
+            || n.id == "inputs"
+            || n.id == "Inputs"
+    });
+
+    let outputs_node = macro_def.nodes.iter().find(|n| {
+        matches!(n.config, NodeConfig::MacroOutputs(_))
+            || n.node_type() == crate::models::blueprint::NodeType::MacroOutputs
+            || n.id == "outputs"
+            || n.id == "Outputs"
+    });
+
+    let inputs_id = inputs_node.map(|n| n.id.as_str());
+    let outputs_id = outputs_node.map(|n| n.id.as_str());
+
+    // 1. 克隆所有非代理的宏内部节点，注入隔离命名空间 ID
+    for node in &macro_def.nodes {
+        if inputs_id == Some(node.id.as_str()) || outputs_id == Some(node.id.as_str()) {
+            continue;
+        }
+        let mut cloned = node.clone();
+        cloned.id = format!("{prefix}{}", node.id);
+        graph.nodes.push(cloned);
+    }
+
+    // 2. 收集连接至此宏实例的所有外部连线
+    let ext_incoming: Vec<BlueprintEdge> = graph
+        .edges
+        .iter()
+        .filter(|e| e.target == instance_id)
+        .cloned()
+        .collect();
+    let ext_outgoing: Vec<BlueprintEdge> = graph
+        .edges
+        .iter()
+        .filter(|e| e.source == instance_id)
+        .cloned()
+        .collect();
+
+    // 3. 重连线表
+    let mut new_edges = Vec::new();
+
+    // 3a. 纯宏内部边（不连接 Inputs 也不连接 Outputs）
+    for edge in &macro_def.edges {
+        let touches_inputs = inputs_id.map_or(false, |id| edge.source == id);
+        let touches_outputs = outputs_id.map_or(false, |id| edge.target == id);
+
+        if !touches_inputs && !touches_outputs {
+            let mut cloned = edge.clone();
+            cloned.id = format!("{prefix}{}", edge.id);
+            cloned.source = format!("{prefix}{}", edge.source);
+            cloned.target = format!("{prefix}{}", edge.target);
+            new_edges.push(cloned);
+        }
+    }
+
+    let pin_matches = |port: &str, pin_id: &str, pins: &[MacroPinDefinition]| -> bool {
+        if port == pin_id {
+            return true;
+        }
+        if let Some(pin) = pins.iter().find(|p| p.id == pin_id || p.name == pin_id) {
+            return port == pin.id || port == pin.name;
+        }
+        if let Some(pin) = pins.iter().find(|p| p.id == port || p.name == port) {
+            return pin_id == pin.id || pin_id == pin.name;
+        }
+        false
+    };
+
+    // 3b. 外部入边：直通给从 inputs_node 发出的宏内部节点
+    for ext_in in &ext_incoming {
+        for internal in &macro_def.edges {
+            let from_inputs = inputs_id.map_or(false, |id| internal.source == id);
+            if from_inputs && pin_matches(&ext_in.target_port, &internal.source_port, &macro_def.inputs) {
+                let to_outputs = outputs_id.map_or(false, |id| internal.target == id);
+                if to_outputs {
+                    // 直通边（从宏 Inputs 直达 Outputs）
+                    for ext_out in &ext_outgoing {
+                        if pin_matches(&ext_out.source_port, &internal.target_port, &macro_def.outputs) {
+                            new_edges.push(BlueprintEdge {
+                                id: format!("{}_{}_{}", ext_in.id, internal.id, ext_out.id),
+                                source: ext_in.source.clone(),
+                                source_port: ext_in.source_port.clone(),
+                                target: ext_out.target.clone(),
+                                target_port: ext_out.target_port.clone(),
+                                order: ext_in.order,
+                            });
+                        }
+                    }
+                } else {
+                    new_edges.push(BlueprintEdge {
+                        id: format!("{}_{}", ext_in.id, internal.id),
+                        source: ext_in.source.clone(),
+                        source_port: ext_in.source_port.clone(),
+                        target: format!("{prefix}{}", internal.target),
+                        target_port: internal.target_port.clone(),
+                        order: ext_in.order,
+                    });
+                }
+            }
+        }
+    }
+
+    // 3c. 外部出边：由连接至 outputs_node 的宏内部节点直接承接
+    for ext_out in &ext_outgoing {
+        for internal in &macro_def.edges {
+            let to_outputs = outputs_id.map_or(false, |id| internal.target == id);
+            let from_inputs = inputs_id.map_or(false, |id| internal.source == id);
+            if to_outputs && !from_inputs && pin_matches(&ext_out.source_port, &internal.target_port, &macro_def.outputs) {
+                new_edges.push(BlueprintEdge {
+                    id: format!("{}_{}", internal.id, ext_out.id),
+                    source: format!("{prefix}{}", internal.source),
+                    source_port: internal.source_port.clone(),
+                    target: ext_out.target.clone(),
+                    target_port: ext_out.target_port.clone(),
+                    order: ext_out.order,
+                });
+            }
+        }
+    }
+
+    // 4. 移除原 MacroInstance 节点及其直接外连边
+    graph.nodes.retain(|n| n.id != instance_id);
+    graph.edges.retain(|e| e.source != instance_id && e.target != instance_id);
+
+    // 5. 挂入重组后的新连线
+    graph.edges.extend(new_edges);
+
+    Ok(())
+}
+
+/// 蓝图宏内联展开引擎（UE5 风格宏内联消除，零运行时调用栈开销）。
+///
+/// 递归/迭代展开图中所有 `MacroInstance` 节点，将其替换为命名空间化的内部子图拓扑，
+/// 并重映射 Exec 与数据引脚连线。
+pub fn expand_macros(
+    graph: &BlueprintGraph,
+    external_macros: Option<&[BlueprintMacro]>,
+) -> Result<BlueprintGraph, BlueprintError> {
+    let mut macro_map: HashMap<String, &BlueprintMacro> = HashMap::new();
+    for m in &graph.macros {
+        macro_map.insert(m.id.clone(), m);
+    }
+    if let Some(ext) = external_macros {
+        for m in ext {
+            macro_map.insert(m.id.clone(), m);
+        }
+    }
+
+    let has_instances = graph
+        .nodes
+        .iter()
+        .any(|n| matches!(n.config, NodeConfig::MacroInstance(_)));
+    if !has_instances {
+        return Ok(graph.clone());
+    }
+
+    // 1. 递归依赖成环检测与未知宏检测
+    check_macro_cycles(&macro_map)?;
+
+    // 2. 引脚类型匹配度校验
+    validate_macro_pins(graph, &macro_map)?;
+
+    // 3. 迭代内联展开
+    let mut result_graph = graph.clone();
+    let max_passes = 100;
+    let mut pass = 0;
+
+    while pass < max_passes {
+        pass += 1;
+        let instance_opt = result_graph.nodes.iter().find_map(|n| {
+            if let NodeConfig::MacroInstance(cfg) = &n.config {
+                Some((n.id.clone(), cfg.macro_id.clone()))
+            } else {
+                None
+            }
+        });
+
+        let (instance_id, macro_id) = match instance_opt {
+            Some(pair) => pair,
+            None => break,
+        };
+
+        let macro_def = match macro_map.get(&macro_id) {
+            Some(m) => *m,
+            None => return Err(BlueprintError::BlueprintMacroNotFound(macro_id)),
+        };
+
+        inline_single_macro_instance(&mut result_graph, &instance_id, macro_def)?;
+    }
+
+    if pass >= max_passes {
+        return Err(BlueprintError::RecursiveMacroCycle(
+            "macro expansion exceeded maximum nesting depth limit of 100".to_string(),
+        ));
+    }
+
+    Ok(result_graph)
 }
 
 /// Find the merge node for a Gate/ModeSwitch: the nearest common descendant
@@ -1707,6 +2135,9 @@ fn evaluate_port(
         | NodeConfig::SamplingParams(_)
         | NodeConfig::SamplingParamsOpenAi(_)
         | NodeConfig::SamplingParamsAnthropic(_)
+        | NodeConfig::MacroInstance(_)
+        | NodeConfig::MacroInputs(_)
+        | NodeConfig::MacroOutputs(_)
         | NodeConfig::Branch(_) => Err(BlueprintError::ValueSourceNotValueNode(
             node_id.to_string(),
         )),
@@ -2072,6 +2503,7 @@ mod tests {
         BlueprintGraph {
             version: 2,
             comments: Vec::new(),
+            macros: Vec::new(),
             nodes,
             edges,
         }
@@ -3541,5 +3973,423 @@ mod tests {
         let res_bad = validate_blueprint_ui_contract(&bad_graph, &contract);
         assert!(!res_bad.is_valid);
         assert!(res_bad.errors.iter().any(|e| e.contains("低于 UI 声明的最小值")));
+    }
+
+    #[test]
+    fn test_macro_inline_expansion_basic() {
+        // Macro: in_proxy (exec_in) -> calc (in -> out) -> out_proxy (exec_out)
+        let macro_def = BlueprintMacro {
+            id: "m_calc".to_string(),
+            name: "Calculator Macro".to_string(),
+            description: "Encapsulated calculation".to_string(),
+            category: "Math".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "exec_in".to_string(),
+                name: "exec_in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "exec_out".to_string(),
+                name: "exec_out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "in_proxy".to_string(),
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "exec_in".to_string(),
+                            name: "exec_in".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "c1".to_string(),
+                    config: NodeConfig::Calculator(crate::models::blueprint::CalculatorConfig {
+                        calc_mode: "math".to_string(),
+                        target: "stats.hp".to_string(),
+                        op: "+".to_string(),
+                        operand_a: "10".to_string(),
+                        operand_b: None,
+                        item_def: None,
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "out_proxy".to_string(),
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "exec_out".to_string(),
+                            name: "exec_out".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                    position: pos(200.0, 0.0),
+                },
+            ],
+            edges: vec![
+                edge("me1", "in_proxy", "exec_in", "c1", "in"),
+                edge("me2", "c1", "out", "out_proxy", "exec_out"),
+            ],
+        };
+
+        // Parent graph: start -> instance -> end
+        let parent_graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst1".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_calc".to_string(),
+                        name: Some("Inst 1".to_string()),
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("e1", "n_start", "out", "inst1", "exec_in"),
+                edge("e2", "inst1", "exec_out", "n_end", "in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_def],
+        };
+
+        let inlined = expand_macros(&parent_graph, None).expect("inline expansion must succeed");
+        // Check nodes
+        assert_eq!(inlined.nodes.len(), 3); // start, m_inst1_c1, end
+        assert!(inlined.nodes.iter().any(|n| n.id == "n_start"));
+        assert!(inlined.nodes.iter().any(|n| n.id == "n_end"));
+        assert!(inlined.nodes.iter().any(|n| n.id == "m_inst1_c1"));
+        assert!(!inlined.nodes.iter().any(|n| n.id == "inst1"));
+        assert!(!inlined.nodes.iter().any(|n| n.id == "in_proxy"));
+        assert!(!inlined.nodes.iter().any(|n| n.id == "out_proxy"));
+
+        // Check edges
+        assert_eq!(inlined.edges.len(), 2);
+        let start_edge = inlined.edges.iter().find(|e| e.source == "n_start").expect("start edge must exist");
+        assert_eq!(start_edge.target, "m_inst1_c1");
+        assert_eq!(start_edge.target_port, "in");
+
+        let calc_edge = inlined.edges.iter().find(|e| e.source == "m_inst1_c1").expect("calc edge must exist");
+        assert_eq!(calc_edge.target, "n_end");
+        assert_eq!(calc_edge.target_port, "in");
+    }
+
+    #[test]
+    fn test_macro_pin_type_validation() {
+        // Macro with Number input and output
+        let macro_num = BlueprintMacro {
+            id: "m_num".to_string(),
+            name: "Num Macro".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "val_in".to_string(),
+                name: "val_in".to_string(),
+                pin_type: PinType::Number,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "val_out".to_string(),
+                name: "val_out".to_string(),
+                pin_type: PinType::Number,
+            }],
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+
+        // Macro with String input
+        let macro_str = BlueprintMacro {
+            id: "m_str".to_string(),
+            name: "Str Macro".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "text_in".to_string(),
+                name: "text_in".to_string(),
+                pin_type: PinType::String,
+            }],
+            outputs: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+
+        // Incompatible: Number output wired to String input
+        let bad_graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_num".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_num".to_string(),
+                        name: None,
+                    }),
+                    position: pos(50.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "inst_str".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_str".to_string(),
+                        name: None,
+                    }),
+                    position: pos(150.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("e_bad", "inst_num", "val_out", "inst_str", "text_in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_num.clone(), macro_str.clone()],
+        };
+
+        let err = expand_macros(&bad_graph, None).expect_err("Number wired to String must fail pin type validation");
+        match err {
+            BlueprintError::IncompatiblePinTypes { source_type, target_type, .. } => {
+                assert_eq!(source_type, PinType::Number);
+                assert_eq!(target_type, PinType::String);
+            }
+            other => panic!("expected IncompatiblePinTypes, got {other:?}"),
+        }
+
+        // Exec wired to Number data pin fails
+        let bad_exec_graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_num".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_num".to_string(),
+                        name: None,
+                    }),
+                    position: pos(50.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("e_bad_exec", "n_start", "out", "inst_num", "val_in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_num.clone()],
+        };
+
+        assert!(matches!(
+            expand_macros(&bad_exec_graph, None),
+            Err(BlueprintError::IncompatiblePinTypes { .. })
+        ));
+    }
+
+    #[test]
+    fn test_macro_recursive_cycle_rejection() {
+        // Macro A instantiates Macro B
+        let macro_a = BlueprintMacro {
+            id: "macro_a".to_string(),
+            name: "A".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            nodes: vec![BlueprintNode {
+                id: "inst_b".to_string(),
+                config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                    macro_id: "macro_b".to_string(),
+                    name: None,
+                }),
+                position: pos(0.0, 0.0),
+            }],
+            edges: Vec::new(),
+        };
+
+        // Macro B instantiates Macro A (cycle: A -> B -> A)
+        let macro_b = BlueprintMacro {
+            id: "macro_b".to_string(),
+            name: "B".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            nodes: vec![BlueprintNode {
+                id: "inst_a".to_string(),
+                config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                    macro_id: "macro_a".to_string(),
+                    name: None,
+                }),
+                position: pos(0.0, 0.0),
+            }],
+            edges: Vec::new(),
+        };
+
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_root".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "macro_a".to_string(),
+                        name: None,
+                    }),
+                    position: pos(0.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("e1", "n_start", "out", "inst_root", "in"),
+                edge("e2", "inst_root", "out", "n_end", "in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_a, macro_b],
+        };
+
+        let err = expand_macros(&graph, None).expect_err("recursive macro cycle must be rejected");
+        match err {
+            BlueprintError::RecursiveMacroCycle(cycle) => {
+                assert!(cycle.contains("macro_a") && cycle.contains("macro_b"));
+            }
+            other => panic!("expected RecursiveMacroCycle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_macro_nested_expansion() {
+        // Inner macro: in -> c_inner -> out
+        let macro_inner = BlueprintMacro {
+            id: "m_inner".to_string(),
+            name: "Inner".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "inputs".to_string(),
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig::default()),
+                    position: pos(0.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "c_inner".to_string(),
+                    config: NodeConfig::Calculator(crate::models::blueprint::CalculatorConfig {
+                        calc_mode: "math".to_string(),
+                        target: "stats.hp".to_string(),
+                        op: "+".to_string(),
+                        operand_a: "5".to_string(),
+                        operand_b: None,
+                        item_def: None,
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "outputs".to_string(),
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig::default()),
+                    position: pos(200.0, 0.0),
+                },
+            ],
+            edges: vec![
+                edge("ie1", "inputs", "in", "c_inner", "in"),
+                edge("ie2", "c_inner", "out", "outputs", "out"),
+            ],
+        };
+
+        // Outer macro: in -> c_outer -> inst_inner -> out
+        let macro_outer = BlueprintMacro {
+            id: "m_outer".to_string(),
+            name: "Outer".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "inputs".to_string(),
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig::default()),
+                    position: pos(0.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "c_outer".to_string(),
+                    config: NodeConfig::Calculator(crate::models::blueprint::CalculatorConfig {
+                        calc_mode: "math".to_string(),
+                        target: "stats.mp".to_string(),
+                        op: "+".to_string(),
+                        operand_a: "10".to_string(),
+                        operand_b: None,
+                        item_def: None,
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "inst_inner".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_inner".to_string(),
+                        name: None,
+                    }),
+                    position: pos(200.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "outputs".to_string(),
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig::default()),
+                    position: pos(300.0, 0.0),
+                },
+            ],
+            edges: vec![
+                edge("oe1", "inputs", "in", "c_outer", "in"),
+                edge("oe2", "c_outer", "out", "inst_inner", "in"),
+                edge("oe3", "inst_inner", "out", "outputs", "out"),
+            ],
+        };
+
+        // Graph instantiates Outer macro: start -> inst_outer -> end
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_outer".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_outer".to_string(),
+                        name: None,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("ge1", "n_start", "out", "inst_outer", "in"),
+                edge("ge2", "inst_outer", "out", "n_end", "in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_inner, macro_outer],
+        };
+
+        let inlined = expand_macros(&graph, None).expect("nested macro inline expansion must succeed");
+        // Verify all MacroInstances are inlined into a flat graph
+        assert!(!inlined.nodes.iter().any(|n| matches!(n.config, NodeConfig::MacroInstance(_))));
+        assert!(inlined.nodes.iter().any(|n| n.id.contains("c_outer")));
+        assert!(inlined.nodes.iter().any(|n| n.id.contains("c_inner")));
+        assert_eq!(inlined.nodes.len(), 4); // start, outer_calc, inner_calc, end
+        assert_eq!(inlined.edges.len(), 3); // start -> outer_calc -> inner_calc -> end
     }
 }

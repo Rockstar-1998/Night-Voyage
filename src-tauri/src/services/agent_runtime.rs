@@ -652,6 +652,7 @@ mod tests {
                 BlueprintEdge { id: "e2".to_string(), source: "n_init".to_string(), source_port: "out".to_string(), target: "n_end".to_string(), target_port: "in".to_string(), order: 0 },
             ],
             comments: vec![],
+            macros: vec![],
         };
 
         let graph_json = serde_json::to_string(&graph).unwrap();

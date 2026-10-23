@@ -66,6 +66,15 @@ pub enum NodeType {
     /// 初始状态配置节点（消除硬编码奇幻 RPG 数值，支持任意流派初始属性、物品与剧情标志位）
     #[serde(rename = "initial_state_config")]
     InitialStateConfig,
+    /// 宏实例节点（UE5 宏调用实例，编译期内联展开）
+    #[serde(rename = "macro_instance")]
+    MacroInstance,
+    /// 宏输入节点（宏子图输入代理节点）
+    #[serde(rename = "macro_inputs", alias = "inputs")]
+    MacroInputs,
+    /// 宏输出节点（宏子图输出代理节点）
+    #[serde(rename = "macro_outputs", alias = "outputs")]
+    MacroOutputs,
 }
 
 /// 蓝图节点配置枚举，承载节点类型判别与对应配置载荷。
@@ -130,6 +139,15 @@ pub enum NodeConfig {
     /// 初始状态配置节点
     #[serde(rename = "initial_state_config")]
     InitialStateConfig(InitialStateConfig),
+    /// 宏实例配置
+    #[serde(rename = "macro_instance")]
+    MacroInstance(MacroInstanceConfig),
+    /// 宏输入代理节点配置
+    #[serde(rename = "macro_inputs", alias = "inputs")]
+    MacroInputs(MacroInputsConfig),
+    /// 宏输出代理节点配置
+    #[serde(rename = "macro_outputs", alias = "outputs")]
+    MacroOutputs(MacroOutputsConfig),
 }
 
 impl NodeConfig {
@@ -164,6 +182,9 @@ impl NodeConfig {
             Self::ActorDefinition(_) => NodeType::ActorDefinition,
             Self::UiLayoutConfig(_) => NodeType::UiLayoutConfig,
             Self::InitialStateConfig(_) => NodeType::InitialStateConfig,
+            Self::MacroInstance(_) => NodeType::MacroInstance,
+            Self::MacroInputs(_) => NodeType::MacroInputs,
+            Self::MacroOutputs(_) => NodeType::MacroOutputs,
         }
     }
 }
@@ -312,6 +333,8 @@ pub struct BlueprintGraph {
     pub edges: Vec<BlueprintEdge>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<BlueprintComment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macros: Vec<BlueprintMacro>,
 }
 
 impl BlueprintGraph {
@@ -756,6 +779,84 @@ pub struct UiLayoutConfig {
 
 fn default_layout_mount() -> String {
     "RightDock".to_string()
+}
+
+/// 引脚数据/控制流类型定义（UE5 风格宏引脚类型）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinType {
+    #[serde(alias = "Exec", alias = "exec")]
+    Exec,
+    #[serde(alias = "Number", alias = "number")]
+    Number,
+    #[serde(alias = "String", alias = "string")]
+    String,
+    #[serde(alias = "Boolean", alias = "boolean", alias = "bool")]
+    Boolean,
+    #[serde(alias = "Object", alias = "object", alias = "any", alias = "Any")]
+    Object,
+}
+
+impl PinType {
+    pub fn is_compatible(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Exec, Self::Exec) => true,
+            (Self::Exec, _) | (_, Self::Exec) => false,
+            (Self::Object, _) | (_, Self::Object) => true,
+            (a, b) => a == b,
+        }
+    }
+}
+
+/// 宏引脚定义
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacroPinDefinition {
+    pub id: String,
+    pub name: String,
+    #[serde(alias = "pinType")]
+    pub pin_type: PinType,
+}
+
+/// 蓝图宏定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlueprintMacro {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub inputs: Vec<MacroPinDefinition>,
+    #[serde(default)]
+    pub outputs: Vec<MacroPinDefinition>,
+    #[serde(default)]
+    pub nodes: Vec<BlueprintNode>,
+    #[serde(default)]
+    pub edges: Vec<BlueprintEdge>,
+}
+
+/// 宏实例配置
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MacroInstanceConfig {
+    #[serde(alias = "macroId")]
+    pub macro_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// 宏输入代理节点配置
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MacroInputsConfig {
+    #[serde(default)]
+    pub pins: Vec<MacroPinDefinition>,
+}
+
+/// 宏输出代理节点配置
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MacroOutputsConfig {
+    #[serde(default)]
+    pub pins: Vec<MacroPinDefinition>,
 }
 
 /// Gate 选项，[`MutexGateConfig`] 与 [`GroupGateConfig`] 共用。

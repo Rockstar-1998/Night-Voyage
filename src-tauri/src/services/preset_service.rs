@@ -758,6 +758,7 @@ mod tests {
         let graph = BlueprintGraph {
             version: 2,
             comments: Vec::new(),
+            macros: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -821,6 +822,7 @@ mod tests {
         let graph = BlueprintGraph {
             version: 2,
             comments: Vec::new(),
+            macros: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -1276,6 +1278,7 @@ mod tests {
         let g = BlueprintGraph {
             version: 2,
             comments: Vec::new(),
+            macros: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
@@ -1415,6 +1418,7 @@ mod tests {
         let g = BlueprintGraph {
             version: 2,
             comments: Vec::new(),
+            macros: Vec::new(),
             nodes: vec![
                 BlueprintNode {
                     id: "n_start".to_string(),
