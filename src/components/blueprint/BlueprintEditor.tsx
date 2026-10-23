@@ -34,12 +34,13 @@
 
 import { Component, For, Show, createEffect, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { ArrowLeft, Eye, FileText, LayoutGrid, Save } from '../../lib/icons';
+import { ArrowLeft, ChevronRight, Eye, FileText, Layers3, LayoutGrid, Save } from '../../lib/icons';
 import {
   NODE_TYPES,
   type BlueprintComment,
   type BlueprintEdge,
   type BlueprintGraph,
+  type BlueprintMacro,
   type BlueprintNode,
   type NodeConfig,
   type NodePositionPatch,
@@ -59,9 +60,16 @@ import {
 import { BlueprintCanvas } from './BlueprintCanvas';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import { NodeSelector } from './NodeSelector';
+import { MacroDrawer } from './MacroDrawer';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
-import { autoLayout, isNodeLocked, type ViewTransform } from './nodeLayout';
+import {
+  autoLayout,
+  isNodeLocked,
+  validateConnection,
+  CONNECTION_REJECT_MESSAGES,
+  type ViewTransform,
+} from './nodeLayout';
 import { BlueprintCompilePreviewModal } from './BlueprintCompilePreviewModal';
 
 // ─── Props ───
@@ -281,6 +289,32 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           is_locked: false,
         },
       };
+    case 'macro_instance':
+      return {
+        type: 'macro_instance',
+        config: {
+          macro_id: '',
+          name: '宏实例',
+        },
+      };
+    case 'macro_inputs':
+      return {
+        type: 'macro_inputs',
+        config: {
+          pins: [
+            { id: 'exec_in', name: 'Exec In', pin_type: 'exec' },
+          ],
+        },
+      };
+    case 'macro_outputs':
+      return {
+        type: 'macro_outputs',
+        config: {
+          pins: [
+            { id: 'exec_out', name: 'Exec Out', pin_type: 'exec' },
+          ],
+        },
+      };
   }
 }
 
@@ -404,6 +438,7 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
     nodes,
     edges: graph.edges,
     comments: graph.comments ?? [],
+    macros: graph.macros ?? [],
   });
 }
 
@@ -447,6 +482,22 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
   const [showCompilePreview, setShowCompilePreview] = createSignal(false);
   const [contractValidation, setContractValidation] = createSignal<ContractValidationResultDto | null>(null);
+  const [activeMacroId, setActiveMacroId] = createSignal<string | null>(null);
+  const [isMacroDrawerOpen, setIsMacroDrawerOpen] = createSignal(false);
+
+  const activeMacro = () => (graph.macros || []).find((m) => m.id === activeMacroId());
+
+  const displayGraph = createMemo<BlueprintGraph>(() => {
+    const macro = activeMacro();
+    if (!macro) return graph;
+    return {
+      version: 2,
+      nodes: macro.nodes || [],
+      edges: macro.edges || [],
+      comments: [],
+      macros: graph.macros || [],
+    };
+  });
 
   const runContractValidation = async () => {
     const detail = presetDetail();
@@ -587,7 +638,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const selectedNode = createMemo<BlueprintNode | null>(() => {
     const id = selectedNodeId();
     if (id == null) return null;
-    return graph.nodes.find((n) => n.id === id) ?? null;
+    return displayGraph().nodes.find((n) => n.id === id) ?? null;
   });
 
   // ─── Load + migrate ───
@@ -685,7 +736,12 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       position: { x: Math.round(position.x), y: Math.round(position.y) },
       ...defaultConfigForType(type),
     } as BlueprintNode;
-    setGraph('nodes', (prev) => [...prev, node]);
+    const mId = activeMacroId();
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'nodes', (prev) => [...(prev || []), node]);
+    } else {
+      setGraph('nodes', (prev) => [...prev, node]);
+    }
     handleNodeSelect(node.id);
     setDirty(true);
   };
@@ -706,7 +762,9 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
    */
   const handleDeleteNodes = (nodeIds: string[]) => {
     const idSet = new Set(nodeIds);
-    const lockedIds = graph.nodes
+    const mId = activeMacroId();
+    const currentNodes = mId ? (activeMacro()?.nodes || []) : graph.nodes;
+    const lockedIds = currentNodes
       .filter((n) => idSet.has(n.id) && isNodeLocked(n))
       .map((n) => n.id);
     const deletable = nodeIds.filter((id) => !lockedIds.includes(id));
@@ -718,10 +776,17 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       showToast(`${lockedIds.length} 个锁定节点未删除（锁定节点不可删除）`, 'warning');
     }
     const deleteSet = new Set(deletable);
-    setGraph('nodes', (prev) => prev.filter((n) => !deleteSet.has(n.id)));
-    setGraph('edges', (prev) =>
-      prev.filter((e) => !deleteSet.has(e.source) && !deleteSet.has(e.target)),
-    );
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'nodes', (prev) => (prev || []).filter((n) => !deleteSet.has(n.id)));
+      setGraph('macros', (m) => m.id === mId, 'edges', (prev) =>
+        (prev || []).filter((e) => !deleteSet.has(e.source) && !deleteSet.has(e.target)),
+      );
+    } else {
+      setGraph('nodes', (prev) => prev.filter((n) => !deleteSet.has(n.id)));
+      setGraph('edges', (prev) =>
+        prev.filter((e) => !deleteSet.has(e.source) && !deleteSet.has(e.target)),
+      );
+    }
     setSelectedNodeIds((prev) => {
       const next = new Set(prev);
       deleteSet.forEach((id) => next.delete(id));
@@ -742,12 +807,24 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   };
 
   const handleUpdateNode = (nodeId: string, updates: Partial<NodeConfig>) => {
-    // NodeConfigPanel always passes a complete { type, config } variant.
     const patch = updates as NodeConfig;
-    setGraph('nodes', (prev) => prev.map((n) => {
-      if (n.id !== nodeId) return n;
-      return { id: n.id, position: n.position, ...patch } as BlueprintNode;
-    }));
+    const mId = activeMacroId();
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'nodes', (prev) => (prev || []).map((n) => {
+        if (n.id !== nodeId) return n;
+        return { id: n.id, position: n.position, ...patch } as BlueprintNode;
+      }));
+      if (updates.type === 'macro_inputs') {
+        setGraph('macros', (m) => m.id === mId, 'inputs', (updates.config as any).pins || []);
+      } else if (updates.type === 'macro_outputs') {
+        setGraph('macros', (m) => m.id === mId, 'outputs', (updates.config as any).pins || []);
+      }
+    } else {
+      setGraph('nodes', (prev) => prev.map((n) => {
+        if (n.id !== nodeId) return n;
+        return { id: n.id, position: n.position, ...patch } as BlueprintNode;
+      }));
+    }
     setDirty(true);
   };
 
@@ -755,24 +832,40 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const handleNodesMoveBatch = (moves: NodePositionPatch[]) => {
     if (moves.length === 0) return;
     const byId = new Map(moves.map((m) => [m.id, m.position]));
-    setGraph('nodes', (prev) => prev.map((n) => {
-      const pos = byId.get(n.id);
-      return pos ? { ...n, position: pos } : n;
-    }));
+    const mId = activeMacroId();
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'nodes', (prev) => (prev || []).map((n) => {
+        const pos = byId.get(n.id);
+        return pos ? { ...n, position: pos } : n;
+      }));
+    } else {
+      setGraph('nodes', (prev) => prev.map((n) => {
+        const pos = byId.get(n.id);
+        return pos ? { ...n, position: pos } : n;
+      }));
+    }
     setDirty(true);
   };
 
   /** Disconnect every edge touching any of the selected nodes. */
   const handleDisconnectNodes = (nodeIds: string[]) => {
     const idSet = new Set(nodeIds);
-    const removed = graph.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target));
+    const mId = activeMacroId();
+    const currentEdges = mId ? (activeMacro()?.edges || []) : graph.edges;
+    const removed = currentEdges.filter((e) => idSet.has(e.source) || idSet.has(e.target));
     if (removed.length === 0) {
       showToast('选中节点没有连线可断开', 'info');
       return;
     }
-    setGraph('edges', (prev) =>
-      prev.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
-    );
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'edges', (prev) =>
+        (prev || []).filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+      );
+    } else {
+      setGraph('edges', (prev) =>
+        prev.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
+      );
+    }
     setDirty(true);
     showToast(`已断开 ${removed.length} 条连线`, 'success');
   };
@@ -829,21 +922,119 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     target: string,
     targetPort: string,
   ) => {
+    const currentGraph = displayGraph();
+    const sourceNode = currentGraph.nodes.find((n) => n.id === source);
+    const targetNode = currentGraph.nodes.find((n) => n.id === target);
+    if (!sourceNode || !targetNode) return;
+    const validation = validateConnection(
+      currentGraph,
+      sourceNode,
+      sourcePort,
+      targetNode,
+      targetPort,
+    );
+    if (!validation.ok) {
+      const msg =
+        validation.reason && CONNECTION_REJECT_MESSAGES[validation.reason]
+          ? CONNECTION_REJECT_MESSAGES[validation.reason]
+          : '无法建立连线';
+      showToast(msg, 'warning');
+      return;
+    }
     const edge: BlueprintEdge = {
       id: generateEdgeId(),
       source,
       source_port: sourcePort,
       target,
       target_port: targetPort,
-      order: 0,
+      order: currentGraph.edges.length,
     };
-    setGraph('edges', (prev) => [...prev, edge]);
+    const mId = activeMacroId();
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'edges', (prev) => [...(prev || []), edge]);
+    } else {
+      setGraph('edges', (prev) => [...prev, edge]);
+    }
     setDirty(true);
   };
 
   const handleEdgeDelete = (edgeId: string) => {
-    setGraph('edges', (prev) => prev.filter((e) => e.id !== edgeId));
+    const mId = activeMacroId();
+    if (mId) {
+      setGraph('macros', (m) => m.id === mId, 'edges', (prev) => (prev || []).filter((e) => e.id !== edgeId));
+    } else {
+      setGraph('edges', (prev) => prev.filter((e) => e.id !== edgeId));
+    }
     setDirty(true);
+  };
+
+  // ─── Macro Library Management ───
+
+  const handleCreateMacro = (name: string, category: string) => {
+    const macroId = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(-3)}`;
+    const inNodeId = `in_${macroId}`;
+    const outNodeId = `out_${macroId}`;
+    const inPin = { id: 'exec_in', name: 'Exec In', pin_type: 'exec' as const };
+    const outPin = { id: 'exec_out', name: 'Exec Out', pin_type: 'exec' as const };
+    const newMacro: BlueprintMacro = {
+      id: macroId,
+      name,
+      description: '',
+      category: category || '通用',
+      inputs: [inPin],
+      outputs: [outPin],
+      nodes: [
+        {
+          id: inNodeId,
+          type: 'macro_inputs',
+          position: { x: 50, y: 200 },
+          config: { pins: [inPin] },
+        },
+        {
+          id: outNodeId,
+          type: 'macro_outputs',
+          position: { x: 550, y: 200 },
+          config: { pins: [outPin] },
+        },
+      ],
+      edges: [],
+    };
+    setGraph('macros', (prev) => [...(prev || []), newMacro]);
+    setDirty(true);
+    setActiveMacroId(macroId);
+    showToast(`已创建宏「${name}」并打开子图`, 'success');
+  };
+
+  const handleDeleteMacro = (macroId: string) => {
+    if (activeMacroId() === macroId) {
+      setActiveMacroId(null);
+    }
+    setGraph('macros', (prev) => (prev || []).filter((m) => m.id !== macroId));
+    setGraph('nodes', (prev) =>
+      prev.filter((n) => !(n.type === 'macro_instance' && n.config.macro_id === macroId)),
+    );
+    setDirty(true);
+    showToast('宏已删除', 'info');
+  };
+
+  const handlePlaceMacroInstance = (macroId: string) => {
+    const macro = (graph.macros || []).find((m) => m.id === macroId);
+    if (!macro) return;
+    setActiveMacroId(null);
+    const pos = computeViewCenterGraph();
+    const instanceNode: BlueprintNode = {
+      id: generateNodeId('macro_instance'),
+      type: 'macro_instance',
+      position: { x: Math.round(pos.x), y: Math.round(pos.y) },
+      config: {
+        macro_id: macro.id,
+        name: macro.name,
+      },
+    };
+    setGraph('nodes', (prev) => [...prev, instanceNode]);
+    handleNodeSelect(instanceNode.id);
+    setDirty(true);
+    showToast(`已将宏「${macro.name}」放入主蓝图`, 'success');
   };
 
   // ─── View transform ───
@@ -951,6 +1142,29 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             </div>
             <div class="text-sm font-bold text-mist-solid truncate flex items-center gap-1.5">
               <span>{presetDetail()?.preset.name ?? '加载中…'}</span>
+              <Show when={activeMacroId()}>
+                <span class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/20 border border-accent/40 text-xs text-white">
+                  <button
+                    type="button"
+                    onClick={() => setActiveMacroId(null)}
+                    class="text-accent hover:underline font-bold"
+                  >
+                    主蓝图
+                  </button>
+                  <ChevronRight class="w-3 h-3 text-mist-muted" />
+                  <span class="flex items-center gap-1 text-white font-medium">
+                    <Layers3 class="w-3 h-3 text-accent" />
+                    宏: {activeMacro()?.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveMacroId(null)}
+                    class="ml-1 px-1.5 py-0.2 rounded bg-white/10 hover:bg-white/20 text-[10px] text-white"
+                  >
+                    退出
+                  </button>
+                </span>
+              </Show>
               <Show when={isDirty()}>
                 <span class="text-[10px] text-amber-300/90 border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 rounded-full align-middle">
                   未保存
@@ -980,6 +1194,15 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         </div>
 
         <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsMacroDrawerOpen(true)}
+            class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-white/10 hover:bg-white/10 text-mist-solid transition-colors"
+            title="查看与管理 UE5 蓝图宏"
+          >
+            <Layers3 class="w-4 h-4 text-accent" />
+            <span>宏库 ({graph.macros?.length || 0})</span>
+          </button>
           <NodeSelector onAddNode={handleAddNode} disabled={isLoading()} />
           <IconButton
             onClick={handleAutoLayout}
@@ -1065,7 +1288,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           ref={(el) => { canvasContainerEl = el; }}
         >
           <BlueprintCanvas
-            graph={graph}
+            graph={displayGraph()}
             viewTransform={viewTransform}
             selectedNodeIds={selectedNodeIds()}
             selectedEdgeId={selectedEdgeId()}
@@ -1087,6 +1310,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             onCommentMove={handleCommentMove}
             onCommentResize={handleCommentResize}
             onUpdateCommentText={handleUpdateCommentText}
+            onOpenMacro={setActiveMacroId}
           />
 
           {/* Shortcut legend (render-only) */}
@@ -1128,6 +1352,8 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
               onUpdate={handleUpdateNode}
               onDelete={handleDeleteNode}
               presetId={props.presetId}
+              macros={graph.macros || []}
+              onOpenMacro={setActiveMacroId}
             />
           </Show>
         </div>
@@ -1141,6 +1367,17 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           onJumpToNode={handleJumpToNode}
         />
       </Show>
+
+      <MacroDrawer
+        isOpen={isMacroDrawerOpen()}
+        onClose={() => setIsMacroDrawerOpen(false)}
+        macros={graph.macros || []}
+        activeMacroId={activeMacroId()}
+        onSelectMacro={setActiveMacroId}
+        onCreateMacro={handleCreateMacro}
+        onDeleteMacro={handleDeleteMacro}
+        onPlaceMacroInstance={handlePlaceMacroInstance}
+      />
     </div>
   );
 };

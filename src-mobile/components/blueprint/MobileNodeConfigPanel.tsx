@@ -23,7 +23,7 @@ import {
   For,
   Show,
 } from 'solid-js';
-import type { BlueprintNode, NodeConfig } from '../../../src/lib/blueprint/types';
+import type { BlueprintMacro, BlueprintNode, NodeConfig } from '../../../src/lib/blueprint/types';
 import { isNodeLocked } from './mobileNodeLayout';
 import { MobileNodeConfigForm } from './MobileNodeConfigForms';
 import { showToast } from '../Toast';
@@ -39,6 +39,10 @@ export interface MobileNodeConfigPanelProps {
   onCancel: (nodeId: string) => void;
   /** 删除节点回调（锁定节点不可删） */
   onDelete: (nodeId: string) => void;
+  /** 宏列表（用于宏实例节点选择宏） */
+  macros?: BlueprintMacro[];
+  /** 跳转进入宏子图回调 */
+  onOpenMacro?: (macroId: string) => void;
 }
 
 // ─── 抽屉高度档位（vh 百分比）───
@@ -228,6 +232,8 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
             <div class="flex-1 overflow-y-auto custom-scrollbar py-4 min-h-0">
               <MobileNodeConfigForm
                 node={node()}
+                macros={props.macros}
+                onOpenMacro={props.onOpenMacro}
                 onConfigChange={(config) => props.onConfigChange(node().id, config)}
               />
             </div>

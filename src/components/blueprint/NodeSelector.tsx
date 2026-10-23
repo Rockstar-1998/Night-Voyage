@@ -60,6 +60,9 @@ export const NODE_LABELS: Record<NodeType, string> = {
   actor_definition: 'Actor Definition（演员定义：persona 与工具）',
   ui_layout_config: 'UI Layout Config（常驻 HUD 模板绑定）',
   initial_state_config: 'Initial State Config（初始状态与背包）',
+  macro_instance: 'Macro Instance（宏调用实例）',
+  macro_inputs: 'Macro Inputs（宏输入引脚代理）',
+  macro_outputs: 'Macro Outputs（宏输出引脚代理）',
 };
 
 const NODE_DESCRIPTIONS: Record<NodeType, string> = {
@@ -91,6 +94,9 @@ const NODE_DESCRIPTIONS: Record<NodeType, string> = {
   director_config: '导演分镜提示词与工具引用列表（产出分镜计划 JSON）',
   actor_definition: '演员定义：actor_name（分镜引用键）、persona（视界内容）、tools（可用契约）',
   initial_state_config: '流派中立初始状态：配置自定义初始数值属性（如 sanity/credits/fuel）、起始物品与剧情标志位',
+  macro_instance: 'UE5 风格宏实例：调用宏资产库中的子图逻辑，编译期展开',
+  macro_inputs: '宏子图输入代理节点：定义进入宏的 Exec 与数据引脚',
+  macro_outputs: '宏子图输出代理节点：定义流出宏的 Exec 与数据引脚',
 };
 
 /// 选择器中展示的节点类型列表：移除已废弃的 role_switch 与 legacy

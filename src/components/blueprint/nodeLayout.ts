@@ -11,8 +11,10 @@
 import type {
   BlueprintEdge,
   BlueprintGraph,
+  BlueprintMacro,
   BlueprintNode,
   NodeType,
+  PinType,
   PortDirection,
   PortKind,
   Position,
@@ -31,6 +33,16 @@ export const BEZIER_MIN_SPAN = 80;
 /** Zoom clamp range. */
 export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 3;
+
+// ─── UE5 Pin Type Colors ───
+
+export const PIN_TYPE_COLORS: Record<PinType, string> = {
+  exec: '#ffffff',
+  number: '#10b981',
+  string: '#ec4899',
+  boolean: '#ef4444',
+  object: '#3b82f6',
+};
 
 // ─── View transform ───
 
@@ -54,6 +66,8 @@ export interface PortDescriptor {
   direction: PortDirection;
   /** 仅 value 引脚携带：当前唯一取值 'string'（会话属性）。 */
   valueType?: 'string';
+  /** UE5 风格引脚类型约束 */
+  pinType?: PinType;
 }
 
 export interface PortLayout {
@@ -64,6 +78,18 @@ export interface PortLayout {
   x: number;
   y: number;
   label: string | null;
+  pinType?: PinType;
+}
+
+/**
+ * 判定引脚类型兼容性（对齐 Rust PinType::is_compatible）。
+ */
+export function isPinTypeCompatible(a?: PinType, b?: PinType): boolean {
+  if (!a || !b) return true;
+  if (a === 'exec' && b === 'exec') return true;
+  if (a === 'exec' || b === 'exec') return false;
+  if (a === 'object' || b === 'object') return true;
+  return a === b;
 }
 
 /**
@@ -124,6 +150,9 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   actor_definition: '#60a5fa',
   ui_layout_config: '#ec4899',
   initial_state_config: '#0ea5e9',
+  macro_instance: '#c084fc',
+  macro_inputs: '#38bdf8',
+  macro_outputs: '#fb923c',
 };
 
 /**
@@ -131,10 +160,40 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
  * Single-output nodes return a single `out` port; Gate/ModeSwitch nodes
  * return one port per option/branch.
  */
-export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
+export function getOutputPorts(
+  node: BlueprintNode,
+  macros?: BlueprintMacro[],
+): PortDescriptor[] {
   switch (node.type) {
+    case 'macro_instance': {
+      const m = macros?.find((it) => it.id === node.config.macro_id);
+      if (!m || !m.outputs || m.outputs.length === 0) {
+        return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
+      }
+      return m.outputs.map((p) => ({
+        port: p.id,
+        label: p.name,
+        kind: p.pin_type === 'exec' ? ('exec' as const) : ('value' as const),
+        direction: 'output' as const,
+        pinType: p.pin_type,
+      }));
+    }
+    case 'macro_inputs': {
+      if (!node.config.pins || node.config.pins.length === 0) {
+        return [{ port: 'exec_in', label: 'In', kind: 'exec', direction: 'output', pinType: 'exec' }];
+      }
+      return node.config.pins.map((p) => ({
+        port: p.id,
+        label: p.name,
+        kind: p.pin_type === 'exec' ? ('exec' as const) : ('value' as const),
+        direction: 'output' as const,
+        pinType: p.pin_type,
+      }));
+    }
+    case 'macro_outputs':
+      return [];
     case 'start':
-      return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
+      return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
     case 'end':
       return [];
     case 'prompt':
@@ -155,11 +214,11 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
-      return [{ port: 'out', label: null, kind: 'exec', direction: 'output' }];
+      return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
     case 'condition_gate':
       return [
-        { port: 'pass', label: node.config.pass_label || '放行', kind: 'bool', direction: 'output' },
-        { port: 'blocked', label: node.config.blocked_label || '拦截', kind: 'bool', direction: 'output' },
+        { port: 'pass', label: node.config.pass_label || '放行', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'blocked', label: node.config.blocked_label || '拦截', kind: 'bool', direction: 'output', pinType: 'exec' },
       ];
     case 'tool_return':
       return [];
@@ -171,22 +230,23 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
         label: opt.label,
         kind: 'bool' as const,
         direction: 'output' as const,
+        pinType: 'exec' as const,
       }));
     case 'mode_switch':
       return [
-        { port: 'out_legacy', label: 'Legacy', kind: 'bool', direction: 'output' },
-        { port: 'out_mem0', label: 'MEM0', kind: 'bool', direction: 'output' },
-        { port: 'out_stateless', label: 'Legacy（旧图兼容）', kind: 'bool', direction: 'output' },
+        { port: 'out_legacy', label: 'Legacy', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'out_mem0', label: 'MEM0', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'out_stateless', label: 'Legacy（旧图兼容）', kind: 'bool', direction: 'output', pinType: 'exec' },
       ];
     case 'role_switch':
       return [
-        { port: 'out_single', label: '单人', kind: 'bool', direction: 'output' },
-        { port: 'out_online', label: '多人', kind: 'bool', direction: 'output' },
+        { port: 'out_single', label: '单人', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'out_online', label: '多人', kind: 'bool', direction: 'output', pinType: 'exec' },
       ];
     // 纯值节点：只有 value 出口，不参与执行流
     case 'constant':
       return [
-        { port: 'out', label: null, kind: 'value', direction: 'output', valueType: 'string' as const },
+        { port: 'out', label: null, kind: 'value', direction: 'output', valueType: 'string' as const, pinType: 'string' },
       ];
     case 'branch':
       // 每个 case 的 port + default_port
@@ -196,12 +256,14 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
           label: c.match_value,
           kind: 'bool' as const,
           direction: 'output' as const,
+          pinType: 'exec' as const,
         })),
         {
           port: node.config.default_port,
           label: '默认',
           kind: 'bool' as const,
           direction: 'output' as const,
+          pinType: 'exec' as const,
         },
       ];
   }
@@ -214,15 +276,45 @@ export function getOutputPorts(node: BlueprintNode): PortDescriptor[] {
  * - Branch 额外需要一条 value 入口（承接 Constant 的值）
  * - 其余节点均为单一 exec 入口
  */
-export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
+export function getInputPorts(
+  node: BlueprintNode,
+  macros?: BlueprintMacro[],
+): PortDescriptor[] {
   switch (node.type) {
+    case 'macro_instance': {
+      const m = macros?.find((it) => it.id === node.config.macro_id);
+      if (!m || !m.inputs || m.inputs.length === 0) {
+        return [{ port: 'in', label: null, kind: 'exec', direction: 'input', pinType: 'exec' }];
+      }
+      return m.inputs.map((p) => ({
+        port: p.id,
+        label: p.name,
+        kind: p.pin_type === 'exec' ? ('exec' as const) : ('value' as const),
+        direction: 'input' as const,
+        pinType: p.pin_type,
+      }));
+    }
+    case 'macro_inputs':
+      return [];
+    case 'macro_outputs': {
+      if (!node.config.pins || node.config.pins.length === 0) {
+        return [{ port: 'exec_out', label: 'Out', kind: 'exec', direction: 'input', pinType: 'exec' }];
+      }
+      return node.config.pins.map((p) => ({
+        port: p.id,
+        label: p.name,
+        kind: p.pin_type === 'exec' ? ('exec' as const) : ('value' as const),
+        direction: 'input' as const,
+        pinType: p.pin_type,
+      }));
+    }
     case 'start':
     case 'constant':
       return [];
     case 'branch':
       return [
-        { port: 'in', label: null, kind: 'exec', direction: 'input' },
-        { port: 'value', label: null, kind: 'value', direction: 'input', valueType: 'string' },
+        { port: 'in', label: null, kind: 'exec', direction: 'input', pinType: 'exec' },
+        { port: 'value', label: null, kind: 'value', direction: 'input', valueType: 'string', pinType: 'string' },
       ];
     case 'end':
     case 'prompt':
@@ -249,16 +341,19 @@ export function getInputPorts(node: BlueprintNode): PortDescriptor[] {
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
-      return [{ port: 'in', label: null, kind: 'exec', direction: 'input' }];
+      return [{ port: 'in', label: null, kind: 'exec', direction: 'input', pinType: 'exec' }];
   }
 }
 
 /**
- * Returns true if the node's `is_locked` flag is set. Only Prompt,
- * SchemaField, and SamplingParams nodes can be locked (per spec).
+ * Returns true if the node's `is_locked` flag is set.
  */
 export function isNodeLocked(node: BlueprintNode): boolean {
   switch (node.type) {
+    case 'macro_instance':
+    case 'macro_inputs':
+    case 'macro_outputs':
+      return false;
     case 'prompt':
       return node.config.is_locked;
     case 'schema_field':
@@ -294,8 +389,19 @@ export function isNodeLocked(node: BlueprintNode): boolean {
   }
 }
 
-function computeNodeTitle(node: BlueprintNode): string {
+function computeNodeTitle(
+  node: BlueprintNode,
+  macros?: BlueprintMacro[],
+): string {
   switch (node.type) {
+    case 'macro_instance': {
+      const m = macros?.find((it) => it.id === node.config.macro_id);
+      return node.config.name || (m ? `Macro: ${m.name}` : `Macro: ${node.config.macro_id || '未绑定'}`);
+    }
+    case 'macro_inputs':
+      return 'Inputs';
+    case 'macro_outputs':
+      return 'Outputs';
     case 'start':
       return 'Start';
     case 'end':
@@ -355,8 +461,19 @@ function computeNodeTitle(node: BlueprintNode): string {
   }
 }
 
-function computeNodeSubtitle(node: BlueprintNode): string | null {
+function computeNodeSubtitle(
+  node: BlueprintNode,
+  macros?: BlueprintMacro[],
+): string | null {
   switch (node.type) {
+    case 'macro_instance': {
+      const m = macros?.find((it) => it.id === node.config.macro_id);
+      return m ? (m.category || '宏实例') : '未指定宏定义';
+    }
+    case 'macro_inputs':
+      return `${node.config.pins?.length || 0} 输入引脚`;
+    case 'macro_outputs':
+      return `${node.config.pins?.length || 0} 输出引脚`;
     case 'initial_state_config':
       return `${Object.keys(node.config.stats || {}).length} 属性, ${(node.config.inventory || []).length} 物品`;
     case 'writer':
@@ -417,9 +534,12 @@ function computeNodeSubtitle(node: BlueprintNode): string | null {
  * Compute the full layout for a node: size, title, port positions.
  * Layout is purely a function of the node's config and is deterministic.
  */
-export function computeNodeLayout(node: BlueprintNode): NodeLayout {
-  const inputs = getInputPorts(node);
-  const outputs = getOutputPorts(node);
+export function computeNodeLayout(
+  node: BlueprintNode,
+  macros?: BlueprintMacro[],
+): NodeLayout {
+  const inputs = getInputPorts(node, macros);
+  const outputs = getOutputPorts(node, macros);
   // 横向布局：输入端口排左边缘一列，输出端口排右边缘一列（按端口数垂直均分）。
   const rows = Math.max(inputs.length, outputs.length, 1);
   const width = NODE_WIDTH;
@@ -439,6 +559,7 @@ export function computeNodeLayout(node: BlueprintNode): NodeLayout {
       x: 0,
       y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
       label: input.label,
+      pinType: input.pinType,
     });
   });
   // 输出端口：右边缘（x=width），垂直居中均分
@@ -450,14 +571,15 @@ export function computeNodeLayout(node: BlueprintNode): NodeLayout {
       x: width,
       y: HEADER_HEIGHT + PORT_ROW_HEIGHT * (i + 0.5),
       label: output.label,
+      pinType: output.pinType,
     });
   });
 
   return {
     width,
     height,
-    title: computeNodeTitle(node),
-    subtitle: computeNodeSubtitle(node),
+    title: computeNodeTitle(node, macros),
+    subtitle: computeNodeSubtitle(node, macros),
     ports,
     accentColor: NODE_ACCENT_COLORS[node.type],
     isLocked: isNodeLocked(node),
@@ -473,8 +595,9 @@ export function computeNodeLayout(node: BlueprintNode): NodeLayout {
 export function getPortPosition(
   node: BlueprintNode,
   port: string,
+  macros?: BlueprintMacro[],
 ): Position | null {
-  const layout = computeNodeLayout(node);
+  const layout = computeNodeLayout(node, macros);
   const p = layout.ports.find((it) => it.port === port);
   if (!p) return null;
   return {
@@ -634,6 +757,7 @@ export type ConnectionRejectReason =
   | 'wrong_direction'
   | 'kind_mismatch'
   | 'value_type_mismatch'
+  | 'pin_type_mismatch'
   | 'cycle'
   | 'duplicate';
 
@@ -651,6 +775,7 @@ export interface ConnectionValidationResult {
  * - Cycles are forbidden (DFS check).
  * - Duplicate edges (same source/port + target/port) are forbidden.
  * - Locked nodes cannot be a connection source or target (SubTask 8.5).
+ * - Pin type matching (Exec with Exec, compatible data pins).
  *
  * Note: per spec, an input port MAY accept multiple incoming edges (used as
  * a merge point for Gate/ModeSwitch branches). We therefore do NOT reject
@@ -663,8 +788,8 @@ export function validateConnection(
   targetNode: BlueprintNode,
   targetPort: string,
 ): ConnectionValidationResult {
-  const sourcePortDesc = getOutputPorts(sourceNode).find((p) => p.port === sourcePort);
-  const targetPortDesc = getInputPorts(targetNode).find((p) => p.port === targetPort);
+  const sourcePortDesc = getOutputPorts(sourceNode, graph.macros).find((p) => p.port === sourcePort);
+  const targetPortDesc = getInputPorts(targetNode, graph.macros).find((p) => p.port === targetPort);
   // 方向校验：起点必须是 output 引脚，终点必须是 input 引脚。
   if (!sourcePortDesc) {
     return { ok: false, reason: 'wrong_direction' };
@@ -675,6 +800,12 @@ export function validateConnection(
   if (sourceNode.id === targetNode.id) {
     return { ok: false, reason: 'self_loop' };
   }
+  // 引脚类型校验 (PinType)
+  if (sourcePortDesc.pinType || targetPortDesc.pinType) {
+    if (!isPinTypeCompatible(sourcePortDesc.pinType, targetPortDesc.pinType)) {
+      return { ok: false, reason: 'pin_type_mismatch' };
+    }
+  }
   // 种类校验：执行流引脚（exec / bool 出口）与值引脚不能互连。
   const sourceIsExecFlow = carriesExecFlow(sourcePortDesc.kind, sourcePortDesc.direction);
   const targetIsExecFlow = carriesExecFlow(targetPortDesc.kind, targetPortDesc.direction);
@@ -682,7 +813,7 @@ export function validateConnection(
     return { ok: false, reason: 'kind_mismatch' };
   }
   // 值引脚还要校验数据类型一致。
-  if (!sourceIsExecFlow && sourcePortDesc.valueType !== targetPortDesc.valueType) {
+  if (!sourceIsExecFlow && sourcePortDesc.valueType && targetPortDesc.valueType && sourcePortDesc.valueType !== targetPortDesc.valueType) {
     return { ok: false, reason: 'value_type_mismatch' };
   }
   // is_locked only restricts content editing, not topology. Locked nodes
@@ -708,6 +839,7 @@ export const CONNECTION_REJECT_MESSAGES: Record<ConnectionRejectReason, string> 
   wrong_direction: '方向错误：连线必须从 output 端口指向 input 端口',
   kind_mismatch: '引脚种类不匹配：执行流引脚与值引脚不能互连',
   value_type_mismatch: '值类型不匹配：当前仅支持 string 值引脚互连',
+  pin_type_mismatch: '引脚类型不兼容：Exec 只能连 Exec，数据引脚类型必须一致（或为 Object）',
   cycle: '禁止环路：该连线会形成环',
   duplicate: '连线已存在：相同起终点的连线已经画过',
 };
@@ -725,8 +857,8 @@ export function getEdgeEndpoints(
   const sourceNode = graph.nodes.find((n) => n.id === edge.source);
   const targetNode = graph.nodes.find((n) => n.id === edge.target);
   if (!sourceNode || !targetNode) return null;
-  const from = getPortPosition(sourceNode, edge.source_port);
-  const to = getPortPosition(targetNode, edge.target_port);
+  const from = getPortPosition(sourceNode, edge.source_port, graph.macros);
+  const to = getPortPosition(targetNode, edge.target_port, graph.macros);
   if (!from || !to) return null;
   return { from, to, sourceNode, targetNode };
 }

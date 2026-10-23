@@ -88,6 +88,15 @@ import { UiLayoutConfigNode } from './nodes/UiLayoutConfigNode';
 import { InitialStateConfigNode } from './nodes/InitialStateConfigNode';
 import { QuerierNode } from './nodes/QuerierNode';
 import { ScriptwriterPipelineNode } from './nodes/ScriptwriterPipelineNode';
+import { MacroPinsNode } from './nodes/MacroPinsNode';
+import { MacroInstanceNode } from './nodes/MacroInstanceNode';
+import type {
+  BlueprintMacro,
+  MacroInstanceConfig,
+  MacroInputsConfig,
+  MacroOutputsConfig,
+  MacroPinDefinition,
+} from '../../lib/blueprint/types';
 
 // ─── Shared prop type for every per-type node config component ───
 
@@ -107,6 +116,8 @@ export interface NodeConfigPanelProps {
   onDelete: (nodeId: string) => void;
   /** 当前预设 id，透传给节点配置组件。 */
   presetId?: number;
+  macros?: BlueprintMacro[];
+  onOpenMacro?: (macroId: string) => void;
 }
 
 // ─── Node type → display label ───
@@ -140,6 +151,9 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   actor_definition: 'Actor Definition',
   ui_layout_config: 'UI Layout Config',
   initial_state_config: 'Initial State Config',
+  macro_instance: 'Macro Instance（宏调用实例）',
+  macro_inputs: 'Macro Inputs（宏输入引脚代理）',
+  macro_outputs: 'Macro Outputs（宏输出引脚代理）',
 };
 
 // ─── Component ───
@@ -596,6 +610,31 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                       onChange={(e) => updateNode(node().id, { tools: e.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean) })}
                     />
                   </div>
+                </Match>
+                <Match when={node().type === 'macro_instance'}>
+                  <MacroInstanceNode
+                    config={node().config as MacroInstanceConfig}
+                    macros={props.macros || []}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateNode(node().id, updates)}
+                    onOpenMacro={props.onOpenMacro}
+                  />
+                </Match>
+                <Match when={node().type === 'macro_inputs'}>
+                  <MacroPinsNode
+                    pins={(node().config as MacroInputsConfig).pins}
+                    isInput={true}
+                    isLocked={isLocked()}
+                    onUpdate={(pins) => updateNode(node().id, { pins })}
+                  />
+                </Match>
+                <Match when={node().type === 'macro_outputs'}>
+                  <MacroPinsNode
+                    pins={(node().config as MacroOutputsConfig).pins}
+                    isInput={false}
+                    isLocked={isLocked()}
+                    onUpdate={(pins) => updateNode(node().id, { pins })}
+                  />
                 </Match>
               </Switch>
             </div>

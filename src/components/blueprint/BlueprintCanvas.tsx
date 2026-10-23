@@ -73,6 +73,7 @@ import {
   isEdgeLocked,
   isNodeLocked,
   HEADER_HEIGHT,
+  PIN_TYPE_COLORS,
   PORT_RADIUS,
   PortLayout,
   validateConnection,
@@ -126,6 +127,8 @@ export interface BlueprintCanvasProps {
   onCommentMove: (commentId: string, position: Position) => void;
   onCommentResize: (commentId: string, width: number, height: number) => void;
   onUpdateCommentText: (commentId: string, text: string) => void;
+  /** Double-click on a macro_instance opens its subgraph editor. */
+  onOpenMacro?: (macroId: string) => void;
 }
 
 // ─── Internal interaction state ───
@@ -228,13 +231,19 @@ interface PortShapeProps {
 const PortShape: Component<PortShapeProps> = (props) => {
   const cx = () => props.port.x;
   const cy = () => props.port.y;
+  const pinColor = () => {
+    if (props.port.pinType) {
+      return PIN_TYPE_COLORS[props.port.pinType] || props.accent;
+    }
+    return props.accent;
+  };
   return (
     <Switch fallback={null}>
       <Match when={props.port.kind === 'exec'}>
         <path
           d={`M ${cx() - 5},${cy() - 5.5} L ${cx() + 5.5},${cy()} L ${cx() - 5},${cy() + 5.5} Z`}
-          fill={props.accent}
-          stroke="white"
+          fill={props.port.pinType === 'exec' ? '#ffffff' : pinColor()}
+          stroke={props.port.pinType === 'exec' ? 'white' : 'white'}
           stroke-width={1.2}
         />
       </Match>
@@ -243,7 +252,7 @@ const PortShape: Component<PortShapeProps> = (props) => {
           cx={cx()}
           cy={cy()}
           r={props.radius}
-          fill={props.accent}
+          fill={pinColor()}
           stroke="white"
           stroke-width={1.5}
         />
@@ -251,7 +260,7 @@ const PortShape: Component<PortShapeProps> = (props) => {
       <Match when={props.port.kind === 'bool'}>
         <path
           d={`M ${cx()},${cy() - 6} L ${cx() + 6},${cy()} L ${cx()},${cy() + 6} L ${cx() - 6},${cy()} Z`}
-          fill={props.accent}
+          fill={pinColor()}
           stroke="white"
           stroke-width={1.2}
         />
@@ -442,7 +451,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
         new Set(
           props.graph.nodes
             .filter((n) => {
-              const l = computeNodeLayout(n);
+              const l = computeNodeLayout(n, props.graph.macros);
               return rectsIntersect(
                 n.position.x, n.position.y, l.width, l.height,
                 x, y, width, height,
@@ -893,13 +902,18 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
           {/* Nodes */}
           <For each={visibleNodes()}>
             {(node) => {
-              const layout = computeNodeLayout(node);
+              const layout = computeNodeLayout(node, props.graph.macros);
               const isSelected = isNodeSelected(node.id);
               const isHidden = props.hiddenNodeIds.has(node.id);
               return (
                 <g
                   transform={`translate(${node.position.x}, ${node.position.y})`}
                   onPointerDown={(e) => handleNodePointerDown(e, node)}
+                  onDblClick={() => {
+                    if (node.type === 'macro_instance') {
+                      props.onOpenMacro?.(node.config.macro_id);
+                    }
+                  }}
                   style={{
                     cursor: layout.isLocked ? 'not-allowed' : 'move',
                   }}
@@ -1095,7 +1109,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
               if (!it || it.kind !== 'connect') return null;
               const sourceNode = props.graph.nodes.find((n) => n.id === it.from.nodeId);
               if (!sourceNode) return null;
-              const fromPos = getPortPosition(sourceNode, it.from.port);
+              const fromPos = getPortPosition(sourceNode, it.from.port, props.graph.macros);
               const toPos = connectMousePos();
               if (!fromPos || !toPos) return null;
               return (

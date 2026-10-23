@@ -49,13 +49,22 @@ import type {
   AgentModeSwitchConfig,
   DirectorConfig,
   ActorDefinition,
+  BlueprintMacro,
+  MacroInstanceConfig,
+  MacroInputsConfig,
+  MacroOutputsConfig,
+  MacroPinDefinition,
+  PinType,
 } from '../../../src/lib/blueprint/types';
+import { PIN_TYPE_COLORS } from './mobileNodeLayout';
 
 // ─── 公共 Props ───
 
 export interface MobileNodeConfigFormProps {
   node: BlueprintNode;
   onConfigChange: (config: NodeConfig) => void;
+  macros?: BlueprintMacro[];
+  onOpenMacro?: (macroId: string) => void;
 }
 
 // ─── 公共输入组件（移动端触摸优化）───
@@ -2146,6 +2155,259 @@ const ActorDefinitionForm: Component<{
   );
 };
 
+// ─── 宏引脚配置表单（macro_inputs / macro_outputs）───
+
+const PIN_TYPES: { value: PinType; label: string }[] = [
+  { value: 'exec', label: 'Exec (执行流)' },
+  { value: 'number', label: 'Number (数值)' },
+  { value: 'string', label: 'String (字符串)' },
+  { value: 'boolean', label: 'Boolean (布尔)' },
+  { value: 'object', label: 'Object / Any (对象/任意)' },
+];
+
+interface MacroPinsFormProps {
+  pins: MacroPinDefinition[];
+  isInput: boolean;
+  onChange: (pins: MacroPinDefinition[]) => void;
+}
+
+const MacroPinsForm: Component<MacroPinsFormProps> = (props) => {
+  const [newPinName, setNewPinName] = createSignal('');
+  const [newPinType, setNewPinType] = createSignal<PinType>('exec');
+
+  const handleAddPin = () => {
+    const name = newPinName().trim();
+    if (!name) return;
+    const id = `pin_${Date.now().toString(36).slice(-4)}_${Math.random().toString(36).slice(-3)}`;
+    const updated = [
+      ...(props.pins || []),
+      {
+        id,
+        name,
+        pin_type: newPinType(),
+      },
+    ];
+    props.onChange(updated);
+    setNewPinName('');
+  };
+
+  const handleRemovePin = (index: number) => {
+    const updated = [...(props.pins || [])];
+    updated.splice(index, 1);
+    props.onChange(updated);
+  };
+
+  const handleUpdatePin = (index: number, patch: Partial<MacroPinDefinition>) => {
+    const updated = [...(props.pins || [])];
+    updated[index] = { ...updated[index], ...patch };
+    props.onChange(updated);
+  };
+
+  return (
+    <div class="px-5 space-y-4">
+      <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+        <h4 class="text-sm font-bold text-white">
+          {props.isInput ? '宏输入代理引脚 (Inputs)' : '宏输出代理引脚 (Outputs)'}
+        </h4>
+        <p class="text-xs text-mist-solid/60 mt-0.5">
+          {props.isInput
+            ? '定义外部调用者传入宏的数据与执行入口'
+            : '定义宏执行完毕后向外传出的数据与执行出口'}
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <label class="text-[13px] font-semibold text-mist-solid/80">已定义引脚</label>
+        <Show
+          when={props.pins && props.pins.length > 0}
+          fallback={<div class="text-xs text-mist-solid/40 italic py-2">暂无引脚定义，请在下方添加</div>}
+        >
+          <div class="space-y-2">
+            <For each={props.pins}>
+              {(pin, idx) => (
+                <div class="p-3 rounded-xl border border-white/10 bg-white/5 space-y-2.5">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 flex-1">
+                      <span
+                        class="w-3 h-3 rounded-full shrink-0"
+                        style={{ 'background-color': PIN_TYPE_COLORS[pin.pin_type] || '#ffffff' }}
+                      />
+                      <input
+                        type="text"
+                        value={pin.name}
+                        onInput={(e) => handleUpdatePin(idx(), { name: e.currentTarget.value })}
+                        class="flex-1 px-3 py-1.5 text-xs rounded-lg bg-black/30 border border-white/10 text-white focus:outline-none focus:border-accent"
+                        placeholder="引脚名称"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePin(idx())}
+                      class="px-2 py-1 rounded-lg text-red-400 bg-red-500/10 text-xs font-medium"
+                    >
+                      删除
+                    </button>
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-mist-solid/60 w-12 shrink-0">类型</span>
+                    <select
+                      value={pin.pin_type}
+                      onChange={(e) => handleUpdatePin(idx(), { pin_type: e.currentTarget.value as PinType })}
+                      class="flex-1 px-3 py-1.5 text-xs rounded-lg bg-black/30 border border-white/10 text-white focus:outline-none focus:border-accent"
+                    >
+                      <For each={PIN_TYPES}>
+                        {(t) => <option value={t.value}>{t.label}</option>}
+                      </For>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+
+      {/* 添加新引脚 */}
+      <div class="p-3 rounded-xl border border-dashed border-white/20 bg-white/5 space-y-3">
+        <span class="text-xs font-bold text-white">添加新引脚</span>
+        <div class="space-y-2">
+          <input
+            type="text"
+            placeholder="引脚名称（如：In / Target / Out）"
+            value={newPinName()}
+            onInput={(e) => setNewPinName(e.currentTarget.value)}
+            class="w-full px-3 py-2 text-xs rounded-xl bg-night-sky border border-white/15 text-white placeholder-mist-solid/30 focus:outline-none focus:border-accent"
+          />
+          <div class="flex items-center gap-2">
+            <select
+              value={newPinType()}
+              onChange={(e) => setNewPinType(e.currentTarget.value as PinType)}
+              class="flex-1 px-3 py-2 text-xs rounded-xl bg-night-sky border border-white/15 text-white focus:outline-none focus:border-accent"
+            >
+              <For each={PIN_TYPES}>
+                {(t) => <option value={t.value}>{t.label}</option>}
+              </For>
+            </select>
+            <button
+              type="button"
+              onClick={handleAddPin}
+              class="px-4 py-2 text-xs font-bold rounded-xl bg-accent text-white active:scale-95 transition-transform"
+            >
+              + 添加
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 宏实例节点配置表单（macro_instance）───
+
+interface MacroInstanceFormProps {
+  config: MacroInstanceConfig;
+  macros?: BlueprintMacro[];
+  onOpenMacro?: (macroId: string) => void;
+  onChange: (config: MacroInstanceConfig) => void;
+}
+
+const MacroInstanceForm: Component<MacroInstanceFormProps> = (props) => {
+  const currentMacro = () => props.macros?.find((m) => m.id === props.config.macro_id);
+
+  return (
+    <div class="px-5 space-y-4">
+      <div>
+        <FieldLabel label="实例显示名称" hint="在画布上显示的别名" />
+        <TextInput
+          value={props.config.name || ''}
+          placeholder={currentMacro()?.name || '宏实例名称'}
+          onInput={(v) => props.onChange({ ...props.config, name: v })}
+        />
+      </div>
+
+      <div>
+        <FieldLabel label="引用宏资产" hint="调用的宏定义" />
+        <select
+          value={props.config.macro_id}
+          onChange={(e) => props.onChange({ ...props.config, macro_id: e.currentTarget.value })}
+          class="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[14px] text-white focus:outline-none focus:border-accent"
+        >
+          <option value="" disabled>选择要调用的宏...</option>
+          <For each={props.macros || []}>
+            {(macro) => (
+              <option value={macro.id}>
+                {macro.name} ({macro.category || '通用'})
+              </option>
+            )}
+          </For>
+        </select>
+      </div>
+
+      <Show when={currentMacro()}>
+        {(macro) => (
+          <div class="p-3.5 rounded-2xl border border-white/10 bg-white/5 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">{macro().name}</span>
+              <button
+                type="button"
+                onClick={() => props.onOpenMacro?.(macro().id)}
+                class="px-3 py-1 text-xs rounded-lg bg-accent/20 text-accent font-semibold active:bg-accent/30"
+              >
+                进入宏子图 &gt;
+              </button>
+            </div>
+
+            <Show when={macro().description}>
+              <p class="text-xs text-mist-solid/60">{macro().description}</p>
+            </Show>
+
+            {/* Inputs preview */}
+            <div>
+              <div class="text-[11px] text-mist-solid/50 mb-1 font-medium">
+                输入引脚 ({macro().inputs?.length || 0}):
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <For each={macro().inputs || []}>
+                  {(pin) => (
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/10 text-[11px] text-white">
+                      <span
+                        class="w-2 h-2 rounded-full"
+                        style={{ 'background-color': PIN_TYPE_COLORS[pin.pin_type] || '#ffffff' }}
+                      />
+                      {pin.name}
+                    </span>
+                  )}
+                </For>
+              </div>
+            </div>
+
+            {/* Outputs preview */}
+            <div>
+              <div class="text-[11px] text-mist-solid/50 mb-1 font-medium">
+                输出引脚 ({macro().outputs?.length || 0}):
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <For each={macro().outputs || []}>
+                  {(pin) => (
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/10 text-[11px] text-white">
+                      <span
+                        class="w-2 h-2 rounded-full"
+                        style={{ 'background-color': PIN_TYPE_COLORS[pin.pin_type] || '#ffffff' }}
+                      />
+                      {pin.name}
+                    </span>
+                  )}
+                </For>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
+    </div>
+  );
+};
+
 // ─── 分发器 ───
 //
 // 使用 <Switch>/<Match> 而非 `switch (node.type) { return <Form /> }`。
@@ -2320,6 +2582,28 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
         <ActorDefinitionForm
           config={props.node.config as ActorDefinition}
           onChange={(c: ActorDefinition) => props.onConfigChange({ type: 'actor_definition', config: c })}
+        />
+      </Match>
+      <Match when={props.node.type === 'macro_inputs'}>
+        <MacroPinsForm
+          pins={(props.node.config as MacroInputsConfig)?.pins || []}
+          isInput={true}
+          onChange={(pins) => props.onConfigChange({ type: 'macro_inputs', config: { pins } })}
+        />
+      </Match>
+      <Match when={props.node.type === 'macro_outputs'}>
+        <MacroPinsForm
+          pins={(props.node.config as MacroOutputsConfig)?.pins || []}
+          isInput={false}
+          onChange={(pins) => props.onConfigChange({ type: 'macro_outputs', config: { pins } })}
+        />
+      </Match>
+      <Match when={props.node.type === 'macro_instance'}>
+        <MacroInstanceForm
+          config={props.node.config as MacroInstanceConfig}
+          macros={props.macros}
+          onOpenMacro={props.onOpenMacro}
+          onChange={(c) => props.onConfigChange({ type: 'macro_instance', config: c })}
         />
       </Match>
     </Switch>
@@ -2534,5 +2818,31 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
       return { type: 'actor_definition', config: { actor_name: '', persona: '', tools: [], is_locked: false } };
     case 'initial_state_config':
       return { type: 'initial_state_config', config: { stats: {}, inventory: [], flags: {}, is_locked: false } };
+    case 'macro_instance':
+      return {
+        type: 'macro_instance',
+        config: {
+          macro_id: '',
+          name: '宏实例',
+        },
+      };
+    case 'macro_inputs':
+      return {
+        type: 'macro_inputs',
+        config: {
+          pins: [
+            { id: 'exec_in', name: 'Exec In', pin_type: 'exec' },
+          ],
+        },
+      };
+    case 'macro_outputs':
+      return {
+        type: 'macro_outputs',
+        config: {
+          pins: [
+            { id: 'exec_out', name: 'Exec Out', pin_type: 'exec' },
+          ],
+        },
+      };
   }
 }

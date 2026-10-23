@@ -67,6 +67,7 @@ import {
   LONG_PRESS_MOVE_TOLERANCE,
   MAX_ZOOM,
   MIN_ZOOM,
+  PIN_TYPE_COLORS,
   PORT_RADIUS,
   PortLayout,
   validateConnection,
@@ -89,13 +90,19 @@ interface PortShapeProps {
 const PortShape: Component<PortShapeProps> = (props) => {
   const cx = () => props.port.x;
   const cy = () => props.port.y;
+  const pinColor = () => {
+    if (props.port.pinType) {
+      return PIN_TYPE_COLORS[props.port.pinType] || props.accent;
+    }
+    return props.accent;
+  };
   return (
     <Switch fallback={null}>
       <Match when={props.port.kind === 'exec'}>
         <path
           d={`M ${cx() - 5},${cy() - 5.5} L ${cx() + 5.5},${cy()} L ${cx() - 5},${cy() + 5.5} Z`}
-          fill={props.accent}
-          stroke="white"
+          fill={props.port.pinType === 'exec' ? '#ffffff' : pinColor()}
+          stroke={props.port.pinType === 'exec' ? 'white' : 'white'}
           stroke-width={1.2}
         />
       </Match>
@@ -104,7 +111,7 @@ const PortShape: Component<PortShapeProps> = (props) => {
           cx={cx()}
           cy={cy()}
           r={props.radius}
-          fill={props.accent}
+          fill={pinColor()}
           stroke="white"
           stroke-width={1.5}
         />
@@ -112,7 +119,7 @@ const PortShape: Component<PortShapeProps> = (props) => {
       <Match when={props.port.kind === 'bool'}>
         <path
           d={`M ${cx()},${cy() - 6} L ${cx() + 6},${cy()} L ${cx()},${cy() + 6} L ${cx() - 6},${cy()} Z`}
-          fill={props.accent}
+          fill={pinColor()}
           stroke="white"
           stroke-width={1.2}
         />
@@ -149,6 +156,8 @@ export interface MobileBlueprintCanvasProps {
   onEdgeDelete: (edgeId: string) => void;
   onGraphPan: (offset: Position) => void;
   onGraphZoom: (zoom: number) => void;
+  /** 点击/双击宏节点进入宏子图 */
+  onOpenMacro?: (macroId: string) => void;
 }
 
 // ─── 交互状态 ───
@@ -558,7 +567,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
         new Set(
           props.graph.nodes
             .filter((n) => {
-              const l = computeNodeLayout(n);
+              const l = computeNodeLayout(n, props.graph.macros);
               return (
                 n.position.x < x + width && n.position.x + l.width > x &&
                 n.position.y < y + height && n.position.y + l.height > y
@@ -1125,12 +1134,17 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
         {/* 节点 */}
         <For each={visibleNodes()}>
           {(node) => {
-            const layout = computeNodeLayout(node);
+            const layout = computeNodeLayout(node, props.graph.macros);
             const isSelected = props.selectedNodeIds.has(node.id) || marqueeNodeIds().has(node.id);
             return (
               <g
                 transform={`translate(${node.position.x}, ${node.position.y})`}
                 onPointerDown={(e) => handleNodePointerDown(e, node)}
+                onClick={() => {
+                  if (node.type === 'macro_instance') {
+                    props.onOpenMacro?.(node.config.macro_id);
+                  }
+                }}
                 style={{
                   cursor: layout.isLocked ? 'not-allowed' : 'move',
                 }}
@@ -1306,7 +1320,7 @@ export const MobileBlueprintCanvas: Component<MobileBlueprintCanvasProps> = (pro
             if (!it || it.kind !== 'connect') return null;
             const sourceNode = props.graph.nodes.find((n) => n.id === it.from.nodeId);
             if (!sourceNode) return null;
-            const fromPos = getPortPosition(sourceNode, it.from.port);
+            const fromPos = getPortPosition(sourceNode, it.from.port, props.graph.macros);
             const toPos = connectCursorPos();
             if (!fromPos || !toPos) return null;
             return (

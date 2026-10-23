@@ -45,6 +45,9 @@ export const NODE_TYPES = [
   'actor_definition',
   'ui_layout_config',
   'initial_state_config',
+  'macro_instance',
+  'macro_inputs',
+  'macro_outputs',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -338,6 +341,40 @@ export interface InitialStateConfig {
   is_locked: boolean;
 }
 
+// ─── UE5-Style Blueprint Macro Models ───
+
+export type PinType = 'exec' | 'number' | 'string' | 'boolean' | 'object';
+
+export interface MacroPinDefinition {
+  id: string;
+  name: string;
+  pin_type: PinType;
+}
+
+export interface MacroInstanceConfig {
+  macro_id: string;
+  name?: string;
+}
+
+export interface MacroInputsConfig {
+  pins: MacroPinDefinition[];
+}
+
+export interface MacroOutputsConfig {
+  pins: MacroPinDefinition[];
+}
+
+export interface BlueprintMacro {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  inputs: MacroPinDefinition[];
+  outputs: MacroPinDefinition[];
+  nodes: BlueprintNode[];
+  edges: BlueprintEdge[];
+}
+
 // ─── Discriminated union: NodeType + Config strong binding ───
 
 export type NodeConfig =
@@ -368,7 +405,10 @@ export type NodeConfig =
   | { type: 'director_config'; config: DirectorConfig }
   | { type: 'actor_definition'; config: ActorDefinition }
   | { type: 'ui_layout_config'; config: UiLayoutConfig }
-  | { type: 'initial_state_config'; config: InitialStateConfig };
+  | { type: 'initial_state_config'; config: InitialStateConfig }
+  | { type: 'macro_instance'; config: MacroInstanceConfig }
+  | { type: 'macro_inputs'; config: MacroInputsConfig }
+  | { type: 'macro_outputs'; config: MacroOutputsConfig };
 
 export type BlueprintNode = NodeConfig & {
   id: string;
@@ -400,6 +440,8 @@ export interface BlueprintGraph {
   edges: BlueprintEdge[];
   /** UE 式注释框列表。可缺省（旧图兼容），加载后统一归一化为数组。 */
   comments?: BlueprintComment[];
+  /** UE5 风格宏资产库定义。 */
+  macros?: BlueprintMacro[];
 }
 
 // ─── Runtime IPC types (camelCase — matches Rust serde camelCase over IPC) ───
