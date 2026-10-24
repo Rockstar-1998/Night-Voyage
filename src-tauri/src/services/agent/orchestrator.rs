@@ -212,10 +212,37 @@ pub async fn execute_dynamic_scriptwriter_pipeline_with_hook<F, Fut, H>(
     user_input: &str,
     scratchpad: &Scratchpad,
     mut call_stage: F,
-    mut on_rejection: H,
+    on_rejection: H,
 ) -> Result<String, String>
 where
     F: FnMut(String, String, String, Scratchpad) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+    H: FnMut(&str, u32, u32, &str),
+{
+    execute_dynamic_scriptwriter_pipeline_with_stage_hook(
+        stages,
+        anchor_tail_chars,
+        blackout_marker,
+        user_input,
+        scratchpad,
+        |_stage_cfg, label, inst, payload, pad| call_stage(label, inst, payload, pad),
+        on_rejection,
+    )
+    .await
+}
+
+/// 动态执行剧本流水线，带完整阶段配置输入（支持按阶段工具权限过滤）与审阅打回钩子。
+pub async fn execute_dynamic_scriptwriter_pipeline_with_stage_hook<F, Fut, H>(
+    stages: &[crate::models::blueprint::ScriptwriterStage],
+    anchor_tail_chars: u32,
+    blackout_marker: &str,
+    user_input: &str,
+    scratchpad: &Scratchpad,
+    mut call_stage: F,
+    mut on_rejection: H,
+) -> Result<String, String>
+where
+    F: FnMut(&crate::models::blueprint::ScriptwriterStage, String, String, String, Scratchpad) -> Fut,
     Fut: Future<Output = Result<String, String>>,
     H: FnMut(&str, u32, u32, &str),
 {
@@ -235,6 +262,7 @@ where
         stage0.stage.trim()
     };
     let draft = call_stage(
+        stage0,
         stage0_label,
         stage0.prompt.clone(),
         user_input.to_string(),
@@ -259,6 +287,7 @@ where
         };
 
         let mut output = call_stage(
+            stage_cfg,
             stage_label.clone(),
             stage_cfg.prompt.clone(),
             prev_output.clone(),
@@ -329,6 +358,7 @@ where
                 output
             );
             let revised_draft = call_stage(
+                target_stage,
                 target_label,
                 target_stage.prompt.clone(),
                 revision_input,
@@ -345,6 +375,7 @@ where
 
             // 再次调用评审阶段
             output = call_stage(
+                stage_cfg,
                 format!("{} (复审 #{})", stage_label, loop_count),
                 stage_cfg.prompt.clone(),
                 prev_output.clone(),
@@ -400,6 +431,7 @@ where
     };
 
     let final_text = call_stage(
+        final_stage,
         final_label,
         final_stage.prompt.clone(),
         refine_user,
@@ -460,17 +492,19 @@ pub async fn run_scriptwriter_pipeline(
     // 实例化本轮纯内存 Scratchpad（全生命周期在内存中流转，零磁盘 I/O）
     let scratchpad = Scratchpad::new();
 
-    let result = execute_dynamic_scriptwriter_pipeline_with_hook(
+    let result = execute_dynamic_scriptwriter_pipeline_with_stage_hook(
         &pipeline_cfg.stages,
         pipeline_cfg.anchor_tail_chars,
         &pipeline_cfg.blackout_marker,
         user_input,
         &scratchpad,
-        |stage_label, instruction, payload, pad| {
+        |stage_cfg, stage_label, instruction, payload, pad| {
             let app = app.clone();
             let db = db.clone();
             let provider = provider.clone();
             let system = system.to_vec();
+            let perms = stage_cfg.tool_permissions.clone();
+            let fallback_tools = stage_cfg.tools.clone();
             async move {
                 stage_call_with_scratchpad(
                     &app,
@@ -484,6 +518,8 @@ pub async fn run_scriptwriter_pipeline(
                     &instruction,
                     &payload,
                     &pad,
+                    perms.as_ref(),
+                    Some(&fallback_tools),
                 )
                 .await
             }
@@ -563,6 +599,7 @@ pub async fn run_scriptwriter_nudge_pass(
 /// 单阶段子角色调用（带纯内存 Scratchpad 注入与原生 read_text/write_text 工具循环）。
 ///
 /// 零磁盘 I/O（spec §1）：不向 SQLite `agent_drafts` 写入任何记录。
+/// 工具权限按 Spec §4 规则过滤：若配置了 `tool_permissions`，仅挂载被允许的工具。
 #[allow(clippy::too_many_arguments)]
 pub async fn stage_call_with_scratchpad(
     app: &AppHandle,
@@ -576,11 +613,35 @@ pub async fn stage_call_with_scratchpad(
     instruction: &str,
     payload: &str,
     scratchpad: &Scratchpad,
+    tool_permissions: Option<&crate::models::blueprint::AgentToolPermissions>,
+    fallback_tools: Option<&[String]>,
 ) -> Result<String, String> {
     let mut stage_system: Vec<String> = system.to_vec();
     stage_system.push(instruction.to_string());
 
-    let tools = native_scratchpad_tools();
+    let all_tools = native_scratchpad_tools();
+    let tools: Vec<crate::llm::LlmToolDefinition> = if let Some(perms) = tool_permissions {
+        if perms.allow_all {
+            all_tools
+        } else {
+            all_tools
+                .into_iter()
+                .filter(|t| perms.is_tool_allowed(&t.name))
+                .collect()
+        }
+    } else if let Some(fb) = fallback_tools {
+        if fb.is_empty() {
+            all_tools
+        } else {
+            all_tools
+                .into_iter()
+                .filter(|t| fb.iter().any(|name| name == &t.name))
+                .collect()
+        }
+    } else {
+        all_tools
+    };
+
     let pad = scratchpad.clone();
     let execute = move |name: String, args_json: String| {
         let pad = pad.clone();
@@ -676,6 +737,8 @@ pub async fn stage_call(
         instruction,
         payload,
         &scratchpad,
+        None,
+        None,
     )
     .await
 }
@@ -1330,5 +1393,50 @@ mod tests {
         assert_eq!(*critic_count.lock().unwrap(), 2);
         assert!(scratchpad.read_text("circuit_breaker_tripped").is_err());
         assert!(final_result.contains("最终定稿"));
+    }
+
+    #[test]
+    fn test_stage_tool_permissions_filtering() {
+        use crate::models::blueprint::AgentToolPermissions;
+
+        let all_tools = native_scratchpad_tools();
+        assert_eq!(all_tools.len(), 2);
+
+        // 1. allow_all = true -> both read_text and write_text
+        let perms_all = AgentToolPermissions {
+            allow_all: true,
+            allowed_tools: vec![],
+            require_approval: vec![],
+        };
+        let filtered_all: Vec<_> = all_tools
+            .iter()
+            .filter(|t| perms_all.is_tool_allowed(&t.name))
+            .collect();
+        assert_eq!(filtered_all.len(), 2);
+
+        // 2. Critic stage with only read_text allowed -> write_text omitted
+        let perms_readonly = AgentToolPermissions {
+            allow_all: false,
+            allowed_tools: vec!["read_text".to_string()],
+            require_approval: vec![],
+        };
+        let filtered_readonly: Vec<_> = all_tools
+            .iter()
+            .filter(|t| perms_readonly.is_tool_allowed(&t.name))
+            .collect();
+        assert_eq!(filtered_readonly.len(), 1);
+        assert_eq!(filtered_readonly[0].name, "read_text");
+
+        // 3. allow_all = false with empty allowed_tools -> 0 tools
+        let perms_none = AgentToolPermissions {
+            allow_all: false,
+            allowed_tools: vec![],
+            require_approval: vec![],
+        };
+        let filtered_none: Vec<_> = all_tools
+            .iter()
+            .filter(|t| perms_none.is_tool_allowed(&t.name))
+            .collect();
+        assert_eq!(filtered_none.len(), 0);
     }
 }

@@ -118,6 +118,30 @@ pub fn parse_director_plan(raw: &str) -> Result<DirectorPlan, String> {
 ///
 /// 导演提示词与演员 persona 来自蓝图 `DirectorConfig` / `ActorDefinition` 节点资产
 /// （D-5：节点缺失 = 显式报错 I2）。演员的 `tools` 声明用于子代理 function-calling。
+/// 依据智能体权限配置解析生效的工具定义列表。
+fn resolve_allowed_tool_definitions(
+    agent: &impl crate::models::blueprint::HasAgentToolPermissions,
+    tool_defs_by_name: &std::collections::HashMap<String, crate::llm::LlmToolDefinition>,
+) -> Vec<crate::llm::LlmToolDefinition> {
+    if let Some(perms) = agent.tool_permissions() {
+        if perms.allow_all {
+            tool_defs_by_name.values().cloned().collect()
+        } else {
+            perms
+                .allowed_tools
+                .iter()
+                .filter_map(|name| tool_defs_by_name.get(name).cloned())
+                .collect()
+        }
+    } else {
+        agent
+            .fallback_tools()
+            .iter()
+            .filter_map(|name| tool_defs_by_name.get(name).cloned())
+            .collect()
+    }
+}
+
 pub async fn run_director_actor_pipeline(
     app: &AppHandle,
     db: &SqlitePool,
@@ -177,23 +201,7 @@ pub async fn run_director_actor_pipeline(
         })
         .collect();
 
-    let director_tools: Vec<crate::llm::LlmToolDefinition> = if let Some(perms) = &director_cfg.tool_permissions {
-        if perms.allow_all {
-            tool_defs_by_name.values().cloned().collect()
-        } else {
-            perms
-                .allowed_tools
-                .iter()
-                .filter_map(|name| tool_defs_by_name.get(name).cloned())
-                .collect()
-        }
-    } else {
-        director_cfg
-            .tools
-            .iter()
-            .filter_map(|name| tool_defs_by_name.get(name).cloned())
-            .collect()
-    };
+    let director_tools = resolve_allowed_tool_definitions(&director_cfg, &tool_defs_by_name);
 
     let schema_json = serde_json::to_string(&director_plan_schema())
         .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}"))?;
@@ -366,25 +374,8 @@ pub async fn run_director_actor_pipeline(
         ));
 
         // 工具循环：蓝图 tools / tool_permissions 非空的演员启用 function-calling 闭环。
-        let actor_tools: Vec<crate::llm::LlmToolDefinition> = actor_def
-            .map(|def| {
-                if let Some(perms) = &def.tool_permissions {
-                    if perms.allow_all {
-                        tool_defs_by_name.values().cloned().collect()
-                    } else {
-                        perms
-                            .allowed_tools
-                            .iter()
-                            .filter_map(|name| tool_defs_by_name.get(name).cloned())
-                            .collect()
-                    }
-                } else {
-                    def.tools
-                        .iter()
-                        .filter_map(|name| tool_defs_by_name.get(name).cloned())
-                        .collect()
-                }
-            })
+        let actor_tools = actor_def
+            .map(|def| resolve_allowed_tool_definitions(def, &tool_defs_by_name))
             .unwrap_or_default();
 
         let execute = {

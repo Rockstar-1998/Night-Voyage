@@ -2,6 +2,7 @@
 // All exports now live in the `backend/` directory modules.
 
 export * from './backend/types';
+export * from './backend/actionBridge';
 export * from './backend/window';
 export * from './backend/conversations';
 export * from './backend/messages';

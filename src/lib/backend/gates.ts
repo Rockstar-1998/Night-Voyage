@@ -163,3 +163,12 @@ export async function blueprintValidateUiContract(
     graphJson,
   });
 }
+
+export interface McpToolNameDto {
+  name: string;
+  description: string;
+}
+
+export async function mcpToolNames(): Promise<McpToolNameDto[]> {
+  return invokeCommand<McpToolNameDto[]>('mcp_tool_names', {});
+}

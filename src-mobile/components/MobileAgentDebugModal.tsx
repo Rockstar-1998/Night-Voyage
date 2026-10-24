@@ -20,7 +20,8 @@ interface TimelineEvent {
   time: string;
   title: string;
   detail: string;
-  status: 'success' | 'blocked' | 'info';
+  status: 'success' | 'blocked' | 'failed' | 'info';
+  kind?: string;
 }
 
 export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (props) => {
@@ -105,6 +106,7 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
         status: (payload.status === 'success' || payload.status === 'blocked' || payload.status === 'failed'
           ? payload.status
           : 'info') as TimelineEvent['status'],
+        kind: typeof payload.kind === 'string' ? payload.kind : undefined,
       };
       setTimeline((prev) => [newEv, ...prev].slice(0, 200));
     });
@@ -298,17 +300,36 @@ export const MobileAgentDebugModal: Component<MobileAgentDebugModalProps> = (pro
                     {(ev) => (
                       <div class="p-3 rounded-lg bg-white/[0.03] border border-white/5 space-y-1">
                         <div class="flex justify-between items-center">
-                          <span
-                            class={`font-bold ${
-                              ev.status === 'success'
-                                ? 'text-emerald-400'
-                                : ev.status === 'blocked'
-                                ? 'text-rose-400'
-                                : 'text-cyan-400'
-                            }`}
-                          >
-                            {ev.title}
-                          </span>
+                          <div class="flex items-center gap-1.5 flex-wrap">
+                            <Show when={ev.kind === 'loop_reject'}>
+                              <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                                审阅打回
+                              </span>
+                            </Show>
+                            <Show when={ev.kind === 'nudge_retry'}>
+                              <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                禁词自纠
+                              </span>
+                            </Show>
+                            <Show when={ev.kind === 'tool_call'}>
+                              <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                工具调用
+                              </span>
+                            </Show>
+                            <span
+                              class={`font-bold ${
+                                ev.status === 'success'
+                                  ? 'text-emerald-400'
+                                  : ev.status === 'blocked'
+                                  ? 'text-rose-400'
+                                  : ev.kind === 'loop_reject'
+                                  ? 'text-amber-400'
+                                  : 'text-cyan-400'
+                              }`}
+                            >
+                              {ev.title}
+                            </span>
+                          </div>
                           <span class="text-[10px] text-mist-solid/40 font-normal">{ev.time}</span>
                         </div>
                         <div class="text-mist-solid/70 font-mono text-[11px] leading-relaxed">{ev.detail}</div>

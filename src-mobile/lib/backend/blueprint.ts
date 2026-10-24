@@ -1,19 +1,33 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface ContractValidationResultDto {
-  is_valid: boolean;
-  missing_stats: string[];
-  missing_inventory: boolean;
-  missing_flags: string[];
+  isValid: boolean;
+  missingStats: string[];
+  missingInventory: boolean;
+  missingFlags: string[];
   errors: string[];
 }
 
+export interface McpToolNameDto {
+  name: string;
+  description: string;
+}
+
 export async function blueprintValidateUiContract(
+  presetId: number,
   graphJson: string,
-  presetId?: number,
 ): Promise<ContractValidationResultDto> {
   return invoke<ContractValidationResultDto>('blueprint_validate_ui_contract', {
-    presetId: presetId ?? 0,
+    presetId,
     graphJson,
   });
+}
+
+export async function mcpToolNames(): Promise<McpToolNameDto[]> {
+  return invoke<McpToolNameDto[]>('mcp_tool_names');
+}
+
+export async function actionBridgeWhitelistGet(): Promise<string[]> {
+  const res = await invoke<{ commands?: string[] } | string[]>('action_bridge_whitelist_get');
+  return Array.isArray(res) ? res : (res?.commands ?? []);
 }

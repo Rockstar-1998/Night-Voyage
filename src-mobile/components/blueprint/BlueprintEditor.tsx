@@ -38,7 +38,9 @@ import type {
   Position,
 } from '../../lib/blueprint/types';
 import {
+  actionBridgeWhitelistGet,
   blueprintValidateUiContract,
+  mcpToolNames,
   type ContractValidationResultDto,
 } from '../../lib/backend/blueprint';
 import {
@@ -133,21 +135,16 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   // 全局能力池（Local Tools + ActionBridge + MCP，Spec §4 & lines 157-158）
   const [mcpTools, setMcpTools] = createSignal<Array<{ name: string; description: string }>>([]);
   const [actionBridgeCommands, setActionBridgeCommands] = createSignal<string[]>([]);
+  const [isContractDrawerOpen, setIsContractDrawerOpen] = createSignal(false);
 
   createEffect(() => {
-    import('@tauri-apps/api/core')
-      .then(({ invoke }) => {
-        invoke<Array<{ name: string; description: string }>>('mcp_tool_names')
-          .then((tools) => setMcpTools(tools || []))
-          .catch(() => {});
-        invoke<{ commands?: string[] } | string[]>('action_bridge_whitelist_get')
-          .then((res) => {
-            const list = Array.isArray(res) ? res : (res?.commands || []);
-            setActionBridgeCommands(list);
-          })
-          .catch(() => {});
-      })
-      .catch(() => {});
+    mcpToolNames()
+      .then((tools) => setMcpTools(tools || []))
+      .catch((err) => console.error('Failed to load mobile MCP tools:', err));
+
+    actionBridgeWhitelistGet()
+      .then((cmds) => setActionBridgeCommands(cmds || []))
+      .catch((err) => console.error('Failed to load mobile ActionBridge whitelist:', err));
   });
 
   const availableTools = createMemo<MobileToolItem[]>(() => {
@@ -203,8 +200,17 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       const json = JSON.stringify(graph());
       const res = await blueprintValidateUiContract(props.presetId, json);
       setContractValidation(res);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to validate UI contract on mobile:', err);
+      const msg = typeof err === 'string' ? err : err?.message || '契约校验接口异常';
+      setContractValidation({
+        isValid: false,
+        missingStats: [],
+        missingFlags: [],
+        missingInventory: false,
+        errors: [`UI 契约校验调用失败: ${msg}`],
+      });
+      showToast(`UI 契约校验失败: ${msg}`, 'error');
     }
   };
 
@@ -839,7 +845,10 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const handleSaveGraph = () => {
     const g = graph();
     if (contractValidation() && !contractValidation()!.isValid) {
-      showToast('UI 数据契约未对齐，存在缺失属性，无法保存', 'error');
+      showToast(
+        contractValidation()!.errors[0] || 'UI 数据契约未对齐，存在缺失属性，无法保存',
+        'error',
+      );
       return;
     }
     // 基本校验：必须有 Start 和 End
@@ -898,14 +907,24 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
               <Show
                 when={contractValidation()!.isValid}
                 fallback={
-                  <span class="shrink-0 text-[9px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 px-1 py-0.2 rounded-full animate-pulse">
+                  <button
+                    type="button"
+                    onClick={() => setIsContractDrawerOpen(true)}
+                    class="shrink-0 text-[9px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 px-1.5 py-0.2 rounded-full animate-pulse flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <span class="w-1 h-1 rounded-full bg-rose-400"></span>
                     缺少字段 ({contractValidation()!.missingStats.length + contractValidation()!.missingFlags.length + (contractValidation()!.missingInventory ? 1 : 0)})
-                  </span>
+                  </button>
                 }
               >
-                <span class="shrink-0 text-[9px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-1 py-0.2 rounded-full">
+                <button
+                  type="button"
+                  onClick={() => setIsContractDrawerOpen(true)}
+                  class="shrink-0 text-[9px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 px-1.5 py-0.2 rounded-full flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                >
+                  <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
                   契约对齐
-                </span>
+                </button>
               </Show>
             </Show>
           </div>
@@ -1140,6 +1159,104 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         onDeleteMacro={handleDeleteMacro}
         onPlaceMacroInstance={handlePlaceMacroInstance}
       />
+
+      {/* 移动端 UI 契约检查器底部抽屉 (Spec Line 102) */}
+      <Show when={isContractDrawerOpen()}>
+        <div class="fixed inset-0 z-[1600] flex flex-col justify-end animate-fade-in">
+          <div
+            class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setIsContractDrawerOpen(false)}
+          />
+          <div class="relative w-full max-h-[80dvh] bg-xuanqing rounded-t-3xl border-t border-white/10 shadow-2xl flex flex-col safe-area-bottom pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div class="w-full flex justify-center pt-3 pb-1">
+              <div class="w-12 h-1.5 bg-white/20 rounded-full" />
+            </div>
+            <div class="px-5 pt-2 pb-3 border-b border-white/5 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class={`w-2.5 h-2.5 rounded-full ${contractValidation()?.isValid ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <h3 class="text-[15px] font-bold text-white">UI 契约检查器 (Inspector)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsContractDrawerOpen(false)}
+                class="text-[12px] text-mist-solid/60 px-2.5 py-1 rounded bg-white/5"
+              >
+                关闭
+              </button>
+            </div>
+            <div class="p-5 overflow-y-auto space-y-3.5 text-xs">
+              <Show
+                when={contractValidation() && !contractValidation()!.isValid}
+                fallback={
+                  <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                    <div class="font-bold mb-0.5">✅ 契约已完整对齐</div>
+                    <p class="text-[11px] text-emerald-400/80">当前蓝图完全满足 UI 布局所需的全部属性与标志位。</p>
+                  </div>
+                }
+              >
+                <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                  <div class="font-bold">⚠️ 缺少必需的 UI 契约声明</div>
+                  <p class="text-[11px] text-rose-300/80 mt-0.5">
+                    请在 InitialStateConfig 中声明以下字段，否则无法保存：
+                  </p>
+                </div>
+
+                <Show when={contractValidation()!.missingStats.length > 0}>
+                  <div class="space-y-1">
+                    <span class="font-bold text-mist-solid">缺失数值属性 (Stats)</span>
+                    <div class="space-y-1">
+                      <For each={contractValidation()!.missingStats}>
+                        {(stat) => (
+                          <div class="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5 font-mono text-[11px]">
+                            <span class="text-rose-300">stats.{stat}</span>
+                            <span class="text-[10px] text-mist-solid/40">number</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.missingFlags.length > 0}>
+                  <div class="space-y-1">
+                    <span class="font-bold text-mist-solid">缺失剧情标志 (Flags)</span>
+                    <div class="space-y-1">
+                      <For each={contractValidation()!.missingFlags}>
+                        {(flag) => (
+                          <div class="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5 font-mono text-[11px]">
+                            <span class="text-amber-300">flags.{flag}</span>
+                            <span class="text-[10px] text-mist-solid/40">string</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.missingInventory}>
+                  <div class="space-y-1">
+                    <span class="font-bold text-mist-solid">背包支持 (Inventory)</span>
+                    <div class="p-2 rounded-lg bg-white/5 border border-white/5 text-rose-300 text-[11px]">
+                      UI 包含背包槽位，需在 InitialStateConfig 中配置背包
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.errors.length > 0}>
+                  <div class="space-y-1">
+                    <span class="font-bold text-mist-solid">错误清单</span>
+                    <div class="p-2.5 rounded-lg bg-black/40 border border-white/5 font-mono text-[11px] text-rose-300/90 space-y-0.5">
+                      <For each={contractValidation()!.errors}>
+                        {(err) => <div>• {err}</div>}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       {/* 添加节点底部表单 */}
       <Show when={isAddSheetOpen()}>

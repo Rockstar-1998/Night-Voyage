@@ -262,7 +262,7 @@ pub async fn list_preset_conversations(
     .bind(preset_id)
     .fetch_all(&state.db)
     .await
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| err.to_string().replace('\\', "/"))?;
 
     Ok(rows
         .into_iter()
@@ -528,7 +528,7 @@ pub async fn blueprint_validate_ui_contract(
 
         match row {
             Some(r) => {
-                let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string())?;
+                let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string().replace('\\', "/"))?;
                 let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
                     .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
                 let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
@@ -557,7 +557,7 @@ pub async fn blueprint_validate_ui_contract(
         .map_err(|e| format!("查询 preset_ui_layouts 列表失败: {}", e).replace('\\', "/"))?;
 
         if let Some(r) = row {
-            let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string())?;
+            let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string().replace('\\', "/"))?;
             let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
                 .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
             let mut interface = crate::models::ui_layout::RequiredDataInterface::default();

@@ -102,7 +102,7 @@ const PortShape: Component<PortShapeProps> = (props) => {
         <path
           d={`M ${cx() - 5},${cy() - 5.5} L ${cx() + 5.5},${cy()} L ${cx() - 5},${cy() + 5.5} Z`}
           fill={props.port.pinType === 'exec' ? '#ffffff' : pinColor()}
-          stroke={props.port.pinType === 'exec' ? 'white' : 'white'}
+          stroke="white"
           stroke-width={1.2}
         />
       </Match>

@@ -425,32 +425,7 @@ export interface BlueprintExecutionResult {
   dbMappings: Record<string, string>;
 }
 
-export function deriveStructuredOutputDisplay(graph: BlueprintGraph): string | null {
-  const displayMap: Record<string, { defaultCollapsed: boolean; hideLabel: boolean; body?: boolean; order?: number }> = {};
-  let hasFields = false;
-  for (const node of graph.nodes) {
-    if (node.type === 'schema_field' && node.config) {
-      const cfg = node.config as SchemaFieldConfig;
-      if (cfg.field_name) {
-        hasFields = true;
-        displayMap[cfg.field_name] = {
-          defaultCollapsed: !(cfg.display?.default_expanded ?? true),
-          hideLabel: cfg.display?.hide_label ?? false,
-          body: cfg.display?.body ?? false,
-          order: cfg.order ?? 0,
-        };
-      }
-    }
-  }
-  return hasFields ? JSON.stringify(displayMap) : null;
-}
-
-export function deriveStructuredOutputDisplayFromGraphJson(graphJson?: string | null): string | undefined {
-  if (!graphJson) return undefined;
-  try {
-    const parsed = JSON.parse(graphJson) as BlueprintGraph;
-    return deriveStructuredOutputDisplay(parsed) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
+export {
+  deriveStructuredOutputDisplay,
+  deriveStructuredOutputDisplayFromGraphJson,
+} from '../structured';

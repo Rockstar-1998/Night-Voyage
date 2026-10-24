@@ -49,7 +49,9 @@ import {
   deriveStructuredOutputDisplayFromGraphJson,
 } from '../../lib/blueprint/types';
 import {
+  actionBridgeWhitelistGet,
   blueprintValidateUiContract,
+  mcpToolNames,
   normalizeBlueprintGraph,
   presetsGet,
   presetsUpdate,
@@ -483,6 +485,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [presetDetail, setPresetDetail] = createSignal<PresetDetail | null>(null);
   const [showCompilePreview, setShowCompilePreview] = createSignal(false);
   const [contractValidation, setContractValidation] = createSignal<ContractValidationResultDto | null>(null);
+  const [isContractDrawerOpen, setIsContractDrawerOpen] = createSignal(false);
   const [activeMacroId, setActiveMacroId] = createSignal<string | null>(null);
   const [isMacroDrawerOpen, setIsMacroDrawerOpen] = createSignal(false);
 
@@ -505,19 +508,13 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [actionBridgeCommands, setActionBridgeCommands] = createSignal<string[]>([]);
 
   createEffect(() => {
-    import('@tauri-apps/api/core')
-      .then(({ invoke }) => {
-        invoke<Array<{ name: string; description: string }>>('mcp_tool_names')
-          .then((tools) => setMcpTools(tools || []))
-          .catch(() => {});
-        invoke<{ commands?: string[] } | string[]>('action_bridge_whitelist_get')
-          .then((res) => {
-            const list = Array.isArray(res) ? res : (res?.commands || []);
-            setActionBridgeCommands(list);
-          })
-          .catch(() => {});
-      })
-      .catch(() => {});
+    mcpToolNames()
+      .then((tools) => setMcpTools(tools || []))
+      .catch((err) => console.error('Failed to load MCP tools:', err));
+
+    actionBridgeWhitelistGet()
+      .then((cmds) => setActionBridgeCommands(cmds || []))
+      .catch((err) => console.error('Failed to load ActionBridge whitelist:', err));
   });
 
   const availableTools = createMemo<ToolItem[]>(() => {
@@ -574,8 +571,17 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       const json = serializeBlueprintGraph(graph);
       const result = await blueprintValidateUiContract(detail.preset.id, json);
       setContractValidation(result);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to validate UI contract:', err);
+      const msg = typeof err === 'string' ? err : err?.message || '契约校验接口异常';
+      setContractValidation({
+        isValid: false,
+        missingStats: [],
+        missingFlags: [],
+        missingInventory: false,
+        errors: [`UI 契约校验调用失败: ${msg}`],
+      });
+      showToast(`UI 契约静态校验失败: ${msg}`, 'error');
     }
   };
 
@@ -1242,19 +1248,26 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
                 <Show
                   when={contractValidation()!.isValid}
                   fallback={
-                    <span
-                      class="text-[10px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 rounded-full align-middle animate-pulse flex items-center gap-1"
-                      title={contractValidation()!.errors.join('\n')}
+                    <button
+                      type="button"
+                      onClick={() => setIsContractDrawerOpen(true)}
+                      class="text-[10px] font-semibold text-rose-300 border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 transition-colors px-2 py-0.5 rounded-full align-middle animate-pulse flex items-center gap-1 cursor-pointer"
+                      title="点击打开 UI 契约检查器抽屉查看缺失字段详情"
                     >
                       <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
                       缺少字段 ({contractValidation()!.missingStats.length + contractValidation()!.missingFlags.length + (contractValidation()!.missingInventory ? 1 : 0)})
-                    </span>
+                    </button>
                   }
                 >
-                  <span class="text-[10px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 rounded-full align-middle flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsContractDrawerOpen(true)}
+                    class="text-[10px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors px-2 py-0.5 rounded-full align-middle flex items-center gap-1 cursor-pointer"
+                    title="点击打开 UI 契约检查器抽屉"
+                  >
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                     契约对齐
-                  </span>
+                  </button>
                 </Show>
               </Show>
             </div>
@@ -1335,9 +1348,13 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
               {(err) => <div>• {err}</div>}
             </For>
           </div>
-          <span class="text-[10px] text-rose-400/90 shrink-0 border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 rounded">
-            必须在 InitialStateConfig 中声明方可保存
-          </span>
+          <button
+            type="button"
+            onClick={() => setIsContractDrawerOpen(true)}
+            class="text-[10px] font-medium text-rose-300 hover:text-white shrink-0 border border-rose-500/40 bg-rose-500/20 hover:bg-rose-500/30 px-2 py-0.5 rounded transition-colors cursor-pointer"
+          >
+            打开契约检查抽屉
+          </button>
         </div>
       </Show>
 
@@ -1454,6 +1471,106 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         onDeleteMacro={handleDeleteMacro}
         onPlaceMacroInstance={handlePlaceMacroInstance}
       />
+
+      {/* Contract Inspector Drawer (Spec Line 102) */}
+      <Show when={isContractDrawerOpen()}>
+        <div
+          class="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-fade-in"
+          onClick={() => setIsContractDrawerOpen(false)}
+        >
+          <div
+            class="w-[420px] max-w-full h-full bg-night-sky border-l border-white/10 shadow-2xl flex flex-col p-6 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="flex items-center justify-between pb-4 border-b border-white/10">
+              <div class="flex items-center gap-2">
+                <span class={`w-3 h-3 rounded-full ${contractValidation()?.isValid ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <h3 class="text-base font-bold text-white">UI 契约检查器 (Inspector)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsContractDrawerOpen(false)}
+                class="text-mist-solid/60 hover:text-white text-xs px-2.5 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div class="mt-4 space-y-4 text-xs">
+              <Show
+                when={contractValidation() && !contractValidation()!.isValid}
+                fallback={
+                  <div class="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                    <div class="font-bold mb-1">✅ 契约已完整对齐</div>
+                    <p class="text-[11px] text-emerald-400/80">
+                      当前蓝图满足所引用的 UI 布局所需的全部属性与标志位。
+                    </p>
+                  </div>
+                }
+              >
+                <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 space-y-1">
+                  <div class="font-bold">⚠️ 存在未满足的 UI 契约需求</div>
+                  <p class="text-[11px] text-rose-300/80">
+                    请在蓝图中的 InitialStateConfig 节点补充声明以下缺失字段，否则无法保存：
+                  </p>
+                </div>
+
+                <Show when={contractValidation()!.missingStats.length > 0}>
+                  <div class="space-y-1.5">
+                    <span class="font-bold text-mist-solid">缺失数值属性 (Stats)</span>
+                    <div class="space-y-1">
+                      <For each={contractValidation()!.missingStats}>
+                        {(stat) => (
+                          <div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 font-mono text-[11px]">
+                            <span class="text-rose-300">stats.{stat}</span>
+                            <span class="text-[10px] text-mist-solid/40">数值 (number)</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.missingFlags.length > 0}>
+                  <div class="space-y-1.5">
+                    <span class="font-bold text-mist-solid">缺失剧情标志 (Flags)</span>
+                    <div class="space-y-1">
+                      <For each={contractValidation()!.missingFlags}>
+                        {(flag) => (
+                          <div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 font-mono text-[11px]">
+                            <span class="text-amber-300">flags.{flag}</span>
+                            <span class="text-[10px] text-mist-solid/40">字符串 (string)</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.missingInventory}>
+                  <div class="space-y-1.5">
+                    <span class="font-bold text-mist-solid">背包支持 (Inventory)</span>
+                    <div class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-rose-300 text-[11px]">
+                      UI 包含背包网格或绑定了 inventory，但 InitialStateConfig 未配置背包
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={contractValidation()!.errors.length > 0}>
+                  <div class="space-y-1.5">
+                    <span class="font-bold text-mist-solid">全部校验详情</span>
+                    <div class="space-y-1 text-rose-300/90 text-[11px] font-mono bg-black/40 p-3 rounded-lg border border-white/5">
+                      <For each={contractValidation()!.errors}>
+                        {(err) => <div>• {err}</div>}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 };
