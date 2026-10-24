@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::Serialize;
+use sqlx::Row;
 
 use crate::models::blueprint::{
     BlueprintCompilePreviewDto, BlueprintExecutionContext, BlueprintGraph, BlueprintPreviewBlockDto,
@@ -364,9 +365,20 @@ pub async fn preview_blueprint_with_session(
     }
 
     let mut preset_schemas = HashMap::new();
-    if let Ok(schemas) = crate::commands::schema::preset_schemas_list(state.clone(), preset_id).await {
-        for s in schemas {
-            preset_schemas.insert(s.id.clone(), s);
+    if let Ok(schema_rows) = sqlx::query(
+        "SELECT id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at \
+         FROM preset_schemas \
+         WHERE preset_id = ? \
+         ORDER BY updated_at DESC, id ASC",
+    )
+    .bind(preset_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        for row in &schema_rows {
+            if let Ok(s) = crate::models::schema::SchemaDefinition::from_row(row) {
+                preset_schemas.insert(s.id.clone(), s);
+            }
         }
     }
 
@@ -505,30 +517,59 @@ pub async fn blueprint_validate_ui_contract(
         }
     });
 
-    let layout_def = if let Some(layout_id) = layout_id_from_node {
-        match crate::commands::ui_layout::preset_ui_layout_get(layout_id.clone(), state.clone()).await {
-            Ok(layout) => Some(layout),
-            Err(e) => {
+    let layout_interface = if let Some(layout_id) = layout_id_from_node {
+        let row = sqlx::query(
+            "SELECT layout_json FROM preset_ui_layouts WHERE id = ?",
+        )
+        .bind(&layout_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| format!("查询 preset_ui_layout 失败: {}", e).replace('\\', "/"))?;
+
+        match row {
+            Some(r) => {
+                let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string())?;
+                let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
+                    .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
+                let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
+                root_container.collect_data_interface(&mut interface);
+                interface.required_flags.sort();
+                Some(interface)
+            }
+            None => {
                 return Ok(ContractValidationResultDto {
                     is_valid: false,
                     missing_stats: vec![],
                     missing_flags: vec![],
                     missing_inventory: false,
-                    errors: vec![format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`: {e}")],
+                    errors: vec![format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`")],
                 });
             }
         }
     } else {
         // 2. 否则查找该 preset 下已创建的 UI 模板
-        let layouts = crate::commands::ui_layout::preset_ui_layout_list(preset_id, state.clone())
-            .await
-            .map_err(|e| format!("查询预设 UI 布局列表失败: {e}").replace('\\', "/"))?;
-        layouts.into_iter().next()
+        let row = sqlx::query(
+            "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(preset_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| format!("查询 preset_ui_layouts 列表失败: {}", e).replace('\\', "/"))?;
+
+        if let Some(r) = row {
+            let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string())?;
+            let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
+                .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
+            let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
+            root_container.collect_data_interface(&mut interface);
+            interface.required_flags.sort();
+            Some(interface)
+        } else {
+            None
+        }
     };
 
-    let contract = layout_def
-        .map(|l| l.extract_required_data_interface())
-        .unwrap_or_default();
+    let contract = layout_interface.unwrap_or_default();
 
     let result = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &contract);
     Ok(result)

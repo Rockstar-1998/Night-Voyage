@@ -23,7 +23,7 @@ import {
   For,
   Show,
 } from 'solid-js';
-import type { BlueprintMacro, BlueprintNode, NodeConfig } from '../../../src/lib/blueprint/types';
+import type { BlueprintMacro, BlueprintNode, NodeConfig } from '../../lib/blueprint/types';
 import { isNodeLocked } from './mobileNodeLayout';
 import { MobileNodeConfigForm } from './MobileNodeConfigForms';
 import type { MobileToolItem } from './MobileToolPermissionsModal';

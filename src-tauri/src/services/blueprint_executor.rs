@@ -1148,15 +1148,10 @@ pub fn validate_blueprint_ui_contract(
                 }
 
                 if contract.required_inventory {
-                    if cfg.inventory.is_empty() {
-                        missing_inventory = true;
-                        errors.push(format!("[{node_id}] UI 布局依赖背包数据，但 InitialStateConfig 未配置任何初始背包物品"));
-                    } else {
-                        for item in &cfg.inventory {
-                            if item.id.trim().is_empty() {
-                                missing_inventory = true;
-                                errors.push(format!("[{node_id}] 背包初始物品缺少必需的 id 标识"));
-                            }
+                    for item in &cfg.inventory {
+                        if item.id.trim().is_empty() {
+                            missing_inventory = true;
+                            errors.push(format!("[{node_id}] 背包初始物品缺少必需的 id 标识"));
                         }
                     }
                 }
@@ -4176,7 +4171,7 @@ mod tests {
         assert!(!res_bad.is_valid);
         assert!(res_bad.errors.iter().any(|e| e.contains("低于 UI 声明的最小值")));
 
-        // 5. Required inventory but empty inventory fails validation
+        // 5. Required inventory with empty inventory is valid (starting with empty backpack, Spec line 99)
         let mut empty_inv_graph = empty_graph.clone();
         empty_inv_graph.nodes.push(crate::models::blueprint::BlueprintNode {
             id: "n_init".to_string(),
@@ -4189,9 +4184,33 @@ mod tests {
             }),
         });
         let res_empty_inv = validate_blueprint_ui_contract(&empty_inv_graph, &contract);
-        assert!(!res_empty_inv.is_valid);
-        assert!(res_empty_inv.missing_inventory);
-        assert!(res_empty_inv.errors.iter().any(|e| e.contains("未配置任何初始背包物品")));
+        assert!(res_empty_inv.is_valid);
+        assert!(!res_empty_inv.missing_inventory);
+
+        // 6. Invalid inventory item (empty item id) fails validation
+        let mut invalid_item_graph = empty_graph.clone();
+        invalid_item_graph.nodes.push(crate::models::blueprint::BlueprintNode {
+            id: "n_init".to_string(),
+            position: Position { x: 100.0, y: 100.0 },
+            config: NodeConfig::InitialStateConfig(InitialStateConfig {
+                stats: stats.clone(),
+                flags: flags.clone(),
+                inventory: vec![crate::models::game_state::InventoryItem {
+                    id: "   ".to_string(),
+                    name: "Ghost Item".to_string(),
+                    count: 1,
+                    unit_weight: 0.0,
+                    unit_price: 0.0,
+                    icon: None,
+                    properties: std::collections::HashMap::new(),
+                }],
+                is_locked: false,
+            }),
+        });
+        let res_invalid_item = validate_blueprint_ui_contract(&invalid_item_graph, &contract);
+        assert!(!res_invalid_item.is_valid);
+        assert!(res_invalid_item.missing_inventory);
+        assert!(res_invalid_item.errors.iter().any(|e| e.contains("缺少必需的 id 标识")));
     }
 
     #[test]

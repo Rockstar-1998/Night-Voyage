@@ -55,7 +55,7 @@ import type {
   MacroOutputsConfig,
   MacroPinDefinition,
   PinType,
-} from '../../../src/lib/blueprint/types';
+} from '../../lib/blueprint/types';
 import { PIN_TYPE_COLORS } from './mobileNodeLayout';
 import { MobileToolPermissionsCard, type MobileToolItem } from './MobileToolPermissionsModal';
 

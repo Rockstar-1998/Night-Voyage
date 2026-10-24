@@ -17,7 +17,7 @@ import {
 import type {
   BlueprintGraph,
   BlueprintNode,
-} from '../../../src/lib/blueprint/types';
+} from '../../lib/blueprint/types';
 import {
   PresetSummary,
   presetsGet,

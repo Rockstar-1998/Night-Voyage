@@ -14,7 +14,7 @@
  */
 
 import { Component, createSignal, createMemo, For, Show } from 'solid-js';
-import type { AgentToolPermissions } from '../../../src/lib/blueprint/types';
+import type { AgentToolPermissions } from '../../lib/blueprint/types';
 import { X, Search, Plus, Check, SlidersHorizontal, ShieldCheck, CheckCircle2 } from 'lucide-solid';
 
 export interface MobileToolItem {

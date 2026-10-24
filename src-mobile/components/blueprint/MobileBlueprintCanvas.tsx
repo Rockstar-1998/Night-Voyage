@@ -50,7 +50,7 @@ import type {
   BlueprintNode,
   NodePositionPatch,
   Position,
-} from '../../../src/lib/blueprint/types';
+} from '../../lib/blueprint/types';
 import {
   bezierPath,
   clampZoom,

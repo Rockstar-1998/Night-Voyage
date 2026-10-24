@@ -36,7 +36,7 @@ import type {
   NodePositionPatch,
   NodeType,
   Position,
-} from '../../../src/lib/blueprint/types';
+} from '../../lib/blueprint/types';
 import {
   blueprintValidateUiContract,
   type ContractValidationResultDto,
@@ -132,12 +132,19 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
   // 全局能力池（Local Tools + ActionBridge + MCP，Spec §4 & lines 157-158）
   const [mcpTools, setMcpTools] = createSignal<Array<{ name: string; description: string }>>([]);
+  const [actionBridgeCommands, setActionBridgeCommands] = createSignal<string[]>([]);
 
   createEffect(() => {
     import('@tauri-apps/api/core')
       .then(({ invoke }) => {
         invoke<Array<{ name: string; description: string }>>('mcp_tool_names')
           .then((tools) => setMcpTools(tools || []))
+          .catch(() => {});
+        invoke<{ commands?: string[] } | string[]>('action_bridge_whitelist_get')
+          .then((res) => {
+            const list = Array.isArray(res) ? res : (res?.commands || []);
+            setActionBridgeCommands(list);
+          })
           .catch(() => {});
       })
       .catch(() => {});
@@ -163,17 +170,15 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       }
     }
 
-    // 2. ActionBridge 跨域查询原语 (白名单内置)
-    const actionBridgeBuiltins: MobileToolItem[] = [
-      { name: 'query_world_book_entries', type: 'action_bridge', description: 'ActionBridge 世界书条目跨域检索' },
-      { name: 'get_character_detail', type: 'action_bridge', description: 'ActionBridge 角色档案与属性查询' },
-      { name: 'get_conversation_detail', type: 'action_bridge', description: 'ActionBridge 会话元数据查询' },
-      { name: 'get_session_state', type: 'action_bridge', description: 'ActionBridge 运行时状态容器查询' },
-    ];
-    for (const ab of actionBridgeBuiltins) {
-      if (!seen.has(ab.name)) {
-        seen.add(ab.name);
-        list.push(ab);
+    // 2. ActionBridge 跨域查询原语 (动态从白名单读取，C11 杜绝硬编码)
+    for (const cmd of actionBridgeCommands()) {
+      if (!seen.has(cmd)) {
+        seen.add(cmd);
+        list.push({
+          name: cmd,
+          type: 'action_bridge',
+          description: `ActionBridge 跨域原语: ${cmd}`,
+        });
       }
     }
 

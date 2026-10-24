@@ -10,8 +10,8 @@
  */
 
 import { Component, For, Show, createSignal } from 'solid-js';
-import type { BlueprintMacro } from '../../../src/lib/blueprint/types';
-import { showToast } from '../Toast';
+import type { BlueprintMacro } from '../../lib/blueprint/types';
+import { showToast, showConfirm } from '../Toast';
 
 export interface MobileMacroDrawerProps {
   isOpen: boolean;
@@ -156,8 +156,14 @@ export const MobileMacroDrawer: Component<MobileMacroDrawerProps> = (props) => {
                           </div>
 
                           <button
-                            onClick={() => {
-                              if (confirm(`确定删除宏「${macro.name}」吗？`)) {
+                            onClick={async () => {
+                              const ok = await showConfirm({
+                                title: '删除宏',
+                                message: `确定删除宏「${macro.name}」吗？此操作无法撤销。`,
+                                confirmText: '删除',
+                                cancelText: '取消',
+                              });
+                              if (ok) {
                                 props.onDeleteMacro(macro.id);
                               }
                             }}

@@ -23,7 +23,7 @@ import type {
   PortDirection,
   PortKind,
   Position,
-} from '../../../src/lib/blueprint/types';
+} from '../../lib/blueprint/types';
 
 // ─── 布局常量（图坐标，与缩放无关）───
 // 横向蓝图：端口在左右边缘（输入左侧、输出右侧），连线水平走向（见 computeNodeLayout）。
