@@ -647,6 +647,10 @@ pub struct AgentToolPermissions {
 }
 
 impl AgentToolPermissions {
+    pub fn requires_approval(&self, tool_name: &str) -> bool {
+        self.require_approval.iter().any(|t| t == tool_name)
+    }
+
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
         if self.allow_all {
             return true;

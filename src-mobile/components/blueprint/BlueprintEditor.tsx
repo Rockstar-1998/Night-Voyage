@@ -115,6 +115,23 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   const [isAddSheetOpen, setIsAddSheetOpen] = createSignal(false);
   const [isDirty, setIsDirty] = createSignal(false);
   const [contractValidation, setContractValidation] = createSignal<ContractValidationResultDto | null>(null);
+
+  const errorNodeIds = createMemo<Set<string>>(() => {
+    const set = new Set<string>();
+    const res = contractValidation();
+    if (!res || res.isValid) return set;
+    for (const err of res.errors) {
+      const match = err.match(/^\[(.*?)\]/);
+      if (match && match[1]) {
+        set.add(match[1]);
+      }
+    }
+    if (res.missingStats.length > 0 || res.missingFlags.length > 0 || res.missingInventory) {
+      const initNode = graph().nodes.find((n) => n.type === 'initial_state_config');
+      if (initNode) set.add(initNode.id);
+    }
+    return set;
+  });
   const [activeMacroId, setActiveMacroId] = createSignal<string | null>(null);
   const [isMacroDrawerOpen, setIsMacroDrawerOpen] = createSignal(false);
 
@@ -140,11 +157,17 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
   createEffect(() => {
     mcpToolNames()
       .then((tools) => setMcpTools(tools || []))
-      .catch((err) => console.error('Failed to load mobile MCP tools:', err));
+      .catch((err) => {
+        console.error('Failed to load mobile MCP tools:', err);
+        showToast(`加载 MCP 工具失败: ${err}`, 'error');
+      });
 
     actionBridgeWhitelistGet()
       .then((cmds) => setActionBridgeCommands(cmds || []))
-      .catch((err) => console.error('Failed to load mobile ActionBridge whitelist:', err));
+      .catch((err) => {
+        console.error('Failed to load mobile ActionBridge whitelist:', err);
+        showToast(`加载 ActionBridge 白名单失败: ${err}`, 'error');
+      });
   });
 
   const availableTools = createMemo<MobileToolItem[]>(() => {
@@ -1042,6 +1065,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           onGraphPan={handleGraphPan}
           onGraphZoom={handleGraphZoom}
           onOpenMacro={setActiveMacroId}
+          errorNodeIds={errorNodeIds()}
         />
 
         {/* 框选模式提示 */}

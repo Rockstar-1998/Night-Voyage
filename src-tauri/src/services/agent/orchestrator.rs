@@ -642,10 +642,19 @@ pub async fn stage_call_with_scratchpad(
         all_tools
     };
 
+    let perms_clone = tool_permissions.cloned();
     let pad = scratchpad.clone();
     let execute = move |name: String, args_json: String| {
         let pad = pad.clone();
+        let perms = perms_clone.clone();
         std::pin::Pin::from(Box::pin(async move {
+            if let Some(p) = &perms {
+                if p.requires_approval(&name) {
+                    return Err(format!(
+                        "工具 `{name}` 被标记为需要审批 (require_approval)，当前未获得授权，禁止执行"
+                    ));
+                }
+            }
             match execute_scratchpad_tool(&pad, &name, &args_json) {
                 Some(res) => res,
                 None => Err(format!("未知的工作区工具 `{name}`")),
@@ -1438,5 +1447,14 @@ mod tests {
             .filter(|t| perms_none.is_tool_allowed(&t.name))
             .collect();
         assert_eq!(filtered_none.len(), 0);
+
+        // 4. require_approval correctly identifies high-risk tools needing gating
+        let perms_approval = AgentToolPermissions {
+            allow_all: true,
+            allowed_tools: vec!["write_text".to_string()],
+            require_approval: vec!["write_text".to_string()],
+        };
+        assert!(perms_approval.requires_approval("write_text"));
+        assert!(!perms_approval.requires_approval("read_text"));
     }
 }

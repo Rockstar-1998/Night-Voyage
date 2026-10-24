@@ -1033,6 +1033,12 @@ where
     None
 }
 
+/// 判断引脚是否为打回循环控制流端口（放行反向边以支持审核打回循环）
+#[inline]
+pub fn is_rejection_loop_port(port: &str) -> bool {
+    port.eq_ignore_ascii_case("reject")
+}
+
 /// 拓扑有向无环（DAG）校验器：
 /// 检测图执行流中是否存在非法死循环，但针对从 `reject` / `Reject` 引脚发出的打回反向边进行特例放行。
 fn validate_dag_cycles(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
@@ -1041,7 +1047,7 @@ fn validate_dag_cycles(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         graph
             .edges
             .iter()
-            .filter(|e| e.source == node_id && e.source_port.to_lowercase() != "reject")
+            .filter(|e| e.source == node_id && !is_rejection_loop_port(&e.source_port))
             .map(|e| e.target.as_str())
             .collect()
     };

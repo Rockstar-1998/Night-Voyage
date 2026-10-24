@@ -792,6 +792,12 @@ export interface ConnectionValidationResult {
  * a merge point for Gate/ModeSwitch branches). We therefore do NOT reject
  * based on existing input-port occupancy — only exact duplicates are rejected.
  */
+export const REJECTION_LOOP_PORT = 'reject';
+
+export function isRejectionLoopPort(port: string): boolean {
+  return port.trim().toLowerCase() === REJECTION_LOOP_PORT;
+}
+
 export function validateConnection(
   graph: BlueprintGraph,
   sourceNode: BlueprintNode,
@@ -839,7 +845,7 @@ export function validateConnection(
   if (dup) {
     return { ok: false, reason: 'duplicate' };
   }
-  if (sourcePort.toLowerCase() !== 'reject' && wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
+  if (!isRejectionLoopPort(sourcePort) && wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
     return { ok: false, reason: 'cycle' };
   }
   return { ok: true, reason: null };

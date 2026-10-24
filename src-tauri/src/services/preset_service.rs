@@ -207,14 +207,18 @@ impl<'a> PresetService<'a> {
         .await
     }
 
-    pub async fn validate_ui_contract_for_graph(
+    /// 解析蓝图图数据关联的 UI 布局数据契约接口。
+    ///
+    /// 优先级：
+    /// 1. 若图中存在 `UiLayoutConfig` 节点，按其显式指定的 `layout_id` 精确查询；
+    ///    若指定的 `layout_id` 在数据库中不存在，显式返回硬错（C2 零静默回退）；
+    /// 2. 否则按 `preset_id` 查询该预设已关联的最早创建的 UI 布局；
+    /// 3. 若均未配置或无关联布局，返回 `Ok(None)`。
+    pub async fn resolve_layout_data_interface_for_graph(
         db: &SqlitePool,
+        graph: &crate::models::blueprint::BlueprintGraph,
         preset_id: Option<i64>,
-        graph_str: &str,
-    ) -> Result<(), String> {
-        let graph: crate::models::blueprint::BlueprintGraph = serde_json::from_str(graph_str)
-            .map_err(|err| format!("蓝图图数据反序列化失败: {err}").replace('\\', "/"))?;
-
+    ) -> Result<Option<crate::models::ui_layout::RequiredDataInterface>, String> {
         let layout_id_from_node = graph.nodes.iter().find_map(|node| {
             if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
                 if !cfg.layout_id.trim().is_empty() {
@@ -227,14 +231,25 @@ impl<'a> PresetService<'a> {
             }
         });
 
-        let layout_row = if let Some(ref layout_id) = layout_id_from_node {
-            sqlx::query_scalar::<_, String>(
+        let layout_json = if let Some(ref layout_id) = layout_id_from_node {
+            let row = sqlx::query_scalar::<_, String>(
                 "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
             )
             .bind(layout_id)
             .fetch_optional(db)
             .await
-            .map_err(|err| format!("读取绑定 UI 布局失败 (id: {layout_id}): {err}"))?
+            .map_err(|err| format!("读取绑定 UI 布局失败 (id: {layout_id}): {err}").replace('\\', "/"))?;
+
+            match row {
+                Some(json) => Some(json),
+                None => {
+                    if preset_id.is_some() {
+                        return Err(format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`").replace('\\', "/"));
+                    } else {
+                        None
+                    }
+                }
+            }
         } else if let Some(pid) = preset_id {
             sqlx::query_scalar::<_, String>(
                 "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
@@ -242,22 +257,38 @@ impl<'a> PresetService<'a> {
             .bind(pid)
             .fetch_optional(db)
             .await
-            .map_err(|err| format!("读取预设关联 UI 布局失败 (preset_id: {pid}): {err}"))?
+            .map_err(|err| format!("读取预设关联 UI 布局失败 (preset_id: {pid}): {err}").replace('\\', "/"))?
         } else {
             None
         };
 
-        if let Some(layout_json) = layout_row {
-            let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
-                .map_err(|err| format!("解析 UI 布局容器 JSON 失败: {err}"))?;
+        if let Some(json) = layout_json {
+            let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&json)
+                .map_err(|err| format!("解析 UI 布局容器 JSON 失败: {err}").replace('\\', "/"))?;
             let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
             root_container.collect_data_interface(&mut interface);
+            interface.required_flags.sort();
+            Ok(Some(interface))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn validate_ui_contract_for_graph(
+        db: &SqlitePool,
+        preset_id: Option<i64>,
+        graph_str: &str,
+    ) -> Result<(), String> {
+        let graph: crate::models::blueprint::BlueprintGraph = serde_json::from_str(graph_str)
+            .map_err(|err| format!("蓝图图数据反序列化失败: {err}").replace('\\', "/"))?;
+
+        if let Some(interface) = Self::resolve_layout_data_interface_for_graph(db, &graph, preset_id).await? {
             let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
             if !validation.is_valid {
                 return Err(format!(
                     "UI 数据契约校验失败: {}",
                     validation.errors.join("; ")
-                ));
+                ).replace('\\', "/"));
             }
         }
 

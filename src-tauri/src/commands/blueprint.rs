@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use serde::Serialize;
-use sqlx::Row;
 
 use crate::models::blueprint::{
     BlueprintCompilePreviewDto, BlueprintExecutionContext, BlueprintGraph, BlueprintPreviewBlockDto,
@@ -357,15 +356,16 @@ pub async fn preview_blueprint_with_session(
     }
 
     if gate_selections.is_empty() {
-        if let Ok(preset_selections) = PresetGateRepository::load_by_preset(&state.db, preset_id).await {
-            for sel in preset_selections {
-                gate_selections.insert(sel.node_id, GateSelection { keys: sel.selected_keys });
-            }
+        let preset_selections = PresetGateRepository::load_by_preset(&state.db, preset_id)
+            .await
+            .map_err(|e| format!("加载 preset_selections 失败: {}", e).replace('\\', "/"))?;
+        for sel in preset_selections {
+            gate_selections.insert(sel.node_id, GateSelection { keys: sel.selected_keys });
         }
     }
 
     let mut preset_schemas = HashMap::new();
-    if let Ok(schema_rows) = sqlx::query(
+    let schema_rows = sqlx::query(
         "SELECT id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at \
          FROM preset_schemas \
          WHERE preset_id = ? \
@@ -374,12 +374,12 @@ pub async fn preview_blueprint_with_session(
     .bind(preset_id)
     .fetch_all(&state.db)
     .await
-    {
-        for row in &schema_rows {
-            if let Ok(s) = crate::models::schema::SchemaDefinition::from_row(row) {
-                preset_schemas.insert(s.id.clone(), s);
-            }
-        }
+    .map_err(|e| format!("查询 preset_schemas 失败: {}", e).replace('\\', "/"))?;
+
+    for row in &schema_rows {
+        let s = crate::models::schema::SchemaDefinition::from_row(row)
+            .map_err(|e| format!("解析 SchemaDefinition 失败: {}", e).replace('\\', "/"))?;
+        preset_schemas.insert(s.id.clone(), s);
     }
 
     let exec_context = BlueprintExecutionContext {
@@ -504,68 +504,22 @@ pub async fn blueprint_validate_ui_contract(
         )
     })?;
 
-    // 1. 若图中显式存在 UiLayoutConfig 节点，优先按该 layout_id 查询
-    let layout_id_from_node = graph.nodes.iter().find_map(|node| {
-        if let NodeConfig::UiLayoutConfig(cfg) = &node.config {
-            if !cfg.layout_id.trim().is_empty() {
-                Some(cfg.layout_id.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    });
-
-    let layout_interface = if let Some(layout_id) = layout_id_from_node {
-        let row = sqlx::query(
-            "SELECT layout_json FROM preset_ui_layouts WHERE id = ?",
-        )
-        .bind(&layout_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| format!("查询 preset_ui_layout 失败: {}", e).replace('\\', "/"))?;
-
-        match row {
-            Some(r) => {
-                let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string().replace('\\', "/"))?;
-                let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
-                    .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
-                let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
-                root_container.collect_data_interface(&mut interface);
-                interface.required_flags.sort();
-                Some(interface)
-            }
-            None => {
-                return Ok(ContractValidationResultDto {
-                    is_valid: false,
-                    missing_stats: vec![],
-                    missing_flags: vec![],
-                    missing_inventory: false,
-                    errors: vec![format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`")],
-                });
-            }
-        }
-    } else {
-        // 2. 否则查找该 preset 下已创建的 UI 模板
-        let row = sqlx::query(
-            "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
-        )
-        .bind(preset_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| format!("查询 preset_ui_layouts 列表失败: {}", e).replace('\\', "/"))?;
-
-        if let Some(r) = row {
-            let layout_json: String = r.try_get("layout_json").map_err(|e| e.to_string().replace('\\', "/"))?;
-            let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
-                .map_err(|e| format!("解析 layout_json 失败: {}", e).replace('\\', "/"))?;
-            let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
-            root_container.collect_data_interface(&mut interface);
-            interface.required_flags.sort();
-            Some(interface)
-        } else {
-            None
+    let layout_interface = match crate::services::preset_service::PresetService::resolve_layout_data_interface_for_graph(
+        &state.db,
+        &graph,
+        Some(preset_id),
+    )
+    .await
+    {
+        Ok(interface) => interface,
+        Err(err) => {
+            return Ok(ContractValidationResultDto {
+                is_valid: false,
+                missing_stats: vec![],
+                missing_flags: vec![],
+                missing_inventory: false,
+                errors: vec![err],
+            });
         }
     };
 

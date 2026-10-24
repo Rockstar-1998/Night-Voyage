@@ -129,6 +129,8 @@ export interface BlueprintCanvasProps {
   onUpdateCommentText: (commentId: string, text: string) => void;
   /** Double-click on a macro_instance opens its subgraph editor. */
   onOpenMacro?: (macroId: string) => void;
+  /** Set of node IDs that currently have UI contract validation errors */
+  errorNodeIds?: Set<string>;
 }
 
 // ─── Internal interaction state ───
@@ -924,16 +926,39 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
                     height={layout.height}
                     rx={8}
                     fill="rgba(11, 18, 27, 0.96)"
-                    stroke={isSelected ? '#3A6D8C' : layout.accentColor}
-                    stroke-width={isSelected ? 2.5 : 1.5}
+                    stroke={isSelected ? '#3A6D8C' : (props.errorNodeIds?.has(node.id) ? '#F43F5E' : layout.accentColor)}
+                    stroke-width={isSelected || props.errorNodeIds?.has(node.id) ? 2.5 : 1.5}
                   />
                   {/* Header tint */}
                   <path
                     d={`M 0,8 Q 0,0 8,0 H ${layout.width - 8} Q ${layout.width},0 ${layout.width},8 V ${HEADER_HEIGHT} H 0 Z`}
-                    fill={layout.accentColor}
-                    opacity={0.32}
+                    fill={props.errorNodeIds?.has(node.id) ? '#F43F5E' : layout.accentColor}
+                    opacity={props.errorNodeIds?.has(node.id) ? 0.45 : 0.32}
                     pointer-events="none"
                   />
+                  {/* Validation error badge (Spec Line 40) */}
+                  <Show when={props.errorNodeIds?.has(node.id)}>
+                    <g pointer-events="none" transform={`translate(${layout.width - 18}, ${HEADER_HEIGHT / 2})`}>
+                      <circle
+                        cx={0}
+                        cy={0}
+                        r={8}
+                        fill="#F43F5E"
+                        stroke="#FFE4E6"
+                        stroke-width={1.5}
+                      />
+                      <text
+                        x={0}
+                        y={3.5}
+                        font-size="11"
+                        font-weight="900"
+                        fill="white"
+                        text-anchor="middle"
+                      >
+                        !
+                      </text>
+                    </g>
+                  </Show>
                   {/* Execution order badge */}
                   <Show when={executionOrder().get(node.id)}>
                     {(order) => (

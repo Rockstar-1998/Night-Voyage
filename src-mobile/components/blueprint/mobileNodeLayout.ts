@@ -739,6 +739,12 @@ export interface ConnectionValidationResult {
   reason: ConnectionRejectReason | null;
 }
 
+export const REJECTION_LOOP_PORT = 'reject';
+
+export function isRejectionLoopPort(port: string): boolean {
+  return port.trim().toLowerCase() === REJECTION_LOOP_PORT;
+}
+
 export function validateConnection(
   graph: BlueprintGraph,
   sourceNode: BlueprintNode,
@@ -784,7 +790,7 @@ export function validateConnection(
   if (dup) {
     return { ok: false, reason: 'duplicate' };
   }
-  if (sourcePort.toLowerCase() !== 'reject' && wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
+  if (!isRejectionLoopPort(sourcePort) && wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
     return { ok: false, reason: 'cycle' };
   }
   return { ok: true, reason: null };

@@ -240,13 +240,22 @@ pub async fn run_director_actor_pipeline(
             .as_ref()
             .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
             .unwrap_or(5);
+        let dir_perms = director_cfg.tool_permissions.clone();
         let execute = {
             let db = db.clone();
             let app = app.clone();
             move |name: String, args_json: String| {
                 let db = db.clone();
                 let app = app.clone();
+                let perms = dir_perms.clone();
                 std::pin::Pin::from(Box::pin(async move {
+                    if let Some(p) = &perms {
+                        if p.requires_approval(&name) {
+                            return Err(format!(
+                                "工具 `{name}` 被配置为高危审批工具 (require_approval)，当前未获审批授权，禁止执行"
+                            ));
+                        }
+                    }
                     let plan =
                         crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
                             .await?;
@@ -378,13 +387,22 @@ pub async fn run_director_actor_pipeline(
             .map(|def| resolve_allowed_tool_definitions(def, &tool_defs_by_name))
             .unwrap_or_default();
 
+        let actor_perms = actor_def.and_then(|def| def.tool_permissions.clone());
         let execute = {
             let db = db.clone();
             let app = app.clone();
             move |name: String, args_json: String| {
                 let db = db.clone();
                 let app = app.clone();
+                let perms = actor_perms.clone();
                 std::pin::Pin::from(Box::pin(async move {
+                    if let Some(p) = &perms {
+                        if p.requires_approval(&name) {
+                            return Err(format!(
+                                "工具 `{name}` 被配置为高危审批工具 (require_approval)，当前未获审批授权，禁止执行"
+                            ));
+                        }
+                    }
                     let plan =
                         crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
                             .await?;
