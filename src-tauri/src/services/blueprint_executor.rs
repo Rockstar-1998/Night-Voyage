@@ -1165,6 +1165,31 @@ pub fn validate_blueprint_ui_contract(
         }
     }
 
+    // 静态校验工具节点输出对数据契约与初始状态的合规性（Spec Line 26: validate tool outputs）
+    for node in &inlined_graph.nodes {
+        let node_id = &node.id;
+        if let NodeConfig::Calculator(calc) = &node.config {
+            if calc.target.starts_with("stats.") {
+                let stat_name = &calc.target[6..];
+                if let Some(init_node) = initial_state_node {
+                    if let NodeConfig::InitialStateConfig(cfg) = &init_node.config {
+                        if !cfg.stats.contains_key(stat_name) {
+                            errors.push(format!(
+                                "[{node_id}] 工具计算输出目标属性 `{}` 未在 InitialStateConfig 中声明",
+                                calc.target
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some(item) = &calc.item_def {
+                if item.id.trim().is_empty() {
+                    errors.push(format!("[{node_id}] 工具物品产出缺少必需的 id 标识"));
+                }
+            }
+        }
+    }
+
     missing_stats.sort();
     missing_flags.sort();
     let is_valid = errors.is_empty();
@@ -1210,49 +1235,53 @@ fn check_macro_cycles(macro_map: &HashMap<String, &BlueprintMacro>) -> Result<()
     Ok(())
 }
 
+/// 引脚端口方向类型定义（遵循类型驱动设计，替代布尔标志位参数）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortDirection {
+    Input,
+    Output,
+}
+
 /// 解析指定节点端口所对应的引脚类型（PinType）。
 fn get_port_pin_type(
     node: &BlueprintNode,
     port: &str,
-    is_output: bool,
+    direction: PortDirection,
     macro_map: &HashMap<String, &BlueprintMacro>,
 ) -> Option<PinType> {
     match &node.config {
         NodeConfig::MacroInstance(cfg) => {
             if let Some(m) = macro_map.get(&cfg.macro_id) {
-                if is_output {
-                    m.outputs
+                match direction {
+                    PortDirection::Output => m.outputs
                         .iter()
                         .find(|p| p.id == port || p.name == port)
-                        .map(|p| p.pin_type)
-                } else {
-                    m.inputs
+                        .map(|p| p.pin_type),
+                    PortDirection::Input => m.inputs
                         .iter()
                         .find(|p| p.id == port || p.name == port)
-                        .map(|p| p.pin_type)
+                        .map(|p| p.pin_type),
                 }
             } else {
                 None
             }
         }
         NodeConfig::MacroInputs(cfg) => {
-            if is_output {
-                cfg.pins
+            match direction {
+                PortDirection::Output => cfg.pins
                     .iter()
                     .find(|p| p.id == port || p.name == port)
-                    .map(|p| p.pin_type)
-            } else {
-                None
+                    .map(|p| p.pin_type),
+                PortDirection::Input => None,
             }
         }
         NodeConfig::MacroOutputs(cfg) => {
-            if !is_output {
-                cfg.pins
+            match direction {
+                PortDirection::Input => cfg.pins
                     .iter()
                     .find(|p| p.id == port || p.name == port)
-                    .map(|p| p.pin_type)
-            } else {
-                None
+                    .map(|p| p.pin_type),
+                PortDirection::Output => None,
             }
         }
         NodeConfig::Start
@@ -1311,8 +1340,8 @@ fn validate_edges_pin_compatibility<'a>(
         let src = node_list.iter().find(|n| n.id == edge.source);
         let tgt = node_list.iter().find(|n| n.id == edge.target);
         if let (Some(s), Some(t)) = (src, tgt) {
-            let st = get_port_pin_type(s, &edge.source_port, true, macro_map);
-            let tt = get_port_pin_type(t, &edge.target_port, false, macro_map);
+            let st = get_port_pin_type(s, &edge.source_port, PortDirection::Output, macro_map);
+            let tt = get_port_pin_type(t, &edge.target_port, PortDirection::Input, macro_map);
             if let (Some(source_type), Some(target_type)) = (st, tt) {
                 if !source_type.is_compatible(&target_type) {
                     return Err(BlueprintError::IncompatiblePinTypes {

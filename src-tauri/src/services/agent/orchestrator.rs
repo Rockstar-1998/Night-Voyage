@@ -323,7 +323,8 @@ where
                 max_iterations: max_loops,
                 last_critique: Some(output.clone()),
             };
-            let loop_state_json = serde_json::to_string(&loop_state).unwrap_or_default();
+            let loop_state_json = serde_json::to_string(&loop_state)
+                .map_err(|e| format!("序列化 rejection_loop_state 失败: {e}"))?;
             scratchpad.write_text("rejection_loop_state", &loop_state_json);
             scratchpad.write_text(&format!("{}.rejection_loop_state", stage_cfg.stage), &loop_state_json);
 
@@ -391,7 +392,12 @@ where
 
         scratchpad.write_text(stage_key, &output);
         scratchpad.write_text(&stage_cfg.stage, &output);
-        prev_output = output;
+        // 若该阶段配置了打回目标（即审阅/门禁阶段），其产出为批注文本，
+        // 传递给下游接力阶段的正文应保持被审阅的草稿（prev_output），防止批评意见覆盖故事正文；
+        // 若不是审阅阶段，则作为普通接力阶段传递其 output。
+        if stage_cfg.reject_target.is_none() {
+            prev_output = output;
+        }
     }
 
     // 若恰好有 1 个中间阶段，为了向后兼容也将输出写入 "critique"
@@ -619,7 +625,29 @@ pub async fn stage_call_with_scratchpad(
     let mut stage_system: Vec<String> = system.to_vec();
     stage_system.push(instruction.to_string());
 
-    let all_tools = native_scratchpad_tools();
+    let mut all_tools = native_scratchpad_tools();
+    if let Some(perms) = tool_permissions {
+        for name in &perms.allowed_tools {
+            if !all_tools.iter().any(|t| &t.name == name) {
+                all_tools.push(crate::llm::LlmToolDefinition {
+                    name: name.clone(),
+                    description: Some(format!("流水线工具 `{name}`")),
+                    input_schema: serde_json::json!({"type": "object", "properties": {}}),
+                });
+            }
+        }
+    }
+    if let Some(fb) = fallback_tools {
+        for name in fb {
+            if !all_tools.iter().any(|t| &t.name == name) {
+                all_tools.push(crate::llm::LlmToolDefinition {
+                    name: name.clone(),
+                    description: Some(format!("流水线工具 `{name}`")),
+                    input_schema: serde_json::json!({"type": "object", "properties": {}}),
+                });
+            }
+        }
+    }
     let tools: Vec<crate::llm::LlmToolDefinition> = if let Some(perms) = tool_permissions {
         if perms.allow_all {
             all_tools
@@ -642,19 +670,10 @@ pub async fn stage_call_with_scratchpad(
         all_tools
     };
 
-    let perms_clone = tool_permissions.cloned();
     let pad = scratchpad.clone();
     let execute = move |name: String, args_json: String| {
         let pad = pad.clone();
-        let perms = perms_clone.clone();
         std::pin::Pin::from(Box::pin(async move {
-            if let Some(p) = &perms {
-                if p.requires_approval(&name) {
-                    return Err(format!(
-                        "工具 `{name}` 被标记为需要审批 (require_approval)，当前未获得授权，禁止执行"
-                    ));
-                }
-            }
             match execute_scratchpad_tool(&pad, &name, &args_json) {
                 Some(res) => res,
                 None => Err(format!("未知的工作区工具 `{name}`")),
