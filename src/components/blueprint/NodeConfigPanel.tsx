@@ -91,6 +91,7 @@ import { ScriptwriterPipelineNode } from './nodes/ScriptwriterPipelineNode';
 import { MacroPinsNode } from './nodes/MacroPinsNode';
 import { MacroInstanceNode } from './nodes/MacroInstanceNode';
 import { ToolPermissionsCard } from './ToolPermissionsCard';
+import type { ToolItem } from './ToolPermissionsModal';
 import type {
   BlueprintMacro,
   MacroInstanceConfig,
@@ -107,6 +108,7 @@ export interface NodeConfigComponentProps<C> {
   onUpdate: (updates: Partial<C>) => void;
   /** 当前预设 id：供需要读取预设级资产（Schema 列表 / UI 布局列表）的节点配置使用。 */
   presetId?: number;
+  availableTools?: ToolItem[];
 }
 
 // ─── Panel props ───
@@ -119,6 +121,7 @@ export interface NodeConfigPanelProps {
   presetId?: number;
   macros?: BlueprintMacro[];
   onOpenMacro?: (macroId: string) => void;
+  availableTools?: ToolItem[];
 }
 
 // ─── Node type → display label ───
@@ -559,6 +562,8 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as ScriptwriterPipelineConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateNode(node().id, updates)}
+                    presetId={props.presetId}
+                    availableTools={props.availableTools}
                   />
                 </Match>
                 <Match when={node().type === 'agent_mode_switch'}>
@@ -594,6 +599,7 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     <ToolPermissionsCard
                       permissions={(node().config as DirectorConfig).tool_permissions}
                       isLocked={isLocked()}
+                      availableTools={props.availableTools}
                       onUpdate={(tool_permissions) => updateNode(node().id, { tool_permissions })}
                     />
                   </div>
@@ -618,6 +624,7 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     <ToolPermissionsCard
                       permissions={(node().config as ActorDefinition).tool_permissions}
                       isLocked={isLocked()}
+                      availableTools={props.availableTools}
                       onUpdate={(tool_permissions) => updateNode(node().id, { tool_permissions })}
                     />
                   </div>

@@ -26,6 +26,7 @@ import {
 import type { BlueprintMacro, BlueprintNode, NodeConfig } from '../../../src/lib/blueprint/types';
 import { isNodeLocked } from './mobileNodeLayout';
 import { MobileNodeConfigForm } from './MobileNodeConfigForms';
+import type { MobileToolItem } from './MobileToolPermissionsModal';
 import { showToast } from '../Toast';
 
 export interface MobileNodeConfigPanelProps {
@@ -43,6 +44,8 @@ export interface MobileNodeConfigPanelProps {
   macros?: BlueprintMacro[];
   /** 跳转进入宏子图回调 */
   onOpenMacro?: (macroId: string) => void;
+  /** 全局能力池（用于智能体工具权限编辑） */
+  availableTools?: MobileToolItem[];
 }
 
 // ─── 抽屉高度档位（vh 百分比）───
@@ -234,6 +237,7 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
                 node={node()}
                 macros={props.macros}
                 onOpenMacro={props.onOpenMacro}
+                availableTools={props.availableTools}
                 onConfigChange={(config) => props.onConfigChange(node().id, config)}
               />
             </div>

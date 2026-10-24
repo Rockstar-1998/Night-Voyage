@@ -932,8 +932,12 @@ mod tests {
     async fn test_mcp_delivery_and_validation_of_canonical_v3_preset() {
         let db = setup_test_db().await;
         // 1. 读取 V3.0 预设标准产物
-        let preset_path = "D:/data/Night Voyage/测试预设/Night Voyage 全能核心预设 V3.0 (宏化智能体与契约驱动版).nvpreset.json";
-        let preset_raw = std::fs::read_to_string(preset_path).expect("read canonical v3 preset");
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let preset_path = manifest_dir
+            .parent()
+            .expect("manifest parent dir")
+            .join("测试预设/Night Voyage 全能核心预设 V3.0 (宏化智能体与契约驱动版).nvpreset.json");
+        let preset_raw = std::fs::read_to_string(&preset_path).expect("read canonical v3 preset");
 
         // 2. 导入预设并验证
         let service = crate::services::preset_service::PresetService::new(&db);

@@ -522,7 +522,7 @@ pub async fn blueprint_validate_ui_contract(
         // 2. 否则查找该 preset 下已创建的 UI 模板
         let layouts = crate::commands::ui_layout::preset_ui_layout_list(preset_id, state.clone())
             .await
-            .map_err(|e| format!("查询预设 UI 布局列表失败: {e}"))?;
+            .map_err(|e| format!("查询预设 UI 布局列表失败: {e}").replace('\\', "/"))?;
         layouts.into_iter().next()
     };
 

@@ -57,7 +57,7 @@ import type {
   PinType,
 } from '../../../src/lib/blueprint/types';
 import { PIN_TYPE_COLORS } from './mobileNodeLayout';
-import { MobileToolPermissionsCard } from './MobileToolPermissionsModal';
+import { MobileToolPermissionsCard, type MobileToolItem } from './MobileToolPermissionsModal';
 
 // ─── 公共 Props ───
 
@@ -66,6 +66,7 @@ export interface MobileNodeConfigFormProps {
   onConfigChange: (config: NodeConfig) => void;
   macros?: BlueprintMacro[];
   onOpenMacro?: (macroId: string) => void;
+  availableTools?: MobileToolItem[];
 }
 
 // ─── 公共输入组件（移动端触摸优化）───
@@ -1808,6 +1809,7 @@ const BannedWordsConfigForm: Component<{
 const ScriptwriterPipelineForm: Component<{
   config: ScriptwriterPipelineConfig;
   onChange: (c: ScriptwriterPipelineConfig) => void;
+  availableTools?: MobileToolItem[];
 }> = (props) => {
   const stages = () => props.config.stages || [];
 
@@ -1997,6 +1999,7 @@ const ScriptwriterPipelineForm: Component<{
 
               <MobileToolPermissionsCard
                 permissions={stage.tool_permissions}
+                availableTools={props.availableTools}
                 onUpdate={(perms) => handleUpdateStage(idx(), { tool_permissions: perms })}
               />
             </div>
@@ -2071,6 +2074,7 @@ const AgentModeSwitchForm: Component<{
 const DirectorConfigForm: Component<{
   config: DirectorConfig;
   onChange: (c: DirectorConfig) => void;
+  availableTools?: MobileToolItem[];
 }> = (props) => {
   return (
     <div class="flex flex-col gap-4 px-4">
@@ -2115,6 +2119,7 @@ const DirectorConfigForm: Component<{
 
       <MobileToolPermissionsCard
         permissions={props.config.tool_permissions}
+        availableTools={props.availableTools}
         onUpdate={(perms) => props.onChange({ ...props.config, tool_permissions: perms })}
       />
 
@@ -2134,6 +2139,7 @@ const DirectorConfigForm: Component<{
 const ActorDefinitionForm: Component<{
   config: ActorDefinition;
   onChange: (c: ActorDefinition) => void;
+  availableTools?: MobileToolItem[];
 }> = (props) => {
   return (
     <div class="flex flex-col gap-4 px-4">
@@ -2177,6 +2183,7 @@ const ActorDefinitionForm: Component<{
 
       <MobileToolPermissionsCard
         permissions={props.config.tool_permissions}
+        availableTools={props.availableTools}
         onUpdate={(perms) => props.onChange({ ...props.config, tool_permissions: perms })}
       />
 
@@ -2599,6 +2606,7 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
       <Match when={props.node.type === 'scriptwriter_pipeline'}>
         <ScriptwriterPipelineForm
           config={props.node.config as ScriptwriterPipelineConfig}
+          availableTools={props.availableTools}
           onChange={(c: ScriptwriterPipelineConfig) => props.onConfigChange({ type: 'scriptwriter_pipeline', config: c })}
         />
       </Match>
@@ -2611,12 +2619,14 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
       <Match when={props.node.type === 'director_config'}>
         <DirectorConfigForm
           config={props.node.config as DirectorConfig}
+          availableTools={props.availableTools}
           onChange={(c: DirectorConfig) => props.onConfigChange({ type: 'director_config', config: c })}
         />
       </Match>
       <Match when={props.node.type === 'actor_definition'}>
         <ActorDefinitionForm
           config={props.node.config as ActorDefinition}
+          availableTools={props.availableTools}
           onChange={(c: ActorDefinition) => props.onConfigChange({ type: 'actor_definition', config: c })}
         />
       </Match>

@@ -225,6 +225,7 @@ export const ScriptwriterPipelineNode: Component<NodeConfigComponentProps<Script
                   <ToolPermissionsCard
                     permissions={stageItem.tool_permissions}
                     isLocked={props.isLocked}
+                    availableTools={props.availableTools}
                     onUpdate={(perms) => handleUpdateStage(idx(), { tool_permissions: perms })}
                   />
                 </div>

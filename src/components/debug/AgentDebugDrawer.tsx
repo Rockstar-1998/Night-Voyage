@@ -27,6 +27,7 @@ interface TimelineEvent {
     | 'schema_prune'
     | 'schema_patch'
     | 'nudge_retry'
+    | 'loop_reject'
     | 'sub_agent';
   title: string;
   detail: string;
@@ -362,12 +363,43 @@ export const AgentDebugDrawer: Component<AgentDebugDrawerProps> = (props) => {
                                 ? 'bg-emerald-400'
                                 : ev.status === 'blocked'
                                 ? 'bg-rose-500'
+                                : ev.status === 'failed'
+                                ? 'bg-red-600'
+                                : ev.kind === 'loop_reject'
+                                ? 'bg-amber-400'
                                 : 'bg-cyan-400'
                             }`}
                           />
                           <div class="p-3 rounded-lg bg-white/[0.03] border border-white/5 space-y-1 hover:border-white/15 transition-all">
                             <div class="flex items-center justify-between">
-                              <span class="text-xs font-bold text-white">{ev.title}</span>
+                              <div class="flex items-center gap-1.5 flex-wrap">
+                                <Show when={ev.kind === 'loop_reject'}>
+                                  <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                                    审阅打回
+                                  </span>
+                                </Show>
+                                <Show when={ev.kind === 'nudge_retry'}>
+                                  <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    禁词自纠
+                                  </span>
+                                </Show>
+                                <Show when={ev.kind === 'tool_call'}>
+                                  <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                    工具调用
+                                  </span>
+                                </Show>
+                                <Show when={ev.kind === 'gate'}>
+                                  <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    门禁判定
+                                  </span>
+                                </Show>
+                                <Show when={ev.kind === 'sub_agent'}>
+                                  <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    子智能体
+                                  </span>
+                                </Show>
+                                <span class="text-xs font-bold text-white">{ev.title}</span>
+                              </div>
                               <span class="text-[10px] font-mono text-mist-solid/40">{ev.time}</span>
                             </div>
                             <p class="text-xs text-mist-solid/70 font-mono leading-relaxed">{ev.detail}</p>

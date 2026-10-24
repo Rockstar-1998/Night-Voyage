@@ -689,19 +689,42 @@ pub struct RejectionLoopState {
     pub last_critique: Option<String>,
 }
 
-impl ScriptwriterStage {
-    pub fn effective_tools(&self) -> Vec<String> {
-        match &self.tool_permissions {
-            Some(perms) => perms.resolve_tools(&self.tools),
-            None => self.tools.clone(),
+/// 智能体工具权限特征，统一各实体（Stage/Director/Actor）的白名单判定与生效工具解析。
+pub trait HasAgentToolPermissions {
+    fn tool_permissions(&self) -> Option<&AgentToolPermissions>;
+    fn fallback_tools(&self) -> &[String];
+
+    fn effective_tools(&self) -> Vec<String> {
+        match self.tool_permissions() {
+            Some(perms) => perms.resolve_tools(self.fallback_tools()),
+            None => self.fallback_tools().to_vec(),
         }
     }
 
-    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        match &self.tool_permissions {
+    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        match self.tool_permissions() {
             Some(perms) => perms.is_tool_allowed(tool_name),
-            None => self.tools.iter().any(|t| t == tool_name),
+            None => self.fallback_tools().iter().any(|t| t == tool_name),
         }
+    }
+}
+
+impl HasAgentToolPermissions for ScriptwriterStage {
+    fn tool_permissions(&self) -> Option<&AgentToolPermissions> {
+        self.tool_permissions.as_ref()
+    }
+    fn fallback_tools(&self) -> &[String] {
+        &self.tools
+    }
+}
+
+impl ScriptwriterStage {
+    pub fn effective_tools(&self) -> Vec<String> {
+        HasAgentToolPermissions::effective_tools(self)
+    }
+
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        HasAgentToolPermissions::is_tool_allowed(self, tool_name)
     }
 }
 
@@ -769,19 +792,22 @@ pub struct DirectorConfig {
     pub is_locked: bool,
 }
 
+impl HasAgentToolPermissions for DirectorConfig {
+    fn tool_permissions(&self) -> Option<&AgentToolPermissions> {
+        self.tool_permissions.as_ref()
+    }
+    fn fallback_tools(&self) -> &[String] {
+        &self.tools
+    }
+}
+
 impl DirectorConfig {
     pub fn effective_tools(&self) -> Vec<String> {
-        match &self.tool_permissions {
-            Some(perms) => perms.resolve_tools(&self.tools),
-            None => self.tools.clone(),
-        }
+        HasAgentToolPermissions::effective_tools(self)
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        match &self.tool_permissions {
-            Some(perms) => perms.is_tool_allowed(tool_name),
-            None => self.tools.iter().any(|t| t == tool_name),
-        }
+        HasAgentToolPermissions::is_tool_allowed(self, tool_name)
     }
 }
 
@@ -803,19 +829,22 @@ pub struct ActorDefinition {
     pub is_locked: bool,
 }
 
+impl HasAgentToolPermissions for ActorDefinition {
+    fn tool_permissions(&self) -> Option<&AgentToolPermissions> {
+        self.tool_permissions.as_ref()
+    }
+    fn fallback_tools(&self) -> &[String] {
+        &self.tools
+    }
+}
+
 impl ActorDefinition {
     pub fn effective_tools(&self) -> Vec<String> {
-        match &self.tool_permissions {
-            Some(perms) => perms.resolve_tools(&self.tools),
-            None => self.tools.clone(),
-        }
+        HasAgentToolPermissions::effective_tools(self)
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        match &self.tool_permissions {
-            Some(perms) => perms.is_tool_allowed(tool_name),
-            None => self.tools.iter().any(|t| t == tool_name),
-        }
+        HasAgentToolPermissions::is_tool_allowed(self, tool_name)
     }
 }
 
@@ -899,12 +928,7 @@ pub enum PinType {
 
 impl PinType {
     pub fn is_compatible(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Exec, Self::Exec) => true,
-            (Self::Exec, _) | (_, Self::Exec) => false,
-            (Self::Object, _) | (_, Self::Object) => true,
-            (a, b) => a == b,
-        }
+        self == other
     }
 }
 

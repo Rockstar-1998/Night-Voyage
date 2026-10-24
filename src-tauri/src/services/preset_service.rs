@@ -212,10 +212,8 @@ impl<'a> PresetService<'a> {
         preset_id: Option<i64>,
         graph_str: &str,
     ) -> Result<(), String> {
-        let graph: crate::models::blueprint::BlueprintGraph = match serde_json::from_str(graph_str) {
-            Ok(g) => g,
-            Err(_) => return Ok(()),
-        };
+        let graph: crate::models::blueprint::BlueprintGraph = serde_json::from_str(graph_str)
+            .map_err(|err| format!("蓝图图数据反序列化失败: {err}").replace('\\', "/"))?;
 
         let layout_id_from_node = graph.nodes.iter().find_map(|node| {
             if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {

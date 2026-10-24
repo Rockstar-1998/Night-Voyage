@@ -92,9 +92,6 @@ export interface PortLayout {
  */
 export function isPinTypeCompatible(a?: PinType, b?: PinType): boolean {
   if (!a || !b) return true;
-  if (a === 'exec' && b === 'exec') return true;
-  if (a === 'exec' || b === 'exec') return false;
-  if (a === 'object' || b === 'object') return true;
   return a === b;
 }
 
@@ -798,7 +795,7 @@ export const CONNECTION_REJECT_MESSAGES: Record<ConnectionRejectReason, string> 
   wrong_direction: '方向错误：连线必须从 output 端口指向 input 端口',
   kind_mismatch: '引脚种类不匹配：执行流引脚与值引脚不能互连',
   value_type_mismatch: '值类型不匹配：当前仅支持 string 值引脚互连',
-  pin_type_mismatch: '引脚类型不兼容：Exec 只能连 Exec，数据引脚类型必须一致（或为 Object）',
+  pin_type_mismatch: '引脚类型不兼容：Exec 只能连 Exec，数据引脚类型必须严格一致',
   cycle: '禁止环路：该连线会形成环',
   duplicate: '连线已存在：相同起终点的连线已经画过',
 };

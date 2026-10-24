@@ -1299,15 +1299,16 @@ fn get_port_pin_type(
     }
 }
 
-/// 校验图以及所有宏内部的引脚连接类型兼容性。
-fn validate_macro_pins(
-    graph: &BlueprintGraph,
+/// 辅助校验指定节点集合与连线列表的引脚类型兼容性。
+fn validate_edges_pin_compatibility<'a>(
+    nodes: impl IntoIterator<Item = &'a BlueprintNode>,
+    edges: impl IntoIterator<Item = &'a BlueprintEdge>,
     macro_map: &HashMap<String, &BlueprintMacro>,
 ) -> Result<(), BlueprintError> {
-    // 1. 校验顶层主图中的所有连线
-    for edge in &graph.edges {
-        let src = graph.nodes.iter().find(|n| n.id == edge.source);
-        let tgt = graph.nodes.iter().find(|n| n.id == edge.target);
+    let node_list: Vec<&'a BlueprintNode> = nodes.into_iter().collect();
+    for edge in edges {
+        let src = node_list.iter().find(|n| n.id == edge.source);
+        let tgt = node_list.iter().find(|n| n.id == edge.target);
         if let (Some(s), Some(t)) = (src, tgt) {
             let st = get_port_pin_type(s, &edge.source_port, true, macro_map);
             let tt = get_port_pin_type(t, &edge.target_port, false, macro_map);
@@ -1324,28 +1325,20 @@ fn validate_macro_pins(
             }
         }
     }
+    Ok(())
+}
+
+/// 校验图以及所有宏内部的引脚连接类型兼容性。
+fn validate_macro_pins(
+    graph: &BlueprintGraph,
+    macro_map: &HashMap<String, &BlueprintMacro>,
+) -> Result<(), BlueprintError> {
+    // 1. 校验顶层主图中的所有连线
+    validate_edges_pin_compatibility(&graph.nodes, &graph.edges, macro_map)?;
 
     // 2. 校验每个宏资产内部的连线
     for m in macro_map.values() {
-        for edge in &m.edges {
-            let src = m.nodes.iter().find(|n| n.id == edge.source);
-            let tgt = m.nodes.iter().find(|n| n.id == edge.target);
-            if let (Some(s), Some(t)) = (src, tgt) {
-                let st = get_port_pin_type(s, &edge.source_port, true, macro_map);
-                let tt = get_port_pin_type(t, &edge.target_port, false, macro_map);
-                if let (Some(source_type), Some(target_type)) = (st, tt) {
-                    if !source_type.is_compatible(&target_type) {
-                        return Err(BlueprintError::IncompatiblePinTypes {
-                            edge_id: edge.id.clone(),
-                            source_port: edge.source_port.clone(),
-                            source_type,
-                            target_port: edge.target_port.clone(),
-                            target_type,
-                        });
-                    }
-                }
-            }
-        }
+        validate_edges_pin_compatibility(&m.nodes, &m.edges, macro_map)?;
     }
 
     Ok(())

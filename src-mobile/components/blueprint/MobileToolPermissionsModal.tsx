@@ -347,6 +347,7 @@ export const MobileToolPermissionsCard: Component<{
   permissions?: AgentToolPermissions;
   onUpdate: (permissions: AgentToolPermissions) => void;
   customTools?: string[];
+  availableTools?: MobileToolItem[];
 }> = (props) => {
   const [isOpen, setIsOpen] = createSignal(false);
 
@@ -440,6 +441,7 @@ export const MobileToolPermissionsCard: Component<{
         permissions={props.permissions}
         onSave={props.onUpdate}
         customTools={props.customTools}
+        availableTools={props.availableTools}
       />
     </div>
   );

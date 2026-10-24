@@ -61,6 +61,7 @@ import { BlueprintCanvas } from './BlueprintCanvas';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import { NodeSelector } from './NodeSelector';
 import { MacroDrawer } from './MacroDrawer';
+import type { ToolItem } from './ToolPermissionsModal';
 import { IconButton } from '../ui/IconButton';
 import { showConfirm, showToast } from '../Toast';
 import {
@@ -497,6 +498,68 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
       comments: [],
       macros: graph.macros || [],
     };
+  });
+
+  // 全局能力池（Local Tools + ActionBridge + MCP，Spec §4 & lines 157-158）
+  const [mcpTools, setMcpTools] = createSignal<Array<{ name: string; description: string }>>([]);
+
+  createEffect(() => {
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => {
+        invoke<Array<{ name: string; description: string }>>('mcp_tool_names')
+          .then((tools) => setMcpTools(tools || []))
+          .catch(() => {});
+      })
+      .catch(() => {});
+  });
+
+  const availableTools = createMemo<ToolItem[]>(() => {
+    const list: ToolItem[] = [];
+    const seen = new Set<string>();
+
+    // 1. 本地蓝图工具定义 (ToolDefinition)
+    for (const n of graph.nodes) {
+      if (n.type === 'tool_definition') {
+        const cfg = n.config as any;
+        const name = cfg?.tool_name || n.id;
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          list.push({
+            name,
+            type: 'local',
+            description: cfg?.description || '本地蓝图 ToolDefinition 契约',
+          });
+        }
+      }
+    }
+
+    // 2. ActionBridge 跨域查询原语 (白名单内置)
+    const actionBridgeBuiltins: ToolItem[] = [
+      { name: 'query_world_book_entries', type: 'action_bridge', description: 'ActionBridge 世界书条目跨域检索' },
+      { name: 'get_character_detail', type: 'action_bridge', description: 'ActionBridge 角色档案与属性查询' },
+      { name: 'get_conversation_detail', type: 'action_bridge', description: 'ActionBridge 会话元数据查询' },
+      { name: 'get_session_state', type: 'action_bridge', description: 'ActionBridge 运行时状态容器查询' },
+    ];
+    for (const ab of actionBridgeBuiltins) {
+      if (!seen.has(ab.name)) {
+        seen.add(ab.name);
+        list.push(ab);
+      }
+    }
+
+    // 3. MCP 工具
+    for (const mcp of mcpTools()) {
+      if (mcp.name && !seen.has(mcp.name)) {
+        seen.add(mcp.name);
+        list.push({
+          name: mcp.name,
+          type: 'mcp',
+          description: mcp.description || 'MCP 服务器动态工具',
+        });
+      }
+    }
+
+    return list;
   });
 
   const runContractValidation = async () => {
@@ -1361,6 +1424,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
               presetId={props.presetId}
               macros={graph.macros || []}
               onOpenMacro={setActiveMacroId}
+              availableTools={availableTools()}
             />
           </Show>
         </div>
