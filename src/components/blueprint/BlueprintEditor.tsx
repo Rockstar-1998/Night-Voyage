@@ -1222,8 +1222,15 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </IconButton>
           <IconButton
             onClick={() => setShowCompilePreview(true)}
-            disabled={isLoading()}
-            label="编译预览"
+            disabled={
+              isLoading() ||
+              (contractValidation() !== null && !contractValidation()!.isValid)
+            }
+            label={
+              contractValidation() && !contractValidation()!.isValid
+                ? '数据契约未对齐，禁止编译预览'
+                : '编译预览'
+            }
             size="sm"
           >
             <FileText size={16} />

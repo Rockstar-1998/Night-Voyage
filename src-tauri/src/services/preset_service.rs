@@ -207,6 +207,65 @@ impl<'a> PresetService<'a> {
         .await
     }
 
+    pub async fn validate_ui_contract_for_graph(
+        db: &SqlitePool,
+        preset_id: Option<i64>,
+        graph_str: &str,
+    ) -> Result<(), String> {
+        let graph: crate::models::blueprint::BlueprintGraph = match serde_json::from_str(graph_str) {
+            Ok(g) => g,
+            Err(_) => return Ok(()),
+        };
+
+        let layout_id_from_node = graph.nodes.iter().find_map(|node| {
+            if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
+                if !cfg.layout_id.trim().is_empty() {
+                    Some(cfg.layout_id.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        let layout_row = if let Some(ref layout_id) = layout_id_from_node {
+            sqlx::query_scalar::<_, String>(
+                "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
+            )
+            .bind(layout_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| format!("读取绑定 UI 布局失败 (id: {layout_id}): {err}"))?
+        } else if let Some(pid) = preset_id {
+            sqlx::query_scalar::<_, String>(
+                "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
+            )
+            .bind(pid)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| format!("读取预设关联 UI 布局失败 (preset_id: {pid}): {err}"))?
+        } else {
+            None
+        };
+
+        if let Some(layout_json) = layout_row {
+            let root_container: crate::models::ui_layout::LayoutContainer = serde_json::from_str(&layout_json)
+                .map_err(|err| format!("解析 UI 布局容器 JSON 失败: {err}"))?;
+            let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
+            root_container.collect_data_interface(&mut interface);
+            let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
+            if !validation.is_valid {
+                return Err(format!(
+                    "UI 数据契约校验失败: {}",
+                    validation.errors.join("; ")
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn create(
         &self,
         name: String,
@@ -254,46 +313,7 @@ impl<'a> PresetService<'a> {
             .transpose()?;
 
         if let Some(graph_str) = blueprint_graph.as_deref() {
-            if let Ok(graph) = serde_json::from_str::<crate::models::blueprint::BlueprintGraph>(graph_str) {
-                let layout_id_from_node = graph.nodes.iter().find_map(|node| {
-                    if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
-                        if !cfg.layout_id.trim().is_empty() {
-                            Some(cfg.layout_id.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                let layout_row = if let Some(ref layout_id) = layout_id_from_node {
-                    sqlx::query_scalar::<_, String>(
-                        "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
-                    )
-                    .bind(layout_id)
-                    .fetch_optional(self.db)
-                    .await
-                    .ok()
-                    .flatten()
-                } else {
-                    None
-                };
-
-                if let Some(layout_json) = layout_row {
-                    if let Ok(root_container) = serde_json::from_str::<crate::models::ui_layout::LayoutContainer>(&layout_json) {
-                        let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
-                        root_container.collect_data_interface(&mut interface);
-                        let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
-                        if !validation.is_valid {
-                            return Err(format!(
-                                "UI 数据契约校验失败，无法保存蓝图: {}",
-                                validation.errors.join("; ")
-                            ));
-                        }
-                    }
-                }
-            }
+            Self::validate_ui_contract_for_graph(self.db, None, graph_str).await?;
         }
         let structured_output_display = blueprint_graph
             .as_deref()
@@ -400,53 +420,7 @@ impl<'a> PresetService<'a> {
             .transpose()?;
 
         if let Some(graph_str) = blueprint_graph.as_deref() {
-            if let Ok(graph) = serde_json::from_str::<crate::models::blueprint::BlueprintGraph>(graph_str) {
-                let layout_id_from_node = graph.nodes.iter().find_map(|node| {
-                    if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
-                        if !cfg.layout_id.trim().is_empty() {
-                            Some(cfg.layout_id.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                let layout_row = if let Some(ref layout_id) = layout_id_from_node {
-                    sqlx::query_scalar::<_, String>(
-                        "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
-                    )
-                    .bind(layout_id)
-                    .fetch_optional(self.db)
-                    .await
-                    .ok()
-                    .flatten()
-                } else {
-                    sqlx::query_scalar::<_, String>(
-                        "SELECT layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC LIMIT 1",
-                    )
-                    .bind(id)
-                    .fetch_optional(self.db)
-                    .await
-                    .ok()
-                    .flatten()
-                };
-
-                if let Some(layout_json) = layout_row {
-                    if let Ok(root_container) = serde_json::from_str::<crate::models::ui_layout::LayoutContainer>(&layout_json) {
-                        let mut interface = crate::models::ui_layout::RequiredDataInterface::default();
-                        root_container.collect_data_interface(&mut interface);
-                        let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
-                        if !validation.is_valid {
-                            return Err(format!(
-                                "UI 数据契约校验失败，无法保存蓝图: {}",
-                                validation.errors.join("; ")
-                            ));
-                        }
-                    }
-                }
-            }
+            Self::validate_ui_contract_for_graph(self.db, Some(id), graph_str).await?;
         }
         let structured_output_display = blueprint_graph
             .as_deref()

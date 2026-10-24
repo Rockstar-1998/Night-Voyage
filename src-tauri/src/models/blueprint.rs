@@ -646,6 +646,23 @@ pub struct AgentToolPermissions {
     pub require_approval: Vec<String>,
 }
 
+impl AgentToolPermissions {
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        if self.allow_all {
+            return true;
+        }
+        self.allowed_tools.iter().any(|t| t == tool_name)
+    }
+
+    pub fn resolve_tools(&self, fallback: &[String]) -> Vec<String> {
+        if !self.allowed_tools.is_empty() || self.allow_all {
+            self.allowed_tools.clone()
+        } else {
+            fallback.to_vec()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScriptwriterStage {
     pub stage: String,
@@ -674,21 +691,16 @@ pub struct RejectionLoopState {
 
 impl ScriptwriterStage {
     pub fn effective_tools(&self) -> Vec<String> {
-        if let Some(perms) = &self.tool_permissions {
-            perms.allowed_tools.clone()
-        } else {
-            self.tools.clone()
+        match &self.tool_permissions {
+            Some(perms) => perms.resolve_tools(&self.tools),
+            None => self.tools.clone(),
         }
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        if let Some(perms) = &self.tool_permissions {
-            if perms.allow_all {
-                return true;
-            }
-            perms.allowed_tools.iter().any(|t| t == tool_name)
-        } else {
-            self.tools.iter().any(|t| t == tool_name)
+        match &self.tool_permissions {
+            Some(perms) => perms.is_tool_allowed(tool_name),
+            None => self.tools.iter().any(|t| t == tool_name),
         }
     }
 }
@@ -759,21 +771,16 @@ pub struct DirectorConfig {
 
 impl DirectorConfig {
     pub fn effective_tools(&self) -> Vec<String> {
-        if let Some(perms) = &self.tool_permissions {
-            perms.allowed_tools.clone()
-        } else {
-            self.tools.clone()
+        match &self.tool_permissions {
+            Some(perms) => perms.resolve_tools(&self.tools),
+            None => self.tools.clone(),
         }
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        if let Some(perms) = &self.tool_permissions {
-            if perms.allow_all {
-                return true;
-            }
-            perms.allowed_tools.iter().any(|t| t == tool_name)
-        } else {
-            self.tools.iter().any(|t| t == tool_name)
+        match &self.tool_permissions {
+            Some(perms) => perms.is_tool_allowed(tool_name),
+            None => self.tools.iter().any(|t| t == tool_name),
         }
     }
 }
@@ -798,21 +805,16 @@ pub struct ActorDefinition {
 
 impl ActorDefinition {
     pub fn effective_tools(&self) -> Vec<String> {
-        if let Some(perms) = &self.tool_permissions {
-            perms.allowed_tools.clone()
-        } else {
-            self.tools.clone()
+        match &self.tool_permissions {
+            Some(perms) => perms.resolve_tools(&self.tools),
+            None => self.tools.clone(),
         }
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        if let Some(perms) = &self.tool_permissions {
-            if perms.allow_all {
-                return true;
-            }
-            perms.allowed_tools.iter().any(|t| t == tool_name)
-        } else {
-            self.tools.iter().any(|t| t == tool_name)
+        match &self.tool_permissions {
+            Some(perms) => perms.is_tool_allowed(tool_name),
+            None => self.tools.iter().any(|t| t == tool_name),
         }
     }
 }

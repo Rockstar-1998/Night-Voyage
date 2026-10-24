@@ -114,6 +114,8 @@ pub enum BlueprintError {
         target_port: String,
         target_type: PinType,
     },
+    /// 宏定义无效（缺少 Inputs/Outputs 代理节点或引脚不合法）
+    MacroDefinitionInvalid { macro_id: String, reason: String },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -243,6 +245,9 @@ impl std::fmt::Display for BlueprintError {
                     f,
                     "incompatible pin connection on edge `{edge_id}`: source port `{source_port}` ({source_type:?}) cannot connect to target port `{target_port}` ({target_type:?})"
                 )
+            }
+            Self::MacroDefinitionInvalid { macro_id, reason } => {
+                write!(f, "blueprint macro `{macro_id}` definition invalid: {reason}")
             }
         }
     }
@@ -964,6 +969,13 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DfsColor {
+    White, // 未访问
+    Gray,  // 正在递归栈中遍历
+    Black, // 已完成遍历
+}
+
 /// 通用 3 色 DFS 有向图环检测函数。
 ///
 /// 接受所有节点标识迭代器及邻接后继节点获取闭包。若检测到环路，返回 `Some(环路路径)`。
@@ -974,44 +986,44 @@ fn find_directed_graph_cycle<'a, F>(
 where
     F: Fn(&'a str) -> Vec<&'a str>,
 {
-    let mut state: HashMap<&'a str, u8> = HashMap::new(); // 0: 未访问, 1: 正在访问(灰), 2: 完成(黑)
+    let mut state: HashMap<&'a str, DfsColor> = HashMap::new();
     let mut path: Vec<&'a str> = Vec::new();
 
     fn dfs<'a, F>(
         node: &'a str,
         get_successors: &F,
-        state: &mut HashMap<&'a str, u8>,
+        state: &mut HashMap<&'a str, DfsColor>,
         path: &mut Vec<&'a str>,
     ) -> Option<Vec<&'a str>>
     where
         F: Fn(&'a str) -> Vec<&'a str>,
     {
-        state.insert(node, 1);
+        state.insert(node, DfsColor::Gray);
         path.push(node);
 
         for next in get_successors(node) {
-            match state.get(next).copied().unwrap_or(0) {
-                1 => {
+            match state.get(next).copied().unwrap_or(DfsColor::White) {
+                DfsColor::Gray => {
                     let mut cycle = path.clone();
                     cycle.push(next);
                     return Some(cycle);
                 }
-                0 => {
+                DfsColor::White => {
                     if let Some(cycle) = dfs(next, get_successors, state, path) {
                         return Some(cycle);
                     }
                 }
-                _ => {}
+                DfsColor::Black => {}
             }
         }
 
         path.pop();
-        state.insert(node, 2);
+        state.insert(node, DfsColor::Black);
         None
     }
 
     for node in nodes {
-        if state.get(node).copied().unwrap_or(0) == 0 {
+        if state.get(node).copied().unwrap_or(DfsColor::White) == DfsColor::White {
             if let Some(cycle) = dfs(node, &get_successors, &mut state, &mut path) {
                 return Some(cycle);
             }
@@ -1136,9 +1148,15 @@ pub fn validate_blueprint_ui_contract(
                 }
 
                 if contract.required_inventory {
-                    for item in &cfg.inventory {
-                        if item.id.trim().is_empty() {
-                            errors.push(format!("[{node_id}] 背包初始物品缺少必需的 id 标识"));
+                    if cfg.inventory.is_empty() {
+                        missing_inventory = true;
+                        errors.push(format!("[{node_id}] UI 布局依赖背包数据，但 InitialStateConfig 未配置任何初始背包物品"));
+                    } else {
+                        for item in &cfg.inventory {
+                            if item.id.trim().is_empty() {
+                                missing_inventory = true;
+                                errors.push(format!("[{node_id}] 背包初始物品缺少必需的 id 标识"));
+                            }
                         }
                     }
                 }
@@ -1388,6 +1406,20 @@ fn inline_single_macro_instance(
         .filter(|e| e.source == instance_id)
         .cloned()
         .collect();
+
+    if !ext_incoming.is_empty() && inputs_node.is_none() {
+        return Err(BlueprintError::MacroDefinitionInvalid {
+            macro_id: macro_def.id.clone(),
+            reason: format!("宏实例 '{instance_id}' 存在输入连线，但宏子图缺少 Inputs 输入代理节点"),
+        });
+    }
+
+    if !ext_outgoing.is_empty() && outputs_nodes.is_empty() {
+        return Err(BlueprintError::MacroDefinitionInvalid {
+            macro_id: macro_def.id.clone(),
+            reason: format!("宏实例 '{instance_id}' 存在输出连线，但宏子图缺少 Outputs 输出代理节点"),
+        });
+    }
 
     // 3. 重连线表
     let mut new_edges = Vec::new();
@@ -4102,9 +4134,17 @@ mod tests {
             id: "n_init".to_string(),
             position: Position { x: 100.0, y: 100.0 },
             config: NodeConfig::InitialStateConfig(InitialStateConfig {
-                stats,
+                stats: stats.clone(),
                 flags: flags.clone(),
-                inventory: Vec::new(),
+                inventory: vec![crate::models::game_state::InventoryItem {
+                    id: "item_chip".to_string(),
+                    name: "Memory Chip".to_string(),
+                    count: 1,
+                    unit_weight: 0.1,
+                    unit_price: 10.0,
+                    icon: None,
+                    properties: HashMap::new(),
+                }],
                 is_locked: false,
             }),
         });
@@ -4127,13 +4167,38 @@ mod tests {
             config: NodeConfig::InitialStateConfig(InitialStateConfig {
                 stats: bad_stats,
                 flags: flags.clone(),
-                inventory: Vec::new(),
+                inventory: vec![crate::models::game_state::InventoryItem {
+                    id: "item_chip".to_string(),
+                    name: "Memory Chip".to_string(),
+                    count: 1,
+                    unit_weight: 0.1,
+                    unit_price: 10.0,
+                    icon: None,
+                    properties: HashMap::new(),
+                }],
                 is_locked: false,
             }),
         });
         let res_bad = validate_blueprint_ui_contract(&bad_graph, &contract);
         assert!(!res_bad.is_valid);
         assert!(res_bad.errors.iter().any(|e| e.contains("低于 UI 声明的最小值")));
+
+        // 5. Required inventory but empty inventory fails validation
+        let mut empty_inv_graph = empty_graph.clone();
+        empty_inv_graph.nodes.push(crate::models::blueprint::BlueprintNode {
+            id: "n_init".to_string(),
+            position: Position { x: 100.0, y: 100.0 },
+            config: NodeConfig::InitialStateConfig(InitialStateConfig {
+                stats: stats.clone(),
+                flags: flags.clone(),
+                inventory: Vec::new(),
+                is_locked: false,
+            }),
+        });
+        let res_empty_inv = validate_blueprint_ui_contract(&empty_inv_graph, &contract);
+        assert!(!res_empty_inv.is_valid);
+        assert!(res_empty_inv.missing_inventory);
+        assert!(res_empty_inv.errors.iter().any(|e| e.contains("未配置任何初始背包物品")));
     }
 
     #[test]
@@ -4767,5 +4832,100 @@ mod tests {
         let edge_to_fail = inlined.edges.iter().find(|e| e.target == "end_fail").expect("edge to end_fail");
         assert!(edge_to_fail.source.contains("gate"));
         assert_eq!(edge_to_fail.source_port, "fail");
+    }
+
+    #[test]
+    fn test_macro_inline_missing_proxies_error() {
+        use crate::models::blueprint::{
+            BlueprintMacro, MacroPinDefinition, PinType,
+        };
+
+        // Macro missing inputs proxy node
+        let macro_no_in = BlueprintMacro {
+            id: "m_no_in".to_string(),
+            name: "No In".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "In".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: Vec::new(),
+            nodes: Vec::new(), // No MacroInputs node!
+            edges: Vec::new(),
+        };
+
+        let graph_no_in = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_no_in".to_string(),
+                        name: None,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+            ],
+            edges: vec![edge("e1", "n_start", "out", "inst", "in")],
+            comments: Vec::new(),
+            macros: vec![macro_no_in],
+        };
+
+        let err = expand_macros(&graph_no_in, None)
+            .expect_err("Incoming edge to macro with missing inputs proxy must fail");
+        match err {
+            BlueprintError::MacroDefinitionInvalid { macro_id, reason } => {
+                assert_eq!(macro_id, "m_no_in");
+                assert!(reason.contains("缺少 Inputs 输入代理节点"));
+            }
+            other => panic!("Expected MacroDefinitionInvalid, got: {:?}", other),
+        }
+
+        // Macro missing outputs proxy node
+        let macro_no_out = BlueprintMacro {
+            id: "m_no_out".to_string(),
+            name: "No Out".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: Vec::new(),
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "Out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: Vec::new(), // No MacroOutputs node!
+            edges: Vec::new(),
+        };
+
+        let graph_no_out = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "inst".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_no_out".to_string(),
+                        name: None,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![edge("e2", "inst", "out", "n_end", "in")],
+            comments: Vec::new(),
+            macros: vec![macro_no_out],
+        };
+
+        let err2 = expand_macros(&graph_no_out, None)
+            .expect_err("Outgoing edge from macro with missing outputs proxy must fail");
+        match err2 {
+            BlueprintError::MacroDefinitionInvalid { macro_id, reason } => {
+                assert_eq!(macro_id, "m_no_out");
+                assert!(reason.contains("缺少 Outputs 输出代理节点"));
+            }
+            other => panic!("Expected MacroDefinitionInvalid, got: {:?}", other),
+        }
     }
 }

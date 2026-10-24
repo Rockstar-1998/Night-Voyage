@@ -760,6 +760,18 @@ pub async fn compile_prompt(
             err.to_string().replace('\\', "/")
         )
     })?;
+
+    // UI 数据契约静态校验门禁（C2 零回退与 Spec §2）：
+    // 若蓝图或关联预设定义了 UI 布局，必须满足 UI 数据契约，
+    // 否则物理阻止会话启动与编译执行。
+    crate::services::preset_service::PresetService::validate_ui_contract_for_graph(
+        db,
+        Some(preset_id),
+        blueprint_graph_str,
+    )
+    .await
+    .map_err(|err| err.replace('\\', "/"))?;
+
     let blueprint_result = execute_blueprint(&graph, &exec_context)
         .await
         .map_err(|err| err.to_string().replace('\\', "/"))?;

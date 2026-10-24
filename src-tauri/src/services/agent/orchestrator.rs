@@ -162,10 +162,6 @@ impl ReviewVerdict {
             || upper.contains("[REJECTED]")
             || upper.contains("[VERDICT: REJECT]")
             || upper.contains("[VERDICT:REJECT]")
-            || text.contains("[打回]")
-            || text.contains("【打回】")
-            || text.starts_with("打回：")
-            || text.starts_with("打回:")
         {
             Self::Rejected
         } else {
@@ -274,8 +270,14 @@ where
         let max_loops = stage_cfg.max_loop_count.unwrap_or(2);
         let mut loop_count = 0u32;
 
-        let target_stage = if let Some(ref target_name) = stage_cfg.reject_target {
-            stages
+        while ReviewVerdict::parse(&output).is_rejected() {
+            let target_name = stage_cfg.reject_target.as_ref().ok_or_else(|| {
+                format!(
+                    "阶段 {} 判定打回重写，但未配置 reject_target（C2 严禁隐式回退）",
+                    stage_cfg.stage
+                )
+            })?;
+            let target_stage = stages
                 .iter()
                 .find(|s| s.stage == *target_name || s.workspace_key == *target_name)
                 .ok_or_else(|| {
@@ -283,12 +285,8 @@ where
                         "阶段 {} 配置的打回目标 reject_target '{}' 不存在于流水线阶段列表中",
                         stage_cfg.stage, target_name
                     )
-                })?
-        } else {
-            &stages[0]
-        };
+                })?;
 
-        while ReviewVerdict::parse(&output).is_rejected() {
             loop_count += 1;
             let loop_state = crate::models::blueprint::RejectionLoopState {
                 loop_id: format!("{}_{}", stage_cfg.stage, target_stage.stage),
@@ -1146,6 +1144,54 @@ mod tests {
         .expect_err("non-existent reject_target must return Err");
 
         assert!(err.contains("不存在于流水线阶段列表中"));
+    }
+
+    #[tokio::test]
+    async fn test_rejection_pipeline_missing_reject_target_fails() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "初稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+            ScriptwriterStage {
+                stage: "critic".to_string(),
+                workspace_key: "critique".to_string(),
+                prompt: "审阅".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None, // 未配置 reject_target
+                max_loop_count: Some(2),
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "定稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let err = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            20,
+            "【前情锁定】",
+            "测试未配置打回目标",
+            &scratchpad,
+            |_l, _i, _p, _pad| async { Ok("[REJECT] 驳回未配置目标".to_string()) },
+        )
+        .await
+        .expect_err("missing reject_target on rejection must return Err (C2 zero fallback)");
+
+        assert!(err.contains("未配置 reject_target（C2 严禁隐式回退）"));
     }
 
     #[tokio::test]

@@ -208,13 +208,27 @@ export function getOutputPorts(
     case 'writer':
     case 'querier':
     case 'banned_words_config':
-    case 'scriptwriter_pipeline':
-    case 'agent_mode_switch':
     case 'director_config':
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
+    case 'scriptwriter_pipeline': {
+      const hasReject = Array.isArray(node.config.stages) && node.config.stages.some((s) => s.reject_target && s.reject_target.trim() !== '');
+      if (hasReject) {
+        return [
+          { port: 'out', label: '完成', kind: 'exec', direction: 'output', pinType: 'exec' },
+          { port: 'reject', label: '打回', kind: 'exec', direction: 'output', pinType: 'exec' },
+        ];
+      }
+      return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
+    }
+    case 'agent_mode_switch':
+      return [
+        { port: 'out_single', label: '单模型', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'out_director_actor', label: '导演-演员', kind: 'bool', direction: 'output', pinType: 'exec' },
+        { port: 'out_scriptwriter', label: '剧本流水线', kind: 'bool', direction: 'output', pinType: 'exec' },
+      ];
     case 'condition_gate':
       return [
         { port: 'pass', label: node.config.pass_label || '放行', kind: 'bool', direction: 'output', pinType: 'exec' },
@@ -828,7 +842,7 @@ export function validateConnection(
   if (dup) {
     return { ok: false, reason: 'duplicate' };
   }
-  if (wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
+  if (sourcePort.toLowerCase() !== 'reject' && wouldCreateCycle(graph.edges, sourceNode.id, targetNode.id)) {
     return { ok: false, reason: 'cycle' };
   }
   return { ok: true, reason: null };
