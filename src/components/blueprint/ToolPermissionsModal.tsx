@@ -22,28 +22,13 @@ export interface ToolItem {
   description?: string;
 }
 
-export const DEFAULT_CAPABILITY_POOL: ToolItem[] = [
-  { name: 'read_text', type: 'action_bridge', description: '读取工作区变量与前置阶段输出' },
-  { name: 'write_text', type: 'action_bridge', description: '向工作区写入文本或阶段草稿' },
-  { name: 'inspect_state', type: 'action_bridge', description: '检查角色属性、全局状态或道具详情' },
-  { name: 'execute_action', type: 'action_bridge', description: '执行游戏内动作指令契约' },
-  { name: 'inventory_add', type: 'action_bridge', description: '向角色背包增添道具或装备' },
-  { name: 'inventory_remove', type: 'action_bridge', description: '扣减或消耗角色背包中的道具' },
-  { name: 'update_stat', type: 'action_bridge', description: '更新数值属性（生命、San值、信用点等）' },
-  { name: 'check_inventory', type: 'action_bridge', description: '检索背包物品及其数量' },
-  { name: 'dice_roll', type: 'action_bridge', description: '执行跑团 D20/D100 检定' },
-  { name: 'banned_words_check', type: 'action_bridge', description: '执行敏感词门禁审核' },
-  { name: 'buy_item', type: 'local', description: '本地工具：执行商店购买逻辑' },
-  { name: 'cast_spell', type: 'local', description: '本地工具：法术释放与消耗结算' },
-  { name: 'mcp_query', type: 'mcp', description: 'MCP 服务：调用外部查询工具' },
-];
-
 export interface ToolPermissionsModalProps {
   isOpen: boolean;
   onClose: () => void;
   permissions?: AgentToolPermissions;
   onSave: (permissions: AgentToolPermissions) => void;
   customTools?: string[];
+  availableTools?: ToolItem[];
 }
 
 export const ToolPermissionsModal: Component<ToolPermissionsModalProps> = (props) => {
@@ -72,18 +57,42 @@ export const ToolPermissionsModal: Component<ToolPermissionsModalProps> = (props
   );
 
   const fullCapabilityPool = createMemo<ToolItem[]>(() => {
-    const pool = [...DEFAULT_CAPABILITY_POOL];
+    const pool: ToolItem[] = props.availableTools ? [...props.availableTools] : [];
     const existing = new Set(pool.map((t) => t.name));
+
     for (const tool of props.customTools || []) {
       if (!existing.has(tool)) {
         pool.push({
           name: tool,
           type: 'local',
-          description: '蓝图自定义工具',
+          description: '蓝图 ToolDefinition 契约',
         });
         existing.add(tool);
       }
     }
+
+    for (const tool of props.permissions?.allowed_tools || []) {
+      if (!existing.has(tool)) {
+        pool.push({
+          name: tool,
+          type: 'local',
+          description: '已配置白名单工具',
+        });
+        existing.add(tool);
+      }
+    }
+
+    for (const tool of props.permissions?.require_approval || []) {
+      if (!existing.has(tool)) {
+        pool.push({
+          name: tool,
+          type: 'local',
+          description: '已配置需审批工具',
+        });
+        existing.add(tool);
+      }
+    }
+
     return pool;
   });
 

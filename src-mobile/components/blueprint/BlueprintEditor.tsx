@@ -40,7 +40,7 @@ import type {
 import {
   blueprintValidateUiContract,
   type ContractValidationResultDto,
-} from '../../../src/lib/backend';
+} from '../../lib/backend/blueprint';
 import {
   clampZoom,
   createNode,

@@ -148,6 +148,36 @@ pub async fn assemble_context(
     Ok((system, user))
 }
 
+/// 审阅裁决枚举，消除字符串原始类型偏执 (Primitive Obsession)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewVerdict {
+    Approved,
+    Rejected,
+}
+
+impl ReviewVerdict {
+    pub fn parse(text: &str) -> Self {
+        let upper = text.to_uppercase();
+        if upper.contains("[REJECT]")
+            || upper.contains("[REJECTED]")
+            || upper.contains("[VERDICT: REJECT]")
+            || upper.contains("[VERDICT:REJECT]")
+            || text.contains("[打回]")
+            || text.contains("【打回】")
+            || text.starts_with("打回：")
+            || text.starts_with("打回:")
+        {
+            Self::Rejected
+        } else {
+            Self::Approved
+        }
+    }
+
+    pub fn is_rejected(&self) -> bool {
+        matches!(self, Self::Rejected)
+    }
+}
+
 /// 动态执行剧本流水线的通用核心逻辑。
 ///
 /// 接收 $N$ 个阶段（$N \ge 2$）：
@@ -160,11 +190,38 @@ pub async fn execute_dynamic_scriptwriter_pipeline<F, Fut>(
     blackout_marker: &str,
     user_input: &str,
     scratchpad: &Scratchpad,
-    mut call_stage: F,
+    call_stage: F,
 ) -> Result<String, String>
 where
     F: FnMut(String, String, String, Scratchpad) -> Fut,
     Fut: Future<Output = Result<String, String>>,
+{
+    execute_dynamic_scriptwriter_pipeline_with_hook(
+        stages,
+        anchor_tail_chars,
+        blackout_marker,
+        user_input,
+        scratchpad,
+        call_stage,
+        |_stage, _loop_count, _max_loops, _critique| {},
+    )
+    .await
+}
+
+/// 动态执行剧本流水线，附带审阅打回钩子（用于时序事件发射）。
+pub async fn execute_dynamic_scriptwriter_pipeline_with_hook<F, Fut, H>(
+    stages: &[crate::models::blueprint::ScriptwriterStage],
+    anchor_tail_chars: u32,
+    blackout_marker: &str,
+    user_input: &str,
+    scratchpad: &Scratchpad,
+    mut call_stage: F,
+    mut on_rejection: H,
+) -> Result<String, String>
+where
+    F: FnMut(String, String, String, Scratchpad) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+    H: FnMut(&str, u32, u32, &str),
 {
     let num_stages = stages.len();
     if num_stages < 2 {
@@ -197,18 +254,6 @@ where
     let mut prev_output = draft.clone();
     let mut accumulated_critiques: Vec<(String, String)> = Vec::new();
 
-    let is_verdict_reject = |text: &str| -> bool {
-        let upper = text.to_uppercase();
-        upper.contains("[REJECT]")
-            || upper.contains("[REJECTED]")
-            || upper.contains("[VERDICT: REJECT]")
-            || upper.contains("[VERDICT:REJECT]")
-            || text.contains("[打回]")
-            || text.contains("【打回】")
-            || text.starts_with("打回：")
-            || text.starts_with("打回:")
-    };
-
     for stage_cfg in &stages[1..num_stages - 1] {
         let stage_label = format!("阶段 {}", stage_cfg.stage);
         let stage_key = if !stage_cfg.workspace_key.trim().is_empty() {
@@ -229,14 +274,34 @@ where
         let max_loops = stage_cfg.max_loop_count.unwrap_or(2);
         let mut loop_count = 0u32;
 
-        let target_stage_name = stage_cfg.reject_target.as_deref().unwrap_or("draft");
-        let target_stage = stages
-            .iter()
-            .find(|s| s.stage == target_stage_name || s.workspace_key == target_stage_name)
-            .unwrap_or(&stages[0]);
+        let target_stage = if let Some(ref target_name) = stage_cfg.reject_target {
+            stages
+                .iter()
+                .find(|s| s.stage == *target_name || s.workspace_key == *target_name)
+                .ok_or_else(|| {
+                    format!(
+                        "阶段 {} 配置的打回目标 reject_target '{}' 不存在于流水线阶段列表中",
+                        stage_cfg.stage, target_name
+                    )
+                })?
+        } else {
+            &stages[0]
+        };
 
-        while is_verdict_reject(&output) {
+        while ReviewVerdict::parse(&output).is_rejected() {
             loop_count += 1;
+            let loop_state = crate::models::blueprint::RejectionLoopState {
+                loop_id: format!("{}_{}", stage_cfg.stage, target_stage.stage),
+                current_iteration: loop_count,
+                max_iterations: max_loops,
+                last_critique: Some(output.clone()),
+            };
+            let loop_state_json = serde_json::to_string(&loop_state).unwrap_or_default();
+            scratchpad.write_text("rejection_loop_state", &loop_state_json);
+            scratchpad.write_text(&format!("{}.rejection_loop_state", stage_cfg.stage), &loop_state_json);
+
+            on_rejection(&stage_cfg.stage, loop_count, max_loops, &output);
+
             if loop_count > max_loops {
                 // 熔断触发
                 scratchpad.write_text("circuit_breaker_tripped", "true");
@@ -290,7 +355,7 @@ where
             .await?;
         }
 
-        if !is_verdict_reject(&output) {
+        if !ReviewVerdict::parse(&output).is_rejected() {
             let _ = scratchpad.write_text("feedback", "");
             accumulated_critiques.push((stage_cfg.stage.clone(), output.clone()));
         }
@@ -397,7 +462,7 @@ pub async fn run_scriptwriter_pipeline(
     // 实例化本轮纯内存 Scratchpad（全生命周期在内存中流转，零磁盘 I/O）
     let scratchpad = Scratchpad::new();
 
-    let result = execute_dynamic_scriptwriter_pipeline(
+    let result = execute_dynamic_scriptwriter_pipeline_with_hook(
         &pipeline_cfg.stages,
         pipeline_cfg.anchor_tail_chars,
         &pipeline_cfg.blackout_marker,
@@ -424,6 +489,17 @@ pub async fn run_scriptwriter_pipeline(
                 )
                 .await
             }
+        },
+        |stage_name, loop_count, max_loops, critique| {
+            crate::services::agent::timeline::emit(
+                app,
+                conversation_id,
+                round_id,
+                crate::services::agent::timeline::TimelineKind::LoopReject,
+                crate::services::agent::timeline::TimelineStatus::Info,
+                format!("审阅打回 ({stage_name} 第 {loop_count}/{max_loops} 次)"),
+                critique.to_string(),
+            );
         },
     )
     .await;
@@ -1014,6 +1090,126 @@ mod tests {
         // 验证熔断标记被正确记录
         assert_eq!(scratchpad.read_text("circuit_breaker_tripped").unwrap(), "true");
         assert_eq!(scratchpad.read_text("critic.circuit_breaker_tripped").unwrap(), "true");
+
+        // 验证 RejectionLoopState 正确记录于工作区
+        let loop_state_raw = scratchpad.read_text("rejection_loop_state").expect("rejection_loop_state should be in scratchpad");
+        let loop_state: crate::models::blueprint::RejectionLoopState = serde_json::from_str(&loop_state_raw).expect("valid RejectionLoopState JSON");
+        assert_eq!(loop_state.loop_id, "critic_draft");
+        assert_eq!(loop_state.max_iterations, 2);
+        assert!(loop_state.current_iteration > 0);
+        assert!(loop_state.last_critique.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_rejection_pipeline_invalid_reject_target() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "初稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+            ScriptwriterStage {
+                stage: "critic".to_string(),
+                workspace_key: "critique".to_string(),
+                prompt: "审阅".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("non_existent_stage".to_string()),
+                max_loop_count: Some(2),
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "定稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let err = execute_dynamic_scriptwriter_pipeline(
+            &stages,
+            20,
+            "【前情锁定】",
+            "测试非法打回目标",
+            &scratchpad,
+            |_l, _i, _p, _pad| async { Ok("[REJECT] 驳回".to_string()) },
+        )
+        .await
+        .expect_err("non-existent reject_target must return Err");
+
+        assert!(err.contains("不存在于流水线阶段列表中"));
+    }
+
+    #[tokio::test]
+    async fn test_rejection_pipeline_hook_called() {
+        use crate::models::blueprint::ScriptwriterStage;
+        let stages = vec![
+            ScriptwriterStage {
+                stage: "draft".to_string(),
+                workspace_key: "draft".to_string(),
+                prompt: "初稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("draft".to_string()),
+                max_loop_count: Some(1),
+            },
+            ScriptwriterStage {
+                stage: "critic".to_string(),
+                workspace_key: "critique".to_string(),
+                prompt: "审阅".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: Some("draft".to_string()),
+                max_loop_count: Some(1),
+            },
+            ScriptwriterStage {
+                stage: "polish".to_string(),
+                workspace_key: "final".to_string(),
+                prompt: "定稿".to_string(),
+                tools: vec![],
+                tool_permissions: None,
+                reject_target: None,
+                max_loop_count: None,
+            },
+        ];
+
+        let scratchpad = Scratchpad::new();
+        let hook_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let h_clone = hook_calls.clone();
+
+        let _ = execute_dynamic_scriptwriter_pipeline_with_hook(
+            &stages,
+            20,
+            "【前情锁定】",
+            "测试钩子",
+            &scratchpad,
+            |label, _i, _p, _pad| async move {
+                if label.contains("critic") {
+                    Ok("[REJECT] 不及格".to_string())
+                } else {
+                    Ok("稿件内容".to_string())
+                }
+            },
+            move |stage, count, max, critique| {
+                h_clone.lock().unwrap().push((stage.to_string(), count, max, critique.to_string()));
+            },
+        )
+        .await;
+
+        let calls = hook_calls.lock().unwrap();
+        assert!(!calls.is_empty());
+        assert_eq!(calls[0].0, "critic");
+        assert_eq!(calls[0].1, 1);
+        assert_eq!(calls[0].2, 1);
+        assert!(calls[0].3.contains("[REJECT]"));
     }
 
     #[tokio::test]

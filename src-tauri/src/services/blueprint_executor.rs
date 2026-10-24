@@ -964,38 +964,79 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
     Ok(())
 }
 
-/// 拓扑有向无环（DAG）校验器：
-/// 检测图执行流中是否存在非法死循环，但针对从 `reject` / `Reject` 引脚发出的打回反向边进行特例放行。
-fn validate_dag_cycles(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
-    let mut state: HashMap<&str, u8> = HashMap::new();
+/// 通用 3 色 DFS 有向图环检测函数。
+///
+/// 接受所有节点标识迭代器及邻接后继节点获取闭包。若检测到环路，返回 `Some(环路路径)`。
+fn find_directed_graph_cycle<'a, F>(
+    nodes: impl IntoIterator<Item = &'a str>,
+    get_successors: F,
+) -> Option<Vec<&'a str>>
+where
+    F: Fn(&'a str) -> Vec<&'a str>,
+{
+    let mut state: HashMap<&'a str, u8> = HashMap::new(); // 0: 未访问, 1: 正在访问(灰), 2: 完成(黑)
+    let mut path: Vec<&'a str> = Vec::new();
 
-    fn dfs<'a>(
-        node_id: &'a str,
-        graph: &'a BlueprintGraph,
+    fn dfs<'a, F>(
+        node: &'a str,
+        get_successors: &F,
         state: &mut HashMap<&'a str, u8>,
-    ) -> Result<(), BlueprintError> {
-        state.insert(node_id, 1);
+        path: &mut Vec<&'a str>,
+    ) -> Option<Vec<&'a str>>
+    where
+        F: Fn(&'a str) -> Vec<&'a str>,
+    {
+        state.insert(node, 1);
+        path.push(node);
 
-        for edge in &graph.edges {
-            // 放行 Reject 反向边：不视为主流死循环
-            if edge.source == node_id && edge.source_port.to_lowercase() != "reject" {
-                let target = edge.target.as_str();
-                match state.get(target).copied().unwrap_or(0) {
-                    1 => return Err(BlueprintError::CycleDetected(target.to_string())),
-                    0 => dfs(target, graph, state)?,
-                    _ => {}
+        for next in get_successors(node) {
+            match state.get(next).copied().unwrap_or(0) {
+                1 => {
+                    let mut cycle = path.clone();
+                    cycle.push(next);
+                    return Some(cycle);
                 }
+                0 => {
+                    if let Some(cycle) = dfs(next, get_successors, state, path) {
+                        return Some(cycle);
+                    }
+                }
+                _ => {}
             }
         }
 
-        state.insert(node_id, 2);
-        Ok(())
+        path.pop();
+        state.insert(node, 2);
+        None
     }
 
-    for node in &graph.nodes {
-        if state.get(node.id.as_str()).copied().unwrap_or(0) == 0 {
-            dfs(node.id.as_str(), graph, &mut state)?;
+    for node in nodes {
+        if state.get(node).copied().unwrap_or(0) == 0 {
+            if let Some(cycle) = dfs(node, &get_successors, &mut state, &mut path) {
+                return Some(cycle);
+            }
         }
+    }
+
+    None
+}
+
+/// 拓扑有向无环（DAG）校验器：
+/// 检测图执行流中是否存在非法死循环，但针对从 `reject` / `Reject` 引脚发出的打回反向边进行特例放行。
+fn validate_dag_cycles(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
+    let all_nodes = graph.nodes.iter().map(|n| n.id.as_str());
+    let get_successors = |node_id: &str| -> Vec<&str> {
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.source == node_id && e.source_port.to_lowercase() != "reject")
+            .map(|e| e.target.as_str())
+            .collect()
+    };
+
+    if let Some(cycle) = find_directed_graph_cycle(all_nodes, get_successors) {
+        let target = cycle.last().copied().unwrap_or_default();
+        return Err(BlueprintError::CycleDetected(target.to_string()));
     }
 
     Ok(())
@@ -1009,19 +1050,25 @@ pub fn validate_blueprint_ui_contract(
     graph: &BlueprintGraph,
     contract: &crate::models::ui_layout::RequiredDataInterface,
 ) -> ContractValidationResultDto {
-    let inlined_graph = if graph.nodes.iter().any(|n| matches!(n.config, NodeConfig::MacroInstance(_))) {
-        expand_macros(graph, None).unwrap_or_else(|_| graph.clone())
-    } else {
-        graph.clone()
-    };
-
     let mut missing_stats = Vec::new();
     let mut missing_flags = Vec::new();
     let mut missing_inventory = false;
     let mut errors = Vec::new();
 
-    // 若 UI 契约没有任何依赖声明，则视为无约束直接通过
-    if contract.required_stats.is_empty() && contract.required_flags.is_empty() && !contract.required_inventory {
+    let inlined_graph = if graph.nodes.iter().any(|n| matches!(n.config, NodeConfig::MacroInstance(_))) {
+        match expand_macros(graph, None) {
+            Ok(g) => g,
+            Err(err) => {
+                errors.push(format!("宏内联展开失败（C2 零回退）: {err:?}"));
+                graph.clone()
+            }
+        }
+    } else {
+        graph.clone()
+    };
+
+    // 若 UI 契约没有任何依赖声明，且宏展开未报错，则视为无约束直接通过
+    if contract.required_stats.is_empty() && contract.required_flags.is_empty() && !contract.required_inventory && errors.is_empty() {
         return ContractValidationResultDto {
             is_valid: true,
             missing_stats,
@@ -1031,15 +1078,11 @@ pub fn validate_blueprint_ui_contract(
         };
     }
 
-    let initial_state = inlined_graph.nodes.iter().find_map(|node| {
-        if let NodeConfig::InitialStateConfig(cfg) = &node.config {
-            Some(cfg)
-        } else {
-            None
-        }
+    let initial_state_node = inlined_graph.nodes.iter().find(|node| {
+        matches!(node.config, NodeConfig::InitialStateConfig(_))
     });
 
-    match initial_state {
+    match initial_state_node {
         None => {
             for stat in contract.required_stats.keys() {
                 missing_stats.push(stat.clone());
@@ -1055,38 +1098,49 @@ pub fn validate_blueprint_ui_contract(
             }
             errors.push("蓝图缺少 InitialStateConfig 初始状态节点，无法满足 UI 数据契约".to_string());
         }
-        Some(cfg) => {
-            for (stat_name, req) in &contract.required_stats {
-                match cfg.stats.get(stat_name) {
-                    None => {
-                        missing_stats.push(stat_name.clone());
-                        errors.push(format!("缺少必需数值属性: stats.{stat_name}"));
-                    }
-                    Some(stat_def) => {
-                        if let Some(min_val) = req.min {
-                            if stat_def.initial < min_val {
-                                errors.push(format!(
-                                    "属性 stats.{} 初始值 {} 低于 UI 声明的最小值 {}",
-                                    stat_name, stat_def.initial, min_val
-                                ));
-                            }
+        Some(node) => {
+            let node_id = &node.id;
+            if let NodeConfig::InitialStateConfig(cfg) = &node.config {
+                for (stat_name, req) in &contract.required_stats {
+                    match cfg.stats.get(stat_name) {
+                        None => {
+                            missing_stats.push(stat_name.clone());
+                            errors.push(format!("[{node_id}] 缺少必需数值属性: stats.{stat_name}"));
                         }
-                        if let Some(max_val) = req.max {
-                            if stat_def.initial > max_val {
-                                errors.push(format!(
-                                    "属性 stats.{} 初始值 {} 高于 UI 声明的最大值 {}",
-                                    stat_name, stat_def.initial, max_val
-                                ));
+                        Some(stat_def) => {
+                            if let Some(min_val) = req.min {
+                                if stat_def.initial < min_val {
+                                    errors.push(format!(
+                                        "[{node_id}] 属性 stats.{} 初始值 {} 低于 UI 声明的最小值 {}",
+                                        stat_name, stat_def.initial, min_val
+                                    ));
+                                }
+                            }
+                            if let Some(max_val) = req.max {
+                                if stat_def.initial > max_val {
+                                    errors.push(format!(
+                                        "[{node_id}] 属性 stats.{} 初始值 {} 高于 UI 声明的最大值 {}",
+                                        stat_name, stat_def.initial, max_val
+                                    ));
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            for flag in &contract.required_flags {
-                if !cfg.flags.contains_key(flag) {
-                    missing_flags.push(flag.clone());
-                    errors.push(format!("缺少必需剧情标志位: flags.{flag}"));
+                for flag in &contract.required_flags {
+                    if !cfg.flags.contains_key(flag) {
+                        missing_flags.push(flag.clone());
+                        errors.push(format!("[{node_id}] 缺少必需剧情标志位: flags.{flag}"));
+                    }
+                }
+
+                if contract.required_inventory {
+                    for item in &cfg.inventory {
+                        if item.id.trim().is_empty() {
+                            errors.push(format!("[{node_id}] 背包初始物品缺少必需的 id 标识"));
+                        }
+                    }
                 }
             }
         }
@@ -1109,7 +1163,7 @@ pub fn validate_blueprint_ui_contract(
 // UE5 Blueprint Macro Engine (Inline Expansion & Pin Typing)
 // =========================================================================
 
-/// 检查宏之间的依赖成环情况（拓扑排序 / 3 色 DFS 检测）。
+/// 检查宏之间的依赖成环情况（复用通用 3 色 DFS 检测）。
 fn check_macro_cycles(macro_map: &HashMap<String, &BlueprintMacro>) -> Result<(), BlueprintError> {
     let mut deps: HashMap<String, Vec<String>> = HashMap::new();
     for (id, def) in macro_map {
@@ -1123,42 +1177,15 @@ fn check_macro_cycles(macro_map: &HashMap<String, &BlueprintMacro>) -> Result<()
         }
     }
 
-    let mut state: HashMap<String, u8> = HashMap::new(); // 0: 未访问, 1: 正在递归访问(灰色), 2: 访问完成(黑色)
-    let mut path: Vec<String> = Vec::new();
+    let all_macros = macro_map.keys().map(|k| k.as_str());
+    let get_successors = |id: &str| -> Vec<&str> {
+        deps.get(id)
+            .map(|list| list.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    };
 
-    fn dfs(
-        node: &str,
-        deps: &HashMap<String, Vec<String>>,
-        state: &mut HashMap<String, u8>,
-        path: &mut Vec<String>,
-    ) -> Result<(), BlueprintError> {
-        state.insert(node.to_string(), 1);
-        path.push(node.to_string());
-
-        if let Some(neighbors) = deps.get(node) {
-            for next in neighbors {
-                match state.get(next).copied().unwrap_or(0) {
-                    1 => {
-                        path.push(next.clone());
-                        return Err(BlueprintError::RecursiveMacroCycle(path.join(" -> ")));
-                    }
-                    0 => {
-                        dfs(next, deps, state, path)?;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        path.pop();
-        state.insert(node.to_string(), 2);
-        Ok(())
-    }
-
-    for id in macro_map.keys() {
-        if state.get(id).copied().unwrap_or(0) == 0 {
-            dfs(id, &deps, &mut state, &mut path)?;
-        }
+    if let Some(cycle) = find_directed_graph_cycle(all_macros, get_successors) {
+        return Err(BlueprintError::RecursiveMacroCycle(cycle.join(" -> ")));
     }
 
     Ok(())
@@ -1209,10 +1236,43 @@ fn get_port_pin_type(
                 None
             }
         }
-        _ => {
+        NodeConfig::Start
+        | NodeConfig::End
+        | NodeConfig::Prompt(_)
+        | NodeConfig::SchemaField(_)
+        | NodeConfig::MutexGate(_)
+        | NodeConfig::GroupGate(_)
+        | NodeConfig::ModeSwitch(_)
+        | NodeConfig::RoleSwitch(_)
+        | NodeConfig::SamplingParams(_)
+        | NodeConfig::Constant(_)
+        | NodeConfig::Branch(_)
+        | NodeConfig::SamplingParamsOpenAi(_)
+        | NodeConfig::SamplingParamsAnthropic(_)
+        | NodeConfig::InvokeSchema(_)
+        | NodeConfig::ToolDefinition(_)
+        | NodeConfig::Calculator(_)
+        | NodeConfig::ConditionGate(_)
+        | NodeConfig::ToolReturn(_)
+        | NodeConfig::Inspector(_)
+        | NodeConfig::Writer(_)
+        | NodeConfig::Querier(_)
+        | NodeConfig::BannedWordsConfig(_)
+        | NodeConfig::ScriptwriterPipeline(_)
+        | NodeConfig::AgentModeSwitch(_)
+        | NodeConfig::DirectorConfig(_)
+        | NodeConfig::ActorDefinition(_)
+        | NodeConfig::UiLayoutConfig(_)
+        | NodeConfig::InitialStateConfig(_) => {
             if port == "value" {
                 Some(PinType::Object)
-            } else if port == "in" || port == "out" || port.starts_with("out_") || port.starts_with("in_") {
+            } else if port == "in"
+                || port == "out"
+                || port.starts_with("out_")
+                || port.starts_with("in_")
+                || port == "pass"
+                || port == "blocked"
+            {
                 Some(PinType::Exec)
             } else {
                 None
@@ -1281,7 +1341,7 @@ fn inline_single_macro_instance(
 ) -> Result<(), BlueprintError> {
     let prefix = format!("m_{instance_id}_");
 
-    // 识别宏内部的 Inputs 代理节点与 Outputs 代理节点
+    // 识别宏内部的 Inputs 代理节点与所有 Outputs 代理节点
     let inputs_node = macro_def.nodes.iter().find(|n| {
         matches!(n.config, NodeConfig::MacroInputs(_))
             || n.node_type() == crate::models::blueprint::NodeType::MacroInputs
@@ -1289,19 +1349,25 @@ fn inline_single_macro_instance(
             || n.id == "Inputs"
     });
 
-    let outputs_node = macro_def.nodes.iter().find(|n| {
-        matches!(n.config, NodeConfig::MacroOutputs(_))
-            || n.node_type() == crate::models::blueprint::NodeType::MacroOutputs
-            || n.id == "outputs"
-            || n.id == "Outputs"
-    });
+    let outputs_nodes: Vec<&BlueprintNode> = macro_def
+        .nodes
+        .iter()
+        .filter(|n| {
+            matches!(n.config, NodeConfig::MacroOutputs(_))
+                || n.node_type() == crate::models::blueprint::NodeType::MacroOutputs
+                || n.id == "outputs"
+                || n.id == "Outputs"
+                || n.id.starts_with("outputs_")
+                || n.id.starts_with("Outputs_")
+        })
+        .collect();
 
     let inputs_id = inputs_node.map(|n| n.id.as_str());
-    let outputs_id = outputs_node.map(|n| n.id.as_str());
+    let outputs_ids: HashSet<&str> = outputs_nodes.iter().map(|n| n.id.as_str()).collect();
 
     // 1. 克隆所有非代理的宏内部节点，注入隔离命名空间 ID
     for node in &macro_def.nodes {
-        if inputs_id == Some(node.id.as_str()) || outputs_id == Some(node.id.as_str()) {
+        if inputs_id == Some(node.id.as_str()) || outputs_ids.contains(node.id.as_str()) {
             continue;
         }
         let mut cloned = node.clone();
@@ -1329,7 +1395,7 @@ fn inline_single_macro_instance(
     // 3a. 纯宏内部边（不连接 Inputs 也不连接 Outputs）
     for edge in &macro_def.edges {
         let touches_inputs = inputs_id.map_or(false, |id| edge.source == id);
-        let touches_outputs = outputs_id.map_or(false, |id| edge.target == id);
+        let touches_outputs = outputs_ids.contains(edge.target.as_str());
 
         if !touches_inputs && !touches_outputs {
             let mut cloned = edge.clone();
@@ -1358,7 +1424,7 @@ fn inline_single_macro_instance(
         for internal in &macro_def.edges {
             let from_inputs = inputs_id.map_or(false, |id| internal.source == id);
             if from_inputs && pin_matches(&ext_in.target_port, &internal.source_port, &macro_def.inputs) {
-                let to_outputs = outputs_id.map_or(false, |id| internal.target == id);
+                let to_outputs = outputs_ids.contains(internal.target.as_str());
                 if to_outputs {
                     // 直通边（从宏 Inputs 直达 Outputs）
                     for ext_out in &ext_outgoing {
@@ -1387,10 +1453,10 @@ fn inline_single_macro_instance(
         }
     }
 
-    // 3c. 外部出边：由连接至 outputs_node 的宏内部节点直接承接
+    // 3c. 外部出边：由连接至任一 outputs_node 的宏内部节点直接承接
     for ext_out in &ext_outgoing {
         for internal in &macro_def.edges {
-            let to_outputs = outputs_id.map_or(false, |id| internal.target == id);
+            let to_outputs = outputs_ids.contains(internal.target.as_str());
             let from_inputs = inputs_id.map_or(false, |id| internal.source == id);
             if to_outputs && !from_inputs && pin_matches(&ext_out.source_port, &internal.target_port, &macro_def.outputs) {
                 new_edges.push(BlueprintEdge {
@@ -4588,5 +4654,118 @@ mod tests {
             }
             other => panic!("Expected ToolReferenceNotFound, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_macro_inline_expansion_multiple_outputs() {
+        use crate::models::blueprint::{
+            BlueprintMacro, ConditionGateConfig, MacroInputsConfig, MacroOutputsConfig,
+            MacroPinDefinition, PinType,
+        };
+
+        // Macro with 1 Inputs node, 1 internal ConditionGate, and 2 separate Outputs nodes:
+        // outputs_pass (pin: "out_pass") and outputs_fail (pin: "out_fail")
+        let macro_multi_out = BlueprintMacro {
+            id: "m_multi_out".to_string(),
+            name: "Multi Output Macro".to_string(),
+            description: "Branching macro with two exit nodes".to_string(),
+            category: "ControlFlow".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "In".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![
+                MacroPinDefinition {
+                    id: "out_pass".to_string(),
+                    name: "Pass".to_string(),
+                    pin_type: PinType::Exec,
+                },
+                MacroPinDefinition {
+                    id: "out_fail".to_string(),
+                    name: "Fail".to_string(),
+                    pin_type: PinType::Exec,
+                },
+            ],
+            nodes: vec![
+                BlueprintNode {
+                    id: "inputs".to_string(),
+                    config: NodeConfig::MacroInputs(MacroInputsConfig::default()),
+                    position: pos(0.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "gate".to_string(),
+                    config: NodeConfig::ConditionGate(ConditionGateConfig {
+                        gate_type: "gold".to_string(),
+                        expression: "100".to_string(),
+                        pass_label: "放行".to_string(),
+                        blocked_label: "拦截".to_string(),
+                        block_reason: "金币不足".to_string(),
+                        is_locked: false,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "outputs_pass".to_string(),
+                    config: NodeConfig::MacroOutputs(MacroOutputsConfig::default()),
+                    position: pos(200.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "outputs_fail".to_string(),
+                    config: NodeConfig::MacroOutputs(MacroOutputsConfig::default()),
+                    position: pos(200.0, 100.0),
+                },
+            ],
+            edges: vec![
+                edge("me1", "inputs", "in", "gate", "in"),
+                edge("me2", "gate", "pass", "outputs_pass", "out_pass"),
+                edge("me3", "gate", "fail", "outputs_fail", "out_fail"),
+            ],
+        };
+
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_branch".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_multi_out".to_string(),
+                        name: None,
+                    }),
+                    position: pos(100.0, 0.0),
+                },
+                end("end_pass"),
+                end("end_fail"),
+            ],
+            edges: vec![
+                edge("e_in", "n_start", "out", "inst_branch", "in"),
+                edge("e_pass", "inst_branch", "out_pass", "end_pass", "in"),
+                edge("e_fail", "inst_branch", "out_fail", "end_fail", "in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_multi_out],
+        };
+
+        let inlined = expand_macros(&graph, None).expect("multi-output macro inlining must succeed");
+
+        // Verify MacroInstance, inputs, and both outputs were removed
+        assert!(!inlined.nodes.iter().any(|n| matches!(n.config, NodeConfig::MacroInstance(_))));
+        assert!(!inlined.nodes.iter().any(|n| n.id == "inputs" || n.id == "outputs_pass" || n.id == "outputs_fail"));
+
+        // Verify internal gate exists with namespaced id
+        assert!(inlined.nodes.iter().any(|n| n.id.contains("gate")));
+
+        // Verify start -> gate, gate (pass) -> end_pass, gate (fail) -> end_fail
+        let edge_to_gate = inlined.edges.iter().find(|e| e.source == "n_start").expect("edge from n_start to gate");
+        assert!(edge_to_gate.target.contains("gate"));
+
+        let edge_to_pass = inlined.edges.iter().find(|e| e.target == "end_pass").expect("edge to end_pass");
+        assert!(edge_to_pass.source.contains("gate"));
+        assert_eq!(edge_to_pass.source_port, "pass");
+
+        let edge_to_fail = inlined.edges.iter().find(|e| e.target == "end_fail").expect("edge to end_fail");
+        assert!(edge_to_fail.source.contains("gate"));
+        assert_eq!(edge_to_fail.source_port, "fail");
     }
 }

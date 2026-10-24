@@ -13,13 +13,14 @@
 
 import { Component, createSignal, Show, For } from 'solid-js';
 import type { AgentToolPermissions } from '../../lib/blueprint/types';
-import { ToolPermissionsModal, DEFAULT_CAPABILITY_POOL } from './ToolPermissionsModal';
+import { ToolPermissionsModal, type ToolItem } from './ToolPermissionsModal';
 import { SlidersHorizontal, Pencil, CheckCircle2, AlertTriangle, Lock } from '../../lib/icons';
 
 export interface ToolPermissionsCardProps {
   permissions?: AgentToolPermissions;
   onUpdate: (permissions: AgentToolPermissions) => void;
   customTools?: string[];
+  availableTools?: ToolItem[];
   isLocked?: boolean;
 }
 
@@ -31,11 +32,15 @@ export const ToolPermissionsCard: Component<ToolPermissionsCardProps> = (props) 
   const approvalTools = () => props.permissions?.require_approval || [];
 
   const getToolType = (name: string): string => {
-    const found = DEFAULT_CAPABILITY_POOL.find((t) => t.name === name);
-    if (!found) return 'Local';
-    if (found.type === 'action_bridge') return 'ActionBridge';
-    if (found.type === 'mcp') return 'MCP';
-    return 'Local';
+    if (props.availableTools) {
+      const found = props.availableTools.find((t) => t.name === name);
+      if (found) {
+        if (found.type === 'action_bridge') return 'ActionBridge';
+        if (found.type === 'mcp') return 'MCP';
+        return 'Local';
+      }
+    }
+    return 'Tool';
   };
 
   return (
@@ -159,6 +164,7 @@ export const ToolPermissionsCard: Component<ToolPermissionsCardProps> = (props) 
         permissions={props.permissions}
         onSave={props.onUpdate}
         customTools={props.customTools}
+        availableTools={props.availableTools}
       />
     </div>
   );

@@ -506,14 +506,23 @@ pub async fn blueprint_validate_ui_contract(
     });
 
     let layout_def = if let Some(layout_id) = layout_id_from_node {
-        crate::commands::ui_layout::preset_ui_layout_get(layout_id, state.clone())
-            .await
-            .ok()
+        match crate::commands::ui_layout::preset_ui_layout_get(layout_id.clone(), state.clone()).await {
+            Ok(layout) => Some(layout),
+            Err(e) => {
+                return Ok(ContractValidationResultDto {
+                    is_valid: false,
+                    missing_stats: vec![],
+                    missing_flags: vec![],
+                    missing_inventory: false,
+                    errors: vec![format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`: {e}")],
+                });
+            }
+        }
     } else {
         // 2. 否则查找该 preset 下已创建的 UI 模板
         let layouts = crate::commands::ui_layout::preset_ui_layout_list(preset_id, state.clone())
             .await
-            .unwrap_or_default();
+            .map_err(|e| format!("查询预设 UI 布局列表失败: {e}"))?;
         layouts.into_iter().next()
     };
 
