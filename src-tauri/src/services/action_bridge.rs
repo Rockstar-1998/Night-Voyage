@@ -494,6 +494,17 @@ pub fn resolve_known_capability_tool_definition(tool_name: &str) -> Option<crate
     None
 }
 
+/// 解析全局能力池（Native Scratchpad / ActionBridge / MCP）中已知的真实工具定义。
+/// 若工具未在任何已知能力源中声明，显式返回硬错（C2 零静默回退，杜绝空 schema 占位）。
+pub fn resolve_required_capability_tool_definition(tool_name: &str) -> Result<crate::llm::LlmToolDefinition, String> {
+    resolve_known_capability_tool_definition(tool_name).ok_or_else(|| {
+        format!(
+            "未识别的智能体工具能力 `{tool_name}`：未在蓝图工具节点、ActionBridge、MCP 工具或原生工作区工具集中声明"
+        )
+        .replace('\\', "/")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

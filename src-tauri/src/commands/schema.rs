@@ -26,7 +26,7 @@ pub async fn query_preset_schemas(
     .bind(preset_id)
     .fetch_all(db)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string().replace('\\', "/"))?;
 
     rows.iter().map(row_to_schema_definition).collect()
 }
@@ -52,7 +52,7 @@ pub async fn preset_schema_get(
     .bind(&schema_id)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string().replace('\\', "/"))?
     .ok_or_else(|| format!("Schema '{}' not found", schema_id))?;
 
     row_to_schema_definition(&row)
@@ -91,13 +91,13 @@ pub async fn preset_schema_save(
     }
 
     let fields_json = serde_json::to_string(&schema.fields)
-        .map_err(|e| format!("Failed to serialize fields: {}", e))?;
+        .map_err(|e| format!("Failed to serialize fields: {}", e).replace('\\', "/"))?;
     let card_json = schema
         .card
         .as_ref()
         .map(|card| serde_json::to_string(card))
         .transpose()
-        .map_err(|e| format!("Failed to serialize card: {}", e))?;
+        .map_err(|e| format!("Failed to serialize card: {}", e).replace('\\', "/"))?;
 
     let retention_depth_i64 = schema.retention_depth.map(|d| d as i64);
 
@@ -123,7 +123,7 @@ pub async fn preset_schema_save(
     .bind(schema.updated_at)
     .execute(&state.db)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string().replace('\\', "/"))?;
 
     Ok(schema)
 }
@@ -137,7 +137,7 @@ pub async fn preset_schema_delete(
         .bind(&schema_id)
         .execute(&state.db)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string().replace('\\', "/"))?;
 
     if result.rows_affected() == 0 {
         return Err(format!("Schema '{}' not found", schema_id));

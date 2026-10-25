@@ -669,25 +669,20 @@ pub async fn stage_call_with_scratchpad(
     stage_system.push(instruction.to_string());
 
     let mut all_tools = native_scratchpad_tools();
-    let register_tool = |name: &str, all: &mut Vec<crate::llm::LlmToolDefinition>| {
-        if !all.iter().any(|t| &t.name == name) {
-            let def = crate::services::action_bridge::resolve_known_capability_tool_definition(name)
-                .unwrap_or_else(|| crate::llm::LlmToolDefinition {
-                    name: name.to_string(),
-                    description: Some(format!("流水线工具 `{name}`")),
-                    input_schema: serde_json::json!({"type": "object", "properties": {}}),
-                });
-            all.push(def);
-        }
-    };
     if let Some(perms) = tool_permissions {
         for name in &perms.allowed_tools {
-            register_tool(name, &mut all_tools);
+            if !all_tools.iter().any(|t| &t.name == name) {
+                let def = crate::services::action_bridge::resolve_required_capability_tool_definition(name)?;
+                all_tools.push(def);
+            }
         }
     }
     if let Some(fb) = fallback_tools {
         for name in fb {
-            register_tool(name, &mut all_tools);
+            if !all_tools.iter().any(|t| &t.name == name) {
+                let def = crate::services::action_bridge::resolve_required_capability_tool_definition(name)?;
+                all_tools.push(def);
+            }
         }
     }
     let tools: Vec<crate::llm::LlmToolDefinition> = if let Some(perms) = tool_permissions {

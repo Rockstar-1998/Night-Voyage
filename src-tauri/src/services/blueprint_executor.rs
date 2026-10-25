@@ -1187,6 +1187,32 @@ pub fn validate_blueprint_ui_contract(
                     errors.push(format!("[{node_id}] 工具物品产出缺少必需的 id 标识"));
                 }
             }
+        } else if let NodeConfig::Writer(writer) = &node.config {
+            if writer.key_expr.starts_with("stats.") {
+                let stat_name = &writer.key_expr[6..];
+                if let Some(init_node) = initial_state_node {
+                    if let NodeConfig::InitialStateConfig(cfg) = &init_node.config {
+                        if !cfg.stats.contains_key(stat_name) {
+                            errors.push(format!(
+                                "[{node_id}] 工具状态写入目标属性 `{}` 未在 InitialStateConfig 中声明",
+                                writer.key_expr
+                            ));
+                        }
+                    }
+                }
+            } else if writer.key_expr.starts_with("flags.") {
+                let flag_name = &writer.key_expr[6..];
+                if let Some(init_node) = initial_state_node {
+                    if let NodeConfig::InitialStateConfig(cfg) = &init_node.config {
+                        if !cfg.flags.contains_key(flag_name) {
+                            errors.push(format!(
+                                "[{node_id}] 剧情标志位写入目标 `{}` 未在 InitialStateConfig 中声明",
+                                writer.key_expr
+                            ));
+                        }
+                    }
+                }
+            }
         }
     }
 

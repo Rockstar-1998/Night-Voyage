@@ -89,9 +89,12 @@ export interface PortLayout {
 
 /**
  * 判定引脚类型兼容性（对齐 Rust PinType::is_compatible）。
+ * 若双方均未标注具体类型（传统通用引脚），视为兼容；
+ * 若任一方显式标注了具体类型，则双方必须类型一致，杜绝伪类型绕过。
  */
 export function isPinTypeCompatible(a?: PinType, b?: PinType): boolean {
-  if (!a || !b) return true;
+  if (!a && !b) return true;
+  if (!a || !b) return false;
   return a === b;
 }
 

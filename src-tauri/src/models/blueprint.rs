@@ -496,6 +496,24 @@ pub struct ToolDefinitionConfig {
     pub is_locked: bool,
 }
 
+/// 计算器操作符类型驱动枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalculatorOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Clamp,
+    Min,
+    Max,
+    Set,
+    AddItem,
+    RemoveItem,
+    RecomputeWeight,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalculatorConfig {
     /// 运算类型: "math" | "collection"
@@ -513,6 +531,25 @@ pub struct CalculatorConfig {
     pub item_def: Option<crate::models::game_state::InventoryItem>,
     #[serde(default)]
     pub is_locked: bool,
+}
+
+impl CalculatorConfig {
+    pub fn parsed_op(&self) -> CalculatorOp {
+        match self.op.as_str() {
+            "+" | "add" => CalculatorOp::Add,
+            "-" | "sub" | "subtract" => CalculatorOp::Subtract,
+            "*" | "mul" | "multiply" => CalculatorOp::Multiply,
+            "/" | "div" | "divide" => CalculatorOp::Divide,
+            "clamp" => CalculatorOp::Clamp,
+            "min" => CalculatorOp::Min,
+            "max" => CalculatorOp::Max,
+            "set" => CalculatorOp::Set,
+            "add_item" => CalculatorOp::AddItem,
+            "remove_item" => CalculatorOp::RemoveItem,
+            "recompute_weight" => CalculatorOp::RecomputeWeight,
+            _ => CalculatorOp::Unknown,
+        }
+    }
 }
 
 fn default_calc_mode() -> String {

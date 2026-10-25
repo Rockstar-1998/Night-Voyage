@@ -194,26 +194,19 @@ pub async fn run_director_actor_pipeline(
         .collect();
 
     // 注入智能体权限中显式白名单化的其他全局能力池工具（如 MCP 工具与 ActionBridge 查询）
-    let mut register_extra_tool = |tool_name: &str| {
+    let mut register_extra_tool = |tool_name: &str| -> Result<(), String> {
         if !tool_defs_by_name.contains_key(tool_name) {
-            let def = crate::services::action_bridge::resolve_known_capability_tool_definition(tool_name)
-                .unwrap_or_else(|| crate::llm::LlmToolDefinition {
-                    name: tool_name.to_string(),
-                    description: Some(format!("能力池工具 `{tool_name}`")),
-                    input_schema: serde_json::json!({
-                        "type": "object",
-                        "properties": {}
-                    }),
-                });
+            let def = crate::services::action_bridge::resolve_required_capability_tool_definition(tool_name)?;
             tool_defs_by_name.insert(tool_name.to_string(), def);
         }
+        Ok(())
     };
     for t in director_cfg.effective_tools() {
-        register_extra_tool(&t);
+        register_extra_tool(&t)?;
     }
     for actor in &configs.actors {
         for t in actor.effective_tools() {
-            register_extra_tool(&t);
+            register_extra_tool(&t)?;
         }
     }
 
