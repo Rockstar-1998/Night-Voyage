@@ -349,6 +349,7 @@ function createEmptyGraph(): BlueprintGraph {
   return {
     version: 2,
     comments: [],
+    macros: [],
     nodes: [
       {
         id: 'n_start',
@@ -765,6 +766,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           setGraph('nodes', normalizedNodes);
           setGraph('edges', parsed.edges);
           setGraph('comments', parsed.comments ?? []);
+          setGraph('macros', parsed.macros ?? []);
           setGraph('version', 2);
 
           if (migration.migrated) {
@@ -801,6 +803,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         setGraph('nodes', empty.nodes);
         setGraph('edges', empty.edges);
         setGraph('comments', empty.comments ?? []);
+        setGraph('macros', empty.macros ?? []);
         setGraph('version', 2);
         setDirty(false);
       }

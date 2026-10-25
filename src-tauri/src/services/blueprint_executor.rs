@@ -4346,6 +4346,119 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_blueprint_ui_contract_with_macro_instance() {
+        let macro_def = BlueprintMacro {
+            id: "macro_buy_item_rule".to_string(),
+            name: "Buy Item Rule".to_string(),
+            description: "Encapsulated rule".to_string(),
+            category: "Logic".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "m_in".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "in".to_string(),
+                            name: "in".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+                BlueprintNode {
+                    id: "m_out".to_string(),
+                    position: Position { x: 100.0, y: 0.0 },
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "out".to_string(),
+                            name: "out".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+            ],
+            edges: vec![BlueprintEdge {
+                id: "m_edge".to_string(),
+                source: "m_in".to_string(),
+                source_port: "in".to_string(),
+                target: "m_out".to_string(),
+                target_port: "out".to_string(),
+                order: 0,
+            }],
+        };
+
+        let mut graph_missing_macros = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::Start,
+                },
+                BlueprintNode {
+                    id: "n_macro".to_string(),
+                    position: Position { x: 100.0, y: 0.0 },
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "macro_buy_item_rule".to_string(),
+                        name: Some("buy_item_macro".to_string()),
+                    }),
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    position: Position { x: 200.0, y: 0.0 },
+                    config: NodeConfig::End,
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_macro".to_string(),
+                    target_port: "in".to_string(),
+                    order: 0,
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_macro".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                    order: 0,
+                },
+            ],
+            comments: vec![],
+            macros: vec![],
+        };
+
+        let contract = crate::models::ui_layout::RequiredDataInterface {
+            required_stats: HashMap::new(),
+            required_flags: vec![],
+            required_inventory: false,
+        };
+
+        // 1. Missing macro definition in graph.macros must fail with BlueprintMacroNotFound (C2 零回退)
+        let res_missing = validate_blueprint_ui_contract(&graph_missing_macros, &contract);
+        assert!(!res_missing.is_valid);
+        assert!(res_missing.errors.iter().any(|e| e.contains("BlueprintMacroNotFound(\"macro_buy_item_rule\")")));
+
+        // 2. Supplying macro definition in graph.macros must expand and pass
+        graph_missing_macros.macros.push(macro_def);
+        let res_ok = validate_blueprint_ui_contract(&graph_missing_macros, &contract);
+        assert!(res_ok.is_valid);
+        assert!(res_ok.errors.is_empty());
+    }
+
+    #[test]
     fn test_macro_inline_expansion_basic() {
         // Macro: in_proxy (exec_in) -> calc (in -> out) -> out_proxy (exec_out)
         let macro_def = BlueprintMacro {

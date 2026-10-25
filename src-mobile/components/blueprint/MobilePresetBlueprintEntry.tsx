@@ -56,6 +56,8 @@ function createEmptyGraph(): BlueprintGraph {
     edges: [
       { id: 'e_start_end', source: 'n_start', source_port: 'out', target: 'n_end', target_port: 'in' },
     ],
+    comments: [],
+    macros: [],
   };
 }
 
@@ -92,6 +94,7 @@ function serializeBlueprintGraph(graph: BlueprintGraph): string {
     nodes,
     edges: graph.edges,
     comments: graph.comments ?? [],
+    macros: graph.macros ?? [],
   });
 }
 
@@ -127,6 +130,7 @@ async function parseGraph(json: string): Promise<{ graph: BlueprintGraph; migrat
       nodes: nodesWithPositions,
       edges: parsed.edges,
       comments: parsed.comments ?? [],
+      macros: parsed.macros ?? [],
     },
     migrated: migration.migrated,
   };
