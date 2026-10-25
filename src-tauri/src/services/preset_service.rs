@@ -41,7 +41,29 @@ pub struct PortablePresetMeta {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PortablePresetFile {
+pub struct PortablePresetLayout {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_layout_mount_type")]
+    pub mount_type: String,
+    #[serde(default = "default_layout_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub custom_css: String,
+    pub layout_json: serde_json::Value,
+}
+
+fn default_layout_mount_type() -> String {
+    "RightDock".to_string()
+}
+
+fn default_layout_theme() -> String {
+    "xuanqing".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortablePresetFile {
     schema_version: i64,
     format: String,
     exported_at: i64,
@@ -50,6 +72,8 @@ struct PortablePresetFile {
     blocks: Vec<PresetPromptBlockInput>,
     stop_sequences: Vec<PresetStopSequenceInput>,
     provider_overrides: Vec<PresetProviderOverrideInput>,
+    #[serde(default)]
+    pub layouts: Vec<PortablePresetLayout>,
 }
 
 pub struct PresetService<'a> {
@@ -73,6 +97,36 @@ impl<'a> PresetService<'a> {
 
     pub async fn export(&self, id: i64) -> Result<String, String> {
         let detail = self.get_by_id(id).await?;
+
+        let layout_rows = sqlx::query(
+            "SELECT id, name, mount_type, theme, custom_css, layout_json FROM preset_ui_layouts WHERE preset_id = ? ORDER BY created_at ASC",
+        )
+        .bind(id)
+        .fetch_all(self.db)
+        .await
+        .map_err(|err| format!("读取预设关联 UI 布局失败: {err}").replace('\\', "/"))?;
+
+        let mut layouts = Vec::with_capacity(layout_rows.len());
+        for row in layout_rows {
+            use sqlx::Row;
+            let lid: String = row.try_get("id").map_err(|e| e.to_string())?;
+            let name: String = row.try_get("name").map_err(|e| e.to_string())?;
+            let mount_type: String = row.try_get("mount_type").map_err(|e| e.to_string())?;
+            let theme: String = row.try_get("theme").map_err(|e| e.to_string())?;
+            let custom_css: String = row.try_get("custom_css").map_err(|e| e.to_string())?;
+            let layout_json_str: String = row.try_get("layout_json").map_err(|e| e.to_string())?;
+            let layout_json = serde_json::from_str::<serde_json::Value>(&layout_json_str)
+                .unwrap_or(serde_json::Value::String(layout_json_str));
+            layouts.push(PortablePresetLayout {
+                id: lid,
+                name,
+                mount_type,
+                theme,
+                custom_css,
+                layout_json,
+            });
+        }
+
         let portable = PortablePresetFile {
             schema_version: 1,
             format: "night-voyage-preset".to_string(),
@@ -140,6 +194,7 @@ impl<'a> PresetService<'a> {
                 .into_iter()
                 .map(Self::preset_provider_override_record_to_input)
                 .collect(),
+            layouts,
         };
 
         serde_json::to_string_pretty(&portable).map_err(|err| err.to_string())
@@ -155,7 +210,7 @@ impl<'a> PresetService<'a> {
             name = format!("{}（导入）", name);
         }
 
-        self.create(
+        self.create_with_layouts(
             name,
             portable.preset.description,
             Some(portable.preset.category),
@@ -203,6 +258,7 @@ impl<'a> PresetService<'a> {
             Some(portable.stop_sequences),
             Some(portable.provider_overrides),
             Some(portable.semantic_groups),
+            Some(portable.layouts),
         )
         .await
     }
@@ -219,6 +275,15 @@ impl<'a> PresetService<'a> {
         graph: &crate::models::blueprint::BlueprintGraph,
         preset_id: Option<i64>,
     ) -> Result<Option<crate::models::ui_layout::RequiredDataInterface>, String> {
+        Self::resolve_layout_data_interface_for_graph_with_layouts(db, graph, preset_id, None).await
+    }
+
+    pub async fn resolve_layout_data_interface_for_graph_with_layouts(
+        db: &SqlitePool,
+        graph: &crate::models::blueprint::BlueprintGraph,
+        preset_id: Option<i64>,
+        pending_layouts: Option<&[PortablePresetLayout]>,
+    ) -> Result<Option<crate::models::ui_layout::RequiredDataInterface>, String> {
         let layout_id_from_node = graph.nodes.iter().find_map(|node| {
             if let crate::models::blueprint::NodeConfig::UiLayoutConfig(cfg) = &node.config {
                 if !cfg.layout_id.trim().is_empty() {
@@ -232,23 +297,33 @@ impl<'a> PresetService<'a> {
         });
 
         let layout_json = if let Some(ref layout_id) = layout_id_from_node {
-            let row = sqlx::query_scalar::<_, String>(
-                "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
-            )
-            .bind(layout_id)
-            .fetch_optional(db)
-            .await
-            .map_err(|err| format!("读取绑定 UI 布局失败 (id: {layout_id}): {err}").replace('\\', "/"))?;
+            if let Some(pending) = pending_layouts.and_then(|layouts| layouts.iter().find(|l| &l.id == layout_id)) {
+                if let Some(s) = pending.layout_json.as_str() {
+                    Some(s.to_string())
+                } else {
+                    Some(serde_json::to_string(&pending.layout_json).map_err(|err| format!("序列化 pending UI 布局失败: {err}").replace('\\', "/"))?)
+                }
+            } else {
+                let row = sqlx::query_scalar::<_, String>(
+                    "SELECT layout_json FROM preset_ui_layouts WHERE id = ? LIMIT 1",
+                )
+                .bind(layout_id)
+                .fetch_optional(db)
+                .await
+                .map_err(|err| format!("读取绑定 UI 布局失败 (id: {layout_id}): {err}").replace('\\', "/"))?;
 
-            match row {
-                Some(json) => Some(json),
-                None => {
-                    if preset_id.is_some() {
+                match row {
+                    Some(json) => Some(json),
+                    None => {
                         return Err(format!("引用了不存在或加载失败的 UI 布局 `{layout_id}`").replace('\\', "/"));
-                    } else {
-                        None
                     }
                 }
+            }
+        } else if let Some(pending_first) = pending_layouts.and_then(|layouts| layouts.first()) {
+            if let Some(s) = pending_first.layout_json.as_str() {
+                Some(s.to_string())
+            } else {
+                Some(serde_json::to_string(&pending_first.layout_json).map_err(|err| format!("序列化 pending UI 布局失败: {err}").replace('\\', "/"))?)
             }
         } else if let Some(pid) = preset_id {
             sqlx::query_scalar::<_, String>(
@@ -274,15 +349,16 @@ impl<'a> PresetService<'a> {
         }
     }
 
-    pub async fn validate_ui_contract_for_graph(
+    pub async fn validate_ui_contract_for_graph_with_layouts(
         db: &SqlitePool,
         preset_id: Option<i64>,
         graph_str: &str,
+        pending_layouts: Option<&[PortablePresetLayout]>,
     ) -> Result<(), String> {
         let graph: crate::models::blueprint::BlueprintGraph = serde_json::from_str(graph_str)
             .map_err(|err| format!("蓝图图数据反序列化失败: {err}").replace('\\', "/"))?;
 
-        if let Some(interface) = Self::resolve_layout_data_interface_for_graph(db, &graph, preset_id).await? {
+        if let Some(interface) = Self::resolve_layout_data_interface_for_graph_with_layouts(db, &graph, preset_id, pending_layouts).await? {
             let validation = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &interface);
             if !validation.is_valid {
                 return Err(format!(
@@ -295,7 +371,15 @@ impl<'a> PresetService<'a> {
         Ok(())
     }
 
-    pub async fn create(
+    pub async fn validate_ui_contract_for_graph(
+        db: &SqlitePool,
+        preset_id: Option<i64>,
+        graph_str: &str,
+    ) -> Result<(), String> {
+        Self::validate_ui_contract_for_graph_with_layouts(db, preset_id, graph_str, None).await
+    }
+
+    pub async fn create_with_layouts(
         &self,
         name: String,
         description: Option<String>,
@@ -318,6 +402,7 @@ impl<'a> PresetService<'a> {
         stop_sequences: Option<Vec<PresetStopSequenceInput>>,
         provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
         semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
+        layouts: Option<Vec<PortablePresetLayout>>,
     ) -> Result<PresetDetail, String> {
         let name = normalize_required_impl("name", &name)?;
         let description = normalize_optional_text_impl(description);
@@ -342,7 +427,7 @@ impl<'a> PresetService<'a> {
             .transpose()?;
 
         if let Some(graph_str) = blueprint_graph.as_deref() {
-            Self::validate_ui_contract_for_graph(self.db, None, graph_str).await?;
+            Self::validate_ui_contract_for_graph_with_layouts(self.db, None, graph_str, layouts.as_deref()).await?;
         }
         let structured_output_display = blueprint_graph
             .as_deref()
@@ -396,9 +481,96 @@ impl<'a> PresetService<'a> {
         PresetRepository::replace_stop_sequences(&mut tx, preset_id, &stop_sequences, now).await?;
         PresetRepository::replace_provider_overrides(&mut tx, preset_id, &provider_overrides, now)
             .await?;
+
+        if let Some(layouts) = layouts {
+            for layout in layouts {
+                let layout_json_str = if let Some(s) = layout.layout_json.as_str() {
+                    s.to_string()
+                } else {
+                    serde_json::to_string(&layout.layout_json)
+                        .map_err(|e| format!("序列化导入 UI 布局 JSON 失败: {e}").replace('\\', "/"))?
+                };
+                sqlx::query(
+                    "INSERT INTO preset_ui_layouts (id, preset_id, name, mount_type, theme, custom_css, layout_json, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET \
+                        preset_id = excluded.preset_id, \
+                        name = excluded.name, \
+                        mount_type = excluded.mount_type, \
+                        theme = excluded.theme, \
+                        custom_css = excluded.custom_css, \
+                        layout_json = excluded.layout_json, \
+                        updated_at = excluded.updated_at",
+                )
+                .bind(&layout.id)
+                .bind(preset_id)
+                .bind(&layout.name)
+                .bind(&layout.mount_type)
+                .bind(&layout.theme)
+                .bind(&layout.custom_css)
+                .bind(layout_json_str)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| format!("导入预设 UI 布局失败 (id: {}): {err}", layout.id).replace('\\', "/"))?;
+            }
+        }
+
         tx.commit().await.map_err(|err| err.to_string())?;
 
         self.get_by_id(preset_id).await
+    }
+
+    pub async fn create(
+        &self,
+        name: String,
+        description: Option<String>,
+        category: Option<String>,
+        temperature: Option<f64>,
+        max_output_tokens: Option<i64>,
+        top_p: Option<f64>,
+        top_k: Option<i64>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        response_mode: Option<String>,
+        thinking_enabled: Option<bool>,
+        thinking_budget_tokens: Option<i64>,
+        beta_features: Option<Vec<String>>,
+        structured_output_schema: Option<String>,
+        structured_output_display: Option<String>,
+        context_included_keys: Option<String>,
+        blueprint_graph: Option<String>,
+        blocks: Option<Vec<PresetPromptBlockInput>>,
+        stop_sequences: Option<Vec<PresetStopSequenceInput>>,
+        provider_overrides: Option<Vec<PresetProviderOverrideInput>>,
+        semantic_groups: Option<Vec<PresetSemanticGroupInput>>,
+    ) -> Result<PresetDetail, String> {
+        self.create_with_layouts(
+            name,
+            description,
+            category,
+            temperature,
+            max_output_tokens,
+            top_p,
+            top_k,
+            presence_penalty,
+            frequency_penalty,
+            response_mode,
+            thinking_enabled,
+            thinking_budget_tokens,
+            beta_features,
+            structured_output_schema,
+            structured_output_display,
+            context_included_keys,
+            blueprint_graph,
+            blocks,
+            stop_sequences,
+            provider_overrides,
+            semantic_groups,
+            None,
+        )
+        .await
     }
 
     pub async fn update(
@@ -608,6 +780,10 @@ impl<'a> PresetService<'a> {
         }
         let _ = normalize_required_impl("preset.name", &file.preset.name)?;
         let _ = normalize_required_impl("preset.category", &file.preset.category)?;
+        for layout in &file.layouts {
+            let _ = normalize_required_impl("layout.id", &layout.id)?;
+            let _ = normalize_required_impl("layout.name", &layout.name)?;
+        }
         Ok(())
     }
 

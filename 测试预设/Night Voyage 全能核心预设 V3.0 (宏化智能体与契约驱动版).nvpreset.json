@@ -818,5 +818,117 @@
   "semanticGroups": [],
   "blocks": [],
   "stopSequences": [],
-  "providerOverrides": []
+  "providerOverrides": [],
+  "layouts": [
+    {
+      "id": "rpg_hud_v3",
+      "name": "RPG 全能 HUD V3",
+      "mountType": "RightDock",
+      "theme": "xuanqing",
+      "customCss": "",
+      "layoutJson": {
+        "id": "root_canvas",
+        "kind": "rootCanvas",
+        "layoutMode": "flex",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 320.0,
+        "height": 600.0,
+        "style": {},
+        "children": [
+          {
+            "nodeType": "widget",
+            "id": "w_credits",
+            "widgetType": "dataLabel",
+            "label": "信用点",
+            "dataBinding": "stats.credits",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {
+              "min": 0.0
+            },
+            "style": {}
+          },
+          {
+            "nodeType": "widget",
+            "id": "w_sanity",
+            "widgetType": "statBar",
+            "label": "理智值 (Sanity)",
+            "dataBinding": "stats.sanity",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {
+              "min": 0.0,
+              "max": 100.0
+            },
+            "style": {}
+          },
+          {
+            "nodeType": "widget",
+            "id": "w_hp",
+            "widgetType": "statBar",
+            "label": "生命值 (HP)",
+            "dataBinding": "stats.hp",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {
+              "min": 0.0,
+              "max": 100.0
+            },
+            "style": {}
+          },
+          {
+            "nodeType": "widget",
+            "id": "w_mp",
+            "widgetType": "statBar",
+            "label": "法力值 (MP)",
+            "dataBinding": "stats.mp",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {
+              "min": 0.0,
+              "max": 50.0
+            },
+            "style": {}
+          },
+          {
+            "nodeType": "widget",
+            "id": "w_location",
+            "widgetType": "dataLabel",
+            "label": "当前位置",
+            "dataBinding": "flags.location",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {},
+            "style": {}
+          },
+          {
+            "nodeType": "widget",
+            "id": "w_inventory",
+            "widgetType": "inventorySlotGrid",
+            "label": "物品清单",
+            "dataBinding": "inventory",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "config": {
+              "columns": 4
+            },
+            "style": {}
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -632,10 +632,20 @@ fn default_nudge_instruction_template() -> String {
 /// `workspace_key`：该阶段产出写入的共享工作区变量；`prompt`：该阶段指令（与
 /// 主链 compile_prompt 装配的系统设定叠加）；`tools`：该阶段子代理可用的契约
 /// 引用数组（按 tool_name 指向图中 ToolDefinition，编译期校验存在）。
+/// 智能体工具调用权限访问策略（类型驱动设计，消除布尔分流与无效状态）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolAccessPolicy {
+    /// 允许访问全局所有工具
+    All,
+    /// 仅允许访问指定的白名单工具
+    Whitelist(Vec<String>),
+}
+
 /// 智能体工具权限配置（Ticket 04: 全局能力池与单智能体白名单）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AgentToolPermissions {
-    /// 是否允许所有全局已注册工具（若为 true，则拥有所有全局可用能力）
+    /// 是否允许所有全局已注册工具（兼容现有数据，底层通过 access_policy 类型调度）
     #[serde(default)]
     pub allow_all: bool,
     /// 允许免审批调用的工具名称列表
@@ -647,22 +657,58 @@ pub struct AgentToolPermissions {
 }
 
 impl AgentToolPermissions {
+    /// 派生强类型工具访问策略，杜绝布尔标志位分流
+    pub fn access_policy(&self) -> ToolAccessPolicy {
+        if self.allow_all {
+            ToolAccessPolicy::All
+        } else {
+            ToolAccessPolicy::Whitelist(self.allowed_tools.clone())
+        }
+    }
+
     pub fn requires_approval(&self, tool_name: &str) -> bool {
         self.require_approval.iter().any(|t| t == tool_name)
     }
 
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        if self.allow_all {
-            return true;
+        match self.access_policy() {
+            ToolAccessPolicy::All => true,
+            ToolAccessPolicy::Whitelist(ref tools) => tools.iter().any(|t| t == tool_name),
         }
-        self.allowed_tools.iter().any(|t| t == tool_name)
     }
 
     pub fn resolve_tools(&self, fallback: &[String]) -> Vec<String> {
-        if !self.allowed_tools.is_empty() || self.allow_all {
-            self.allowed_tools.clone()
-        } else {
-            fallback.to_vec()
+        match self.access_policy() {
+            ToolAccessPolicy::All => {
+                if !self.allowed_tools.is_empty() {
+                    self.allowed_tools.clone()
+                } else if !fallback.is_empty() {
+                    fallback.to_vec()
+                } else {
+                    vec!["*".to_string()]
+                }
+            }
+            ToolAccessPolicy::Whitelist(ref tools) => {
+                if !tools.is_empty() {
+                    tools.clone()
+                } else {
+                    fallback.to_vec()
+                }
+            }
+        }
+    }
+
+    /// 依据权限策略过滤工具定义字典，避免向外部提取内部字段导致 Feature Envy 坏味道
+    pub fn filter_tool_definitions(
+        &self,
+        tool_defs_by_name: &std::collections::HashMap<String, crate::llm::LlmToolDefinition>,
+    ) -> Vec<crate::llm::LlmToolDefinition> {
+        match self.access_policy() {
+            ToolAccessPolicy::All => tool_defs_by_name.values().cloned().collect(),
+            ToolAccessPolicy::Whitelist(ref tools) => tools
+                .iter()
+                .filter_map(|name| tool_defs_by_name.get(name).cloned())
+                .collect(),
         }
     }
 }

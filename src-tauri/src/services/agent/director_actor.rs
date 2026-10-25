@@ -124,15 +124,7 @@ fn resolve_allowed_tool_definitions(
     tool_defs_by_name: &std::collections::HashMap<String, crate::llm::LlmToolDefinition>,
 ) -> Vec<crate::llm::LlmToolDefinition> {
     if let Some(perms) = agent.tool_permissions() {
-        if perms.allow_all {
-            tool_defs_by_name.values().cloned().collect()
-        } else {
-            perms
-                .allowed_tools
-                .iter()
-                .filter_map(|name| tool_defs_by_name.get(name).cloned())
-                .collect()
-        }
+        perms.filter_tool_definitions(tool_defs_by_name)
     } else {
         agent
             .fallback_tools()
@@ -204,17 +196,16 @@ pub async fn run_director_actor_pipeline(
     // 注入智能体权限中显式白名单化的其他全局能力池工具（如 MCP 工具与 ActionBridge 查询）
     let mut register_extra_tool = |tool_name: &str| {
         if !tool_defs_by_name.contains_key(tool_name) {
-            tool_defs_by_name.insert(
-                tool_name.to_string(),
-                crate::llm::LlmToolDefinition {
+            let def = crate::services::action_bridge::resolve_known_capability_tool_definition(tool_name)
+                .unwrap_or_else(|| crate::llm::LlmToolDefinition {
                     name: tool_name.to_string(),
                     description: Some(format!("能力池工具 `{tool_name}`")),
                     input_schema: serde_json::json!({
                         "type": "object",
                         "properties": {}
                     }),
-                },
-            );
+                });
+            tool_defs_by_name.insert(tool_name.to_string(), def);
         }
     };
     for t in director_cfg.effective_tools() {

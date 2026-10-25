@@ -365,20 +365,11 @@ pub async fn preview_blueprint_with_session(
     }
 
     let mut preset_schemas = HashMap::new();
-    let schema_rows = sqlx::query(
-        "SELECT id, preset_id, name, description, retention_depth, fields_json, card_json, created_at, updated_at \
-         FROM preset_schemas \
-         WHERE preset_id = ? \
-         ORDER BY updated_at DESC, id ASC",
-    )
-    .bind(preset_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| format!("查询 preset_schemas 失败: {}", e).replace('\\', "/"))?;
+    let schema_list = crate::commands::schema::query_preset_schemas(&state.db, preset_id)
+        .await
+        .map_err(|e| format!("查询 preset_schemas 失败: {}", e).replace('\\', "/"))?;
 
-    for row in &schema_rows {
-        let s = crate::models::schema::SchemaDefinition::from_row(row)
-            .map_err(|e| format!("解析 SchemaDefinition 失败: {}", e).replace('\\', "/"))?;
+    for s in schema_list {
         preset_schemas.insert(s.id.clone(), s);
     }
 

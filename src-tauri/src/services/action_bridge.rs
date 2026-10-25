@@ -410,6 +410,90 @@ async fn get_session_state(
     serde_json::to_value(state).map_err(|err| err.to_string())
 }
 
+/// 解析 ActionBridge 内置系统命令的正式工具定义与真实 JSON Schema（A12 闭环，Spec Line 172）。
+pub fn resolve_action_bridge_tool_definition(command: &str) -> Option<crate::llm::LlmToolDefinition> {
+    match command {
+        "query_world_book_entries" => Some(crate::llm::LlmToolDefinition {
+            name: "query_world_book_entries".to_string(),
+            description: Some("按关键词查询世界设定书条目".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "查询关键词" },
+                    "limit": { "type": "integer", "description": "最大返回条数" }
+                },
+                "required": ["query"]
+            }),
+        }),
+        "get_character_detail" => Some(crate::llm::LlmToolDefinition {
+            name: "get_character_detail".to_string(),
+            description: Some("获取指定角色的详细卡片与设定".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "character_id": { "type": "integer", "description": "角色 ID" }
+                },
+                "required": ["character_id"]
+            }),
+        }),
+        "create_world_book_entry" => Some(crate::llm::LlmToolDefinition {
+            name: "create_world_book_entry".to_string(),
+            description: Some("在世界设定书中创建新条目".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "条目标题" },
+                    "content": { "type": "string", "description": "条目详细内容" }
+                },
+                "required": ["title", "content"]
+            }),
+        }),
+        "get_conversation_detail" => Some(crate::llm::LlmToolDefinition {
+            name: "get_conversation_detail".to_string(),
+            description: Some("获取当前会话的元数据与配置详情".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }),
+        "get_session_state" => Some(crate::llm::LlmToolDefinition {
+            name: "get_session_state".to_string(),
+            description: Some("获取当前会话的数据容器状态（状态属性、背包物品等）".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }),
+        _ => None,
+    }
+}
+
+/// 解析全局能力池（Native Scratchpad / ActionBridge / MCP）中已知的真实工具定义。
+pub fn resolve_known_capability_tool_definition(tool_name: &str) -> Option<crate::llm::LlmToolDefinition> {
+    if let Some(t) = crate::services::agent::scratchpad::native_scratchpad_tools()
+        .into_iter()
+        .find(|t| t.name == tool_name)
+    {
+        return Some(t);
+    }
+
+    if let Some(def) = resolve_action_bridge_tool_definition(tool_name) {
+        return Some(def);
+    }
+
+    for mcp in crate::mcp::tools::all_tools() {
+        if mcp.name() == tool_name {
+            return Some(crate::llm::LlmToolDefinition {
+                name: mcp.name().to_string(),
+                description: Some(mcp.description().to_string()),
+                input_schema: mcp.input_schema(),
+            });
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

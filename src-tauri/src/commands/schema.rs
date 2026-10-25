@@ -12,9 +12,9 @@ fn row_to_schema_definition(row: &sqlx::sqlite::SqliteRow) -> Result<SchemaDefin
     SchemaDefinition::from_row(row)
 }
 
-#[tauri::command]
-pub async fn preset_schemas_list(
-    state: tauri::State<'_, AppState>,
+/// 查询指定预设下绑定的所有 Schema 定义列表
+pub async fn query_preset_schemas(
+    db: &sqlx::SqlitePool,
     preset_id: i64,
 ) -> Result<Vec<SchemaDefinition>, String> {
     let rows = sqlx::query(
@@ -24,11 +24,19 @@ pub async fn preset_schemas_list(
          ORDER BY updated_at DESC, id ASC",
     )
     .bind(preset_id)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await
     .map_err(|e| e.to_string())?;
 
     rows.iter().map(row_to_schema_definition).collect()
+}
+
+#[tauri::command]
+pub async fn preset_schemas_list(
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+) -> Result<Vec<SchemaDefinition>, String> {
+    query_preset_schemas(&state.db, preset_id).await
 }
 
 #[tauri::command]
