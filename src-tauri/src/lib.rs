@@ -9,6 +9,11 @@ mod db;
 mod llm;
 #[cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))]
 mod mcp;
+#[cfg(not(all(desktop, any(debug_assertions, feature = "mcp-dev"))))]
+#[tauri::command]
+fn mcp_tool_names() -> Vec<serde_json::Value> {
+    Vec::new()
+}
 mod models;
 mod network;
 mod repositories;
@@ -147,7 +152,10 @@ pub fn run() {
             commands::game_state::session_game_state_save,
             commands::game_state::session_game_state_reset,
             commands::game_state::session_tool_call_execute,
+            #[cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))]
             mcp::tools::mcp_tool_names,
+            #[cfg(not(all(desktop, any(debug_assertions, feature = "mcp-dev"))))]
+            mcp_tool_names,
             commands::game_state::agent_dice_roll,
             commands::game_state::agent_validate_banned_words,
             commands::action_bridge::action_bridge_whitelist_get,

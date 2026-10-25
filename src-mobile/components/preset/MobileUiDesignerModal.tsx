@@ -119,7 +119,34 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
         width: 320,
         height: 240,
         style: {},
-        children: [],
+        children: [
+          {
+            nodeType: 'widget',
+            id: nextId('widget'),
+            widgetType: 'statBar',
+            label: '生命值',
+            dataBinding: 'stats.hp',
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            config: { bar_color: '#ef4444', max_stat: 'stats.max_hp' },
+            style: {},
+          },
+          {
+            nodeType: 'widget',
+            id: nextId('widget'),
+            widgetType: 'dataLabel',
+            label: '金币',
+            dataBinding: 'stats.gold',
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            config: {},
+            style: {},
+          },
+        ],
       },
     });
   };
@@ -181,6 +208,48 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
     } as LayoutNode;
 
     patchChildren([...(base.rootContainer.children ?? []), newNode]);
+  };
+
+  const appendChildInto = (containerIndex: number, newNode: LayoutNode) => {
+    patchChild(containerIndex, (node) => {
+      if (node.nodeType !== 'container') return node;
+      const container = node as LayoutContainer;
+      return {
+        ...container,
+        nodeType: 'container',
+        children: [...(container.children ?? []), newNode],
+      };
+    });
+  };
+
+  const removeNestedChild = (containerIndex: number, childIndex: number) => {
+    patchChild(containerIndex, (node) => {
+      if (node.nodeType !== 'container') return node;
+      const container = node as LayoutContainer;
+      return {
+        ...container,
+        nodeType: 'container',
+        children: (container.children ?? []).filter((_, i) => i !== childIndex),
+      };
+    });
+  };
+
+  const patchNestedChild = (
+    containerIndex: number,
+    childIndex: number,
+    updater: (node: LayoutNode) => LayoutNode,
+  ) => {
+    patchChild(containerIndex, (node) => {
+      if (node.nodeType !== 'container') return node;
+      const container = node as LayoutContainer;
+      const children = (container.children ?? []).slice();
+      children[childIndex] = updater(children[childIndex]);
+      return {
+        ...container,
+        nodeType: 'container',
+        children,
+      };
+    });
   };
 
   const patchChild = (index: number, updater: (node: LayoutNode) => LayoutNode) => {
@@ -387,6 +456,7 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                       <MobileLayoutTree
                         node={lay().rootContainer}
                         snapshot={PREVIEW_SNAPSHOT}
+                        isDesignPreview={true}
                       />
                     </div>
                   )}
@@ -579,8 +649,75 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                           </Show>
 
                           <Show when={child.nodeType === 'container'}>
-                            <div class="text-xs text-mist-solid/50">
-                              容器类型：{(child as LayoutContainer).kind} · 包含 {((child as LayoutContainer).children ?? []).length} 个嵌套项
+                            <div class="space-y-2 pt-2 border-t border-white/5">
+                              <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-semibold text-accent">
+                                  嵌套元素 ({((child as LayoutContainer).children ?? []).length})
+                                </span>
+                                <div class="flex gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => appendChildInto(idx(), { nodeType: 'widget', id: nextId('widget'), widgetType: 'dataLabel', label: '数据标签', dataBinding: 'stats.hp', config: {}, style: {} } as LayoutNode)}
+                                    class="px-2 py-0.5 rounded bg-accent/20 text-accent text-[11px] font-medium"
+                                  >
+                                    + 控件
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => appendChildInto(idx(), { nodeType: 'container', id: nextId('panel'), kind: 'panel', layoutMode: 'flex', x: 0, y: 0, width: 280, height: 80, style: {}, children: [] } as LayoutNode)}
+                                    class="px-2 py-0.5 rounded bg-white/10 text-mist-solid text-[11px]"
+                                  >
+                                    + 容器
+                                  </button>
+                                </div>
+                              </div>
+
+                              <For each={(child as LayoutContainer).children ?? []}>
+                                {(nested, nestedIdx) => (
+                                  <div class="p-2.5 rounded-xl border border-white/5 bg-black/20 space-y-2">
+                                    <div class="flex items-center justify-between text-xs">
+                                      <span class="font-mono text-emerald-400 font-semibold text-[11px]">
+                                        #{nestedIdx() + 1} {nested.nodeType === 'widget' ? (nested as WidgetDefinition).widgetType : (nested as LayoutContainer).kind}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeNestedChild(idx(), nestedIdx())}
+                                        class="text-rose-400 hover:text-rose-300 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10"
+                                      >
+                                        删除
+                                      </button>
+                                    </div>
+                                    <Show when={nested.nodeType === 'widget'}>
+                                      {(() => {
+                                        const w = nested as WidgetDefinition;
+                                        return (
+                                          <div class="grid grid-cols-2 gap-2 text-xs">
+                                            <div>
+                                              <label class="text-[10px] text-mist-solid/50 block mb-0.5">标签</label>
+                                              <input
+                                                type="text"
+                                                value={w.label || ''}
+                                                onInput={(e) => patchNestedChild(idx(), nestedIdx(), (n) => ({ ...(n as WidgetDefinition), label: e.currentTarget.value, nodeType: 'widget' }))}
+                                                class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label class="text-[10px] text-mist-solid/50 block mb-0.5">数据绑定</label>
+                                              <input
+                                                type="text"
+                                                value={w.dataBinding || ''}
+                                                onInput={(e) => patchNestedChild(idx(), nestedIdx(), (n) => ({ ...(n as WidgetDefinition), dataBinding: e.currentTarget.value, nodeType: 'widget' }))}
+                                                placeholder="如 stats.hp"
+                                                class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white font-mono"
+                                              />
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                    </Show>
+                                  </div>
+                                )}
+                              </For>
                             </div>
                           </Show>
                         </div>

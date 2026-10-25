@@ -609,11 +609,20 @@ export const PersistentHudContainer: Component<PersistentHudContainerProps> = (p
                   }
                 >
                   <div class="hud-body">
-                    <LayoutTreeNode
-                      node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }}
-                      snapshot={hudSnapshot()}
-                      conversationId={props.sessionId}
-                    />
+                    <Show
+                      when={(layout()!.rootContainer.children?.length ?? 0) > 0}
+                      fallback={
+                        <div style={{ padding: '16px', 'text-align': 'center', 'font-size': '11px', color: '#94a3b8', background: 'rgba(255,255,255,0.02)', 'border-radius': '8px', border: '1px dashed rgba(255,255,255,0.1)' }}>
+                          当前布局尚未配置任何控件，请在 UI 设计器中添加控件后保存
+                        </div>
+                      }
+                    >
+                      <LayoutTreeNode
+                        node={{ nodeType: 'container', ...(layout()!.rootContainer as any) }}
+                        snapshot={hudSnapshot()}
+                        conversationId={props.sessionId}
+                      />
+                    </Show>
                   </div>
                 </Show>
               </Show>

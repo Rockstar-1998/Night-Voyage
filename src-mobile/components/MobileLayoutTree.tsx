@@ -7,6 +7,8 @@ export interface MobileLayoutTreeProps {
   snapshot: MobileHudSnapshot;
   /** 动作件执行命令所需会话上下文 */
   conversationId?: number;
+  /** 是否处于 UI 设计器预览模式；预览模式下未命中键显示占位徽标而非报错 */
+  isDesignPreview?: boolean;
 }
 
 /**
@@ -59,13 +61,13 @@ function formatValue(value: unknown): string | null {
 export const MobileLayoutTree: Component<MobileLayoutTreeProps> = (props) => (
   <Show
     when={props.node.nodeType === 'container'}
-    fallback={<MobileWidget widget={props.node as WidgetDefinition} snapshot={props.snapshot} conversationId={props.conversationId} />}
+    fallback={<MobileWidget widget={props.node as WidgetDefinition} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />}
   >
-    <MobileContainer container={props.node as LayoutContainer} snapshot={props.snapshot} conversationId={props.conversationId} />
+    <MobileContainer container={props.node as LayoutContainer} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />
   </Show>
 );
 
-const MobileContainer: Component<{ container: LayoutContainer; snapshot: MobileHudSnapshot; conversationId?: number }> = (props) => (
+const MobileContainer: Component<{ container: LayoutContainer; snapshot: MobileHudSnapshot; conversationId?: number; isDesignPreview?: boolean }> = (props) => (
   <div
     style={{
       width: `${props.container.width}px`,
@@ -80,12 +82,12 @@ const MobileContainer: Component<{ container: LayoutContainer; snapshot: MobileH
     }}
   >
     <For each={props.container.children ?? []}>
-      {(child) => <MobileLayoutTree node={child} snapshot={props.snapshot} conversationId={props.conversationId} />}
+      {(child) => <MobileLayoutTree node={child} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />}
     </For>
   </div>
 );
 
-const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSnapshot; conversationId?: number }> = (props) => {
+const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSnapshot; conversationId?: number; isDesignPreview?: boolean }> = (props) => {
   const value = () => resolveBinding(props.widget.dataBinding, props.snapshot);
   const text = () => formatValue(value());
 
@@ -97,12 +99,24 @@ const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSna
     const percent =
       typeof bound === 'number' && typeof max === 'number' && max > 0
         ? Math.min(100, Math.max(0, (bound / max) * 100))
-        : null;
+        : props.isDesignPreview ? 70 : null;
     return (
       <div style={{ padding: '4px 8px', 'border-radius': '8px', background: 'rgba(0,0,0,0.25)', 'min-width': '120px' }}>
         <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'baseline' }}>
           <span style={{ 'font-size': '11px', color: '#94a3b8' }}>{props.widget.label}</span>
-          <span style={{ 'font-size': '11px', 'font-family': 'monospace', color: '#f1f5f9' }}>{text() ?? ''}</span>
+          <Show
+            when={text() !== null}
+            fallback={
+              <Show
+                when={props.isDesignPreview}
+                fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+              >
+                <span style={{ 'font-size': '10px', color: '#38bdf8' }}>[{props.widget.dataBinding || '未绑定'}]</span>
+              </Show>
+            }
+          >
+            <span style={{ 'font-size': '11px', 'font-family': 'monospace', color: '#f1f5f9' }}>{text()}</span>
+          </Show>
         </div>
         <div style={{ 'margin-top': '3px', height: '5px', background: 'rgba(255,255,255,0.08)', 'border-radius': '999px', overflow: 'hidden' }}>
           <div
@@ -113,9 +127,6 @@ const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSna
             }}
           />
         </div>
-        <Show when={percent === null}>
-          <span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>
-        </Show>
       </div>
     );
   };
@@ -198,7 +209,14 @@ const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSna
       <span style={{ 'font-size': '11px', color: '#94a3b8' }}>{props.widget.label}</span>
       <Show
         when={text() !== null}
-        fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+        fallback={
+          <Show
+            when={props.isDesignPreview}
+            fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+          >
+            <span style={{ 'font-size': '10px', color: '#38bdf8' }}>[{props.widget.dataBinding || '未绑定'}]</span>
+          </Show>
+        }
       >
         <span style={{ 'font-size': '11px', 'font-family': 'monospace', color: '#7dd3fc' }}>{text()}</span>
       </Show>
@@ -276,7 +294,14 @@ const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSna
       <span style={{ 'font-size': '11px', color: '#94a3b8' }}>{props.widget.label}</span>
       <Show
         when={text() !== null}
-        fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+        fallback={
+          <Show
+            when={props.isDesignPreview}
+            fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+          >
+            <span style={{ 'font-size': '10px', color: '#38bdf8' }}>[{props.widget.dataBinding || '未绑定'}]</span>
+          </Show>
+        }
       >
         <span style={{ 'font-size': '11px', 'font-family': 'monospace', color: '#f1f5f9' }}>{text()}</span>
       </Show>

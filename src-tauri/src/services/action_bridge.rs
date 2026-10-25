@@ -481,6 +481,7 @@ pub fn resolve_known_capability_tool_definition(tool_name: &str) -> Option<crate
         return Some(def);
     }
 
+    #[cfg(all(desktop, any(debug_assertions, feature = "mcp-dev")))]
     for mcp in crate::mcp::tools::all_tools() {
         if mcp.name() == tool_name {
             return Some(crate::llm::LlmToolDefinition {

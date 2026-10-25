@@ -10,6 +10,8 @@ interface LayoutTreeNodeProps {
   snapshot: HudSnapshot;
   /** 动作件执行命令所需会话上下文（HUD 挂载即会话） */
   conversationId?: number;
+  /** 是否处于 UI 设计器预览模式；预览模式下未命中键显示占位徽标而非报警 */
+  isDesignPreview?: boolean;
 }
 
 const BINDING_ERROR = 'rgba(244, 63, 94, 0.9)';
@@ -29,13 +31,13 @@ const BINDING_ERROR = 'rgba(244, 63, 94, 0.9)';
 export const LayoutTreeNode: Component<LayoutTreeNodeProps> = (props) => (
   <Show
     when={props.node.nodeType === 'container'}
-    fallback={<WidgetView widget={props.node as WidgetDefinition} snapshot={props.snapshot} conversationId={props.conversationId} />}
+    fallback={<WidgetView widget={props.node as WidgetDefinition} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />}
   >
-    <ContainerView container={props.node as LayoutContainer} snapshot={props.snapshot} conversationId={props.conversationId} />
+    <ContainerView container={props.node as LayoutContainer} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />
   </Show>
 );
 
-const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapshot; conversationId?: number }> = (props) => {
+const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapshot; conversationId?: number; isDesignPreview?: boolean }> = (props) => {
   // tabs 容器：本地激活页状态（按子元素索引）
   const [activeTab, setActiveTab] = createSignal(0);
 
@@ -96,7 +98,7 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
           <For each={props.container.children ?? []}>
             {(child, index) => (
               <Show when={activeTab() === index()}>
-                <LayoutTreeNode node={child} snapshot={props.snapshot} conversationId={props.conversationId} />
+                <LayoutTreeNode node={child} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />
               </Show>
             )}
           </For>
@@ -132,7 +134,7 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
                 : {};
             return (
               <div style={style}>
-                <LayoutTreeNode node={child} snapshot={props.snapshot} conversationId={props.conversationId} />
+                <LayoutTreeNode node={child} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />
               </div>
             );
           }}
@@ -142,22 +144,28 @@ const ContainerView: Component<{ container: LayoutContainer; snapshot: HudSnapsh
   );
 };
 
-const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; conversationId?: number }> = (props) => {
+const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; conversationId?: number; isDesignPreview?: boolean }> = (props) => {
   const value = () => resolveDataBinding(props.widget.dataBinding, props.snapshot);
   const text = () => formatBindingValue(value());
   const percent = () => {
     const bound = value();
     const maxBinding = props.widget.config?.max_stat;
-    if (typeof bound !== 'number' || typeof maxBinding !== 'string') return null;
+    if (typeof bound !== 'number' || typeof maxBinding !== 'string') {
+      if (props.isDesignPreview) return 70;
+      return null;
+    }
     const max = resolveDataBinding(maxBinding, props.snapshot);
-    if (typeof max !== 'number' || max <= 0) return null;
+    if (typeof max !== 'number' || max <= 0) {
+      if (props.isDesignPreview) return 70;
+      return null;
+    }
     return Math.min(100, Math.max(0, (bound / max) * 100));
   };
 
   return (
     <Show
       when={props.widget.widgetType !== 'actionButton'}
-      fallback={<ActionButtonView widget={props.widget} snapshot={props.snapshot} conversationId={props.conversationId} />}
+      fallback={<ActionButtonView widget={props.widget} snapshot={props.snapshot} conversationId={props.conversationId} isDesignPreview={props.isDesignPreview} />}
     >
     <div
       style={{
@@ -173,16 +181,35 @@ const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; c
         <Show
           when={text() !== null}
           fallback={
-            <span style={{ 'font-size': '10px', color: BINDING_ERROR }} role="alert">
-              绑定错误: {props.widget.dataBinding || '(空)'}
-            </span>
+            <Show
+              when={props.isDesignPreview}
+              fallback={
+                <span style={{ 'font-size': '10px', color: BINDING_ERROR }} role="alert">
+                  绑定错误: {props.widget.dataBinding || '(空)'}
+                </span>
+              }
+            >
+              <span
+                style={{
+                  'font-size': '10px',
+                  color: '#38bdf8',
+                  background: 'rgba(56, 189, 248, 0.1)',
+                  padding: '1px 6px',
+                  'border-radius': '4px',
+                  'font-family': 'monospace',
+                }}
+                title={`设计预览模式：待运行时绑定 ${props.widget.dataBinding || '未绑定'}`}
+              >
+                [{props.widget.dataBinding || '未绑定'}]
+              </span>
+            </Show>
           }
         >
           <span style={{ 'font-size': '11px', 'font-family': 'monospace', color: '#f1f5f9' }}>{text()}</span>
         </Show>
       </div>
 
-      <Show when={props.widget.widgetType === 'statBar' && percent() !== null}>
+      <Show when={props.widget.widgetType === 'statBar' && (percent() !== null || props.isDesignPreview)}>
         <div
           style={{
             'margin-top': '4px',
@@ -198,8 +225,8 @@ const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; c
         >
           <div
             style={{
-              width: props.widget.config?.vertical ? '100%' : `${percent()}%`,
-              height: props.widget.config?.vertical ? `${percent()}%` : '100%',
+              width: props.widget.config?.vertical ? '100%' : `${percent() ?? 70}%`,
+              height: props.widget.config?.vertical ? `${percent() ?? 70}%` : '100%',
               background: String(props.widget.config?.bar_color ?? '#38bdf8'),
             }}
           />
@@ -300,7 +327,7 @@ const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; c
             border: `1px solid ${String(props.widget.config?.badge_border ?? 'rgba(56,189,248,0.4)')}`,
           }}
         >
-          {text() ?? '绑定错误'}
+          {text() ?? (props.isDesignPreview ? `[${props.widget.dataBinding || '未绑定'}]` : '绑定错误')}
         </span>
       </Show>
 
@@ -368,6 +395,7 @@ const ActionButtonView: Component<{
   widget: WidgetDefinition;
   snapshot: HudSnapshot;
   conversationId?: number;
+  isDesignPreview?: boolean;
 }> = (props) => {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
