@@ -356,59 +356,14 @@
           }
         },
         {
-          "id": "n_tool_buy_calc",
-          "type": "calculator",
+          "id": "n_macro_buy_rule",
+          "type": "macro_instance",
           "config": {
-            "calc_mode": "math",
-            "target": "stats.credits",
-            "op": "-",
-            "operand_a": "args.cost",
-            "operand_b": null,
-            "item_def": null,
-            "is_locked": false
+            "macro_id": "macro_buy_item_rule"
           },
           "position": {
             "x": 1380,
             "y": 100
-          }
-        },
-        {
-          "id": "n_tool_buy_gate",
-          "type": "condition_gate",
-          "config": {
-            "gate_type": "stats.credits",
-            "expression": "10",
-            "is_locked": false
-          },
-          "position": {
-            "x": 1600,
-            "y": 100
-          }
-        },
-        {
-          "id": "n_tool_buy_ret",
-          "type": "tool_return",
-          "config": {
-            "return_template": "购买成功：已扣除对应信用点并放入背包",
-            "is_blocked": false,
-            "is_locked": false
-          },
-          "position": {
-            "x": 1820,
-            "y": 60
-          }
-        },
-        {
-          "id": "n_tool_buy_fail",
-          "type": "tool_return",
-          "config": {
-            "return_template": "购买失败：信用点不足，无法完成交易",
-            "is_blocked": true,
-            "is_locked": false
-          },
-          "position": {
-            "x": 1820,
-            "y": 160
           }
         },
         {
@@ -679,41 +634,17 @@
           "order": 0
         },
         {
-          "id": "e_buy_to_calc",
+          "id": "e_buy_to_macro",
           "source": "n_tool_buy",
           "source_port": "out",
-          "target": "n_tool_buy_calc",
-          "target_port": "in",
+          "target": "n_macro_buy_rule",
+          "target_port": "pin_in_exec",
           "order": 0
         },
         {
-          "id": "e_calc_to_gate",
-          "source": "n_tool_buy_calc",
-          "source_port": "out",
-          "target": "n_tool_buy_gate",
-          "target_port": "in",
-          "order": 0
-        },
-        {
-          "id": "e_gate_pass_to_ret",
-          "source": "n_tool_buy_gate",
-          "source_port": "pass",
-          "target": "n_tool_buy_ret",
-          "target_port": "in",
-          "order": 0
-        },
-        {
-          "id": "e_gate_blocked_to_fail",
-          "source": "n_tool_buy_gate",
-          "source_port": "blocked",
-          "target": "n_tool_buy_fail",
-          "target_port": "in",
-          "order": 0
-        },
-        {
-          "id": "e_buy_ret_to_read",
-          "source": "n_tool_buy_ret",
-          "source_port": "out",
+          "id": "e_macro_pass_to_read",
+          "source": "n_macro_buy_rule",
+          "source_port": "pin_out_pass",
           "target": "n_tool_read",
           "target_port": "in",
           "order": 0
@@ -751,9 +682,17 @@
           "order": 0
         },
         {
-          "id": "e_mode_to_director",
+          "id": "e_mode_single_to_sampling",
           "source": "n_mode_switch",
-          "source_port": "out",
+          "source_port": "out_single",
+          "target": "n_sampling",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_mode_director_to_director",
+          "source": "n_mode_switch",
+          "source_port": "out_director_actor",
           "target": "n_director",
           "target_port": "in",
           "order": 0
@@ -767,9 +706,17 @@
           "order": 0
         },
         {
-          "id": "e_actor_to_pipeline",
+          "id": "e_actor_to_sampling",
           "source": "n_actor_detective",
           "source_port": "out",
+          "target": "n_sampling",
+          "target_port": "in",
+          "order": 0
+        },
+        {
+          "id": "e_mode_pipeline_to_pipeline",
+          "source": "n_mode_switch",
+          "source_port": "out_scriptwriter",
           "target": "n_pipeline",
           "target_port": "in",
           "order": 0

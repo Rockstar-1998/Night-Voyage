@@ -356,7 +356,7 @@ where
                     last_critique: Some(output.clone()),
                 };
                 let loop_state_json = serde_json::to_string(&loop_state)
-                    .map_err(|e| format!("序列化 rejection_loop_state 失败: {e}"))?;
+                    .map_err(|e| format!("序列化 rejection_loop_state 失败: {e}").replace('\\', "/"))?;
                 scratchpad.write_text("rejection_loop_state", &loop_state_json);
                 scratchpad.write_text(&format!("{}.rejection_loop_state", stage_cfg.stage), &loop_state_json);
 

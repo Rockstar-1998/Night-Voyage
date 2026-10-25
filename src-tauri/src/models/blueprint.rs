@@ -694,6 +694,40 @@ pub struct AgentToolPermissions {
 }
 
 impl AgentToolPermissions {
+    /// 构造允许所有工具的策略实例
+    pub fn all() -> Self {
+        Self {
+            allow_all: true,
+            allowed_tools: Vec::new(),
+            require_approval: Vec::new(),
+        }
+    }
+
+    /// 构造白名单受限策略实例
+    pub fn whitelist(tools: Vec<String>) -> Self {
+        Self {
+            allow_all: false,
+            allowed_tools: tools,
+            require_approval: Vec::new(),
+        }
+    }
+
+    /// 规范化权限结构，消除 `allow_all: true` 与 `allowed_tools` 非空的无效状态
+    pub fn normalized(mut self) -> Self {
+        if self.allow_all {
+            self.allowed_tools.clear();
+        }
+        self
+    }
+
+    /// 校验类型不变式，防止运行期进入无效矛盾状态
+    pub fn validate_invariants(&self) -> Result<(), String> {
+        if self.allow_all && !self.allowed_tools.is_empty() {
+            return Err("AgentToolPermissions 不变式破坏：allow_all 为 true 时 allowed_tools 必须为空".to_string());
+        }
+        Ok(())
+    }
+
     /// 派生强类型工具访问策略，杜绝布尔标志位分流
     pub fn access_policy(&self) -> ToolAccessPolicy {
         if self.allow_all {
@@ -1015,7 +1049,13 @@ pub enum PinType {
 
 impl PinType {
     pub fn is_compatible(&self, other: &Self) -> bool {
-        self == other
+        if self == other {
+            return true;
+        }
+        if *self == PinType::Exec || *other == PinType::Exec {
+            return false;
+        }
+        *self == PinType::Object || *other == PinType::Object
     }
 }
 

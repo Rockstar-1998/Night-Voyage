@@ -213,7 +213,7 @@ pub async fn run_director_actor_pipeline(
     let director_tools = resolve_allowed_tool_definitions(&director_cfg, &tool_defs_by_name);
 
     let schema_json = serde_json::to_string(&director_plan_schema())
-        .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}"))?;
+        .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}").replace('\\', "/"))?;
 
     let plan_raw = if director_tools.is_empty() {
         let req = SubAgentRequest::new(

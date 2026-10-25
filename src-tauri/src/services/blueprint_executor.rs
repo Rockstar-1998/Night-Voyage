@@ -603,12 +603,24 @@ fn traverse(
         // 全图扫描读取（与执行流无关），这里只要求它接有出边以保持图连通。
         NodeConfig::BannedWordsConfig(_)
         | NodeConfig::ScriptwriterPipeline(_)
-        | NodeConfig::AgentModeSwitch(_)
         | NodeConfig::DirectorConfig(_)
         | NodeConfig::ActorDefinition(_)
         | NodeConfig::InitialStateConfig(_) => {
             let next = next_node_id(graph, node_id, "out")?;
             traverse(graph, &next, context, result, visited, path, values)?;
+        }
+        NodeConfig::AgentModeSwitch(cfg) => {
+            let mode = context
+                .gate_selections
+                .get(node_id)
+                .and_then(|s| s.keys.first())
+                .cloned()
+                .unwrap_or_else(|| cfg.default_mode.clone());
+            let port = format!("out_{mode}");
+            let branch_target = target_of(graph, node_id, &port)?;
+            traverse(graph, &branch_target, context, result, visited, path, values)?;
+            let merge_node = find_merge_node(graph, node_id)?;
+            traverse(graph, &merge_node, context, result, visited, path, values)?;
         }
         NodeConfig::Calculator(_) => {
             let next = next_node_id(graph, node_id, "out")?;
@@ -1310,6 +1322,41 @@ fn get_port_pin_type(
                 PortDirection::Output => None,
             }
         }
+        NodeConfig::Constant(_) => {
+            match direction {
+                PortDirection::Output => {
+                    if port == "out" || port == "value" {
+                        Some(PinType::String)
+                    } else {
+                        None
+                    }
+                }
+                PortDirection::Input => None,
+            }
+        }
+        NodeConfig::Branch(cfg) => {
+            match direction {
+                PortDirection::Input => {
+                    if port == "in" {
+                        Some(PinType::Exec)
+                    } else if port == "value" {
+                        Some(PinType::String)
+                    } else {
+                        None
+                    }
+                }
+                PortDirection::Output => {
+                    if port == cfg.default_port
+                        || port.starts_with("out_")
+                        || cfg.cases.iter().any(|c| c.port == port)
+                    {
+                        Some(PinType::Exec)
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
         NodeConfig::Start
         | NodeConfig::End
         | NodeConfig::Prompt(_)
@@ -1319,8 +1366,6 @@ fn get_port_pin_type(
         | NodeConfig::ModeSwitch(_)
         | NodeConfig::RoleSwitch(_)
         | NodeConfig::SamplingParams(_)
-        | NodeConfig::Constant(_)
-        | NodeConfig::Branch(_)
         | NodeConfig::SamplingParamsOpenAi(_)
         | NodeConfig::SamplingParamsAnthropic(_)
         | NodeConfig::InvokeSchema(_)
@@ -1346,6 +1391,8 @@ fn get_port_pin_type(
                 || port.starts_with("in_")
                 || port == "pass"
                 || port == "blocked"
+                || port == "approved"
+                || port == "reject"
             {
                 Some(PinType::Exec)
             } else {
@@ -1687,6 +1734,12 @@ fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usi
         }
         NodeConfig::RoleSwitch(_) => {
             vec!["out_single", "out_online"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        }
+        NodeConfig::AgentModeSwitch(_) => {
+            vec!["out_single", "out_director_actor", "out_scriptwriter"]
                 .into_iter()
                 .map(String::from)
                 .collect()

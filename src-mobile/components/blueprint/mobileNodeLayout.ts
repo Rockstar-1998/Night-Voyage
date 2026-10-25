@@ -95,7 +95,9 @@ export interface PortLayout {
 export function isPinTypeCompatible(a?: PinType, b?: PinType): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return a === b;
+  if (a === b) return true;
+  if (a === 'exec' || b === 'exec') return false;
+  return a === 'object' || b === 'object';
 }
 
 /**
