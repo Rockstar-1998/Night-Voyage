@@ -1049,13 +1049,7 @@ pub enum PinType {
 
 impl PinType {
     pub fn is_compatible(&self, other: &Self) -> bool {
-        if self == other {
-            return true;
-        }
-        if *self == PinType::Exec || *other == PinType::Exec {
-            return false;
-        }
-        *self == PinType::Object || *other == PinType::Object
+        self == other
     }
 }
 

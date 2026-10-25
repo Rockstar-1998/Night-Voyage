@@ -1459,8 +1459,6 @@ fn inline_single_macro_instance(
     let inputs_node = macro_def.nodes.iter().find(|n| {
         matches!(n.config, NodeConfig::MacroInputs(_))
             || n.node_type() == crate::models::blueprint::NodeType::MacroInputs
-            || n.id == "inputs"
-            || n.id == "Inputs"
     });
 
     let outputs_nodes: Vec<&BlueprintNode> = macro_def
@@ -1469,10 +1467,6 @@ fn inline_single_macro_instance(
         .filter(|n| {
             matches!(n.config, NodeConfig::MacroOutputs(_))
                 || n.node_type() == crate::models::blueprint::NodeType::MacroOutputs
-                || n.id == "outputs"
-                || n.id == "Outputs"
-                || n.id.starts_with("outputs_")
-                || n.id.starts_with("Outputs_")
         })
         .collect();
 
@@ -1747,7 +1741,31 @@ fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usi
         NodeConfig::ConditionGate(_) => {
             vec!["pass".to_string(), "blocked".to_string()]
         }
-        _ => return 0,
+        NodeConfig::Start
+        | NodeConfig::End
+        | NodeConfig::Prompt(_)
+        | NodeConfig::SchemaField(_)
+        | NodeConfig::SamplingParams(_)
+        | NodeConfig::Constant(_)
+        | NodeConfig::Branch(_)
+        | NodeConfig::SamplingParamsOpenAi(_)
+        | NodeConfig::SamplingParamsAnthropic(_)
+        | NodeConfig::InvokeSchema(_)
+        | NodeConfig::ToolDefinition(_)
+        | NodeConfig::Calculator(_)
+        | NodeConfig::ToolReturn(_)
+        | NodeConfig::Inspector(_)
+        | NodeConfig::Writer(_)
+        | NodeConfig::Querier(_)
+        | NodeConfig::BannedWordsConfig(_)
+        | NodeConfig::ScriptwriterPipeline(_)
+        | NodeConfig::DirectorConfig(_)
+        | NodeConfig::ActorDefinition(_)
+        | NodeConfig::UiLayoutConfig(_)
+        | NodeConfig::InitialStateConfig(_)
+        | NodeConfig::MacroInstance(_)
+        | NodeConfig::MacroInputs(_)
+        | NodeConfig::MacroOutputs(_) => return 0,
     };
     ordered_ports.iter().position(|p| p == port).unwrap_or(usize::MAX)
 }
@@ -4470,6 +4488,22 @@ mod tests {
             edges: Vec::new(),
         };
 
+        // Macro with Object input (Spec Line 196: Number wired to Object must fail)
+        let macro_obj = BlueprintMacro {
+            id: "m_obj".to_string(),
+            name: "Obj Macro".to_string(),
+            description: "".to_string(),
+            category: "".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "obj_in".to_string(),
+                name: "obj_in".to_string(),
+                pin_type: PinType::Object,
+            }],
+            outputs: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+
         // Incompatible: Number output wired to String input
         let bad_graph = BlueprintGraph {
             version: 2,
@@ -4505,6 +4539,45 @@ mod tests {
             BlueprintError::IncompatiblePinTypes { source_type, target_type, .. } => {
                 assert_eq!(source_type, PinType::Number);
                 assert_eq!(target_type, PinType::String);
+            }
+            other => panic!("expected IncompatiblePinTypes, got {other:?}"),
+        }
+
+        // Spec Line 196: Incompatible Number output wired to Object input
+        let bad_obj_graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                start("n_start"),
+                BlueprintNode {
+                    id: "inst_num".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_num".to_string(),
+                        name: None,
+                    }),
+                    position: pos(50.0, 0.0),
+                },
+                BlueprintNode {
+                    id: "inst_obj".to_string(),
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_obj".to_string(),
+                        name: None,
+                    }),
+                    position: pos(150.0, 0.0),
+                },
+                end("n_end"),
+            ],
+            edges: vec![
+                edge("e_bad_obj", "inst_num", "val_out", "inst_obj", "obj_in"),
+            ],
+            comments: Vec::new(),
+            macros: vec![macro_num.clone(), macro_obj.clone()],
+        };
+
+        let err_obj = expand_macros(&bad_obj_graph, None).expect_err("Number wired to Object must fail compile validation per Spec line 196");
+        match err_obj {
+            BlueprintError::IncompatiblePinTypes { source_type, target_type, .. } => {
+                assert_eq!(source_type, PinType::Number);
+                assert_eq!(target_type, PinType::Object);
             }
             other => panic!("expected IncompatiblePinTypes, got {other:?}"),
         }
