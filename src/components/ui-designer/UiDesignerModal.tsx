@@ -94,7 +94,10 @@ export const UiDesignerModal: Component<UiDesignerModalProps> = (props) => {
               });
             }
           })
-          .catch(() => {});
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            report(`获取会话真实状态失败（将使用设计态空快照）：${msg}`, true);
+          });
       }
     }
   });

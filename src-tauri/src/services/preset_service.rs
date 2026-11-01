@@ -1730,5 +1730,121 @@ mod tests {
         assert_eq!(result.blocks[0].identifier, "block_a");
         assert_eq!(result.blocks[1].identifier, "block_b");
     }
+
+    #[tokio::test]
+    async fn test_preset_export_import_preserves_macros() {
+        use crate::models::blueprint::{BlueprintMacro, MacroPinDefinition, PinType};
+
+        let pool = setup_test_db().await;
+        let svc = PresetService::new(&pool);
+
+        let macro_def = BlueprintMacro {
+            id: "m_export_test".to_string(),
+            name: "Export Macro".to_string(),
+            description: "Export macro desc".to_string(),
+            category: "Utils".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "m_in".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "in".to_string(),
+                            name: "in".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+                BlueprintNode {
+                    id: "m_out".to_string(),
+                    position: Position { x: 200.0, y: 0.0 },
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "out".to_string(),
+                            name: "out".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+            ],
+            edges: vec![BlueprintEdge {
+                id: "m_e1".to_string(),
+                source: "m_in".to_string(),
+                source_port: "in".to_string(),
+                target: "m_out".to_string(),
+                target_port: "out".to_string(),
+                order: 0,
+            }],
+        };
+
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::Start,
+                },
+                BlueprintNode {
+                    id: "n_macro".to_string(),
+                    position: Position { x: 150.0, y: 0.0 },
+                    config: NodeConfig::MacroInstance(crate::models::blueprint::MacroInstanceConfig {
+                        macro_id: "m_export_test".to_string(),
+                        name: Some("test_instance".to_string()),
+                    }),
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    position: Position { x: 300.0, y: 0.0 },
+                    config: NodeConfig::End,
+                },
+            ],
+            edges: vec![
+                BlueprintEdge {
+                    id: "e1".to_string(),
+                    source: "n_start".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_macro".to_string(),
+                    target_port: "in".to_string(),
+                    order: 0,
+                },
+                BlueprintEdge {
+                    id: "e2".to_string(),
+                    source: "n_macro".to_string(),
+                    source_port: "out".to_string(),
+                    target: "n_end".to_string(),
+                    target_port: "in".to_string(),
+                    order: 0,
+                },
+            ],
+            comments: vec![],
+            macros: vec![macro_def],
+        };
+
+        let graph_json = serde_json::to_string(&graph).expect("serialize graph with macro");
+        let created = create_test_preset(&svc, "macro_export_preset", Some(graph_json)).await;
+
+        let exported_str = svc.export(created.preset.id).await.expect("export must succeed");
+        let imported = svc.import(exported_str).await.expect("import must succeed");
+
+        let loaded = svc.get_by_id(imported.preset.id).await.expect("get imported preset");
+        let loaded_graph_str = loaded.preset.blueprint_graph.expect("imported graph must be present");
+        let loaded_graph: BlueprintGraph = serde_json::from_str(&loaded_graph_str).expect("deserialize imported graph");
+
+        assert_eq!(loaded_graph.macros.len(), 1, "imported graph must retain macro definitions");
+        assert_eq!(loaded_graph.macros[0].id, "m_export_test");
+        assert_eq!(loaded_graph.macros[0].nodes.len(), 2);
+        assert_eq!(loaded_graph.macros[0].edges.len(), 1);
+    }
 }
 

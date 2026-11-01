@@ -162,6 +162,14 @@ const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; c
     return Math.min(100, Math.max(0, (bound / max) * 100));
   };
 
+  const maxStatError = () => {
+    if (props.isDesignPreview || props.widget.widgetType !== 'statBar') return false;
+    const maxBinding = props.widget.config?.max_stat;
+    if (typeof maxBinding !== 'string' || !maxBinding) return false;
+    const max = resolveDataBinding(maxBinding, props.snapshot);
+    return typeof max !== 'number' || max <= 0;
+  };
+
   return (
     <Show
       when={props.widget.widgetType !== 'actionButton'}
@@ -179,13 +187,13 @@ const WidgetView: Component<{ widget: WidgetDefinition; snapshot: HudSnapshot; c
       <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'baseline', gap: '8px' }}>
         <span style={{ 'font-size': '11px', color: '#94a3b8' }}>{props.widget.label}</span>
         <Show
-          when={text() !== null}
+          when={text() !== null && !maxStatError()}
           fallback={
             <Show
               when={props.isDesignPreview}
               fallback={
                 <span style={{ 'font-size': '10px', color: BINDING_ERROR }} role="alert">
-                  绑定错误: {props.widget.dataBinding || '(空)'}
+                  {maxStatError() ? `上限错误: ${props.widget.config?.max_stat}` : `绑定错误: ${props.widget.dataBinding || '(空)'}`}
                 </span>
               }
             >

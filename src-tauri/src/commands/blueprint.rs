@@ -519,3 +519,100 @@ pub async fn blueprint_validate_ui_contract(
     let result = crate::services::blueprint_executor::validate_blueprint_ui_contract(&graph, &contract);
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::blueprint::{
+        BlueprintEdge, BlueprintMacro, BlueprintNode, MacroPinDefinition, PinType, Position,
+    };
+
+    #[tokio::test]
+    async fn test_normalize_blueprint_graph_preserves_macros() {
+        let macro_def = BlueprintMacro {
+            id: "m_test".to_string(),
+            name: "Test Macro".to_string(),
+            description: "Test macro desc".to_string(),
+            category: "Utils".to_string(),
+            inputs: vec![MacroPinDefinition {
+                id: "in".to_string(),
+                name: "in".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            outputs: vec![MacroPinDefinition {
+                id: "out".to_string(),
+                name: "out".to_string(),
+                pin_type: PinType::Exec,
+            }],
+            nodes: vec![
+                BlueprintNode {
+                    id: "m_in".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::MacroInputs(crate::models::blueprint::MacroInputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "in".to_string(),
+                            name: "in".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+                BlueprintNode {
+                    id: "m_out".to_string(),
+                    position: Position { x: 200.0, y: 0.0 },
+                    config: NodeConfig::MacroOutputs(crate::models::blueprint::MacroOutputsConfig {
+                        pins: vec![MacroPinDefinition {
+                            id: "out".to_string(),
+                            name: "out".to_string(),
+                            pin_type: PinType::Exec,
+                        }],
+                    }),
+                },
+            ],
+            edges: vec![BlueprintEdge {
+                id: "m_e1".to_string(),
+                source: "m_in".to_string(),
+                source_port: "in".to_string(),
+                target: "m_out".to_string(),
+                target_port: "out".to_string(),
+                order: 0,
+            }],
+        };
+
+        let graph = BlueprintGraph {
+            version: 2,
+            nodes: vec![
+                BlueprintNode {
+                    id: "n_start".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: NodeConfig::Start,
+                },
+                BlueprintNode {
+                    id: "n_end".to_string(),
+                    position: Position { x: 300.0, y: 0.0 },
+                    config: NodeConfig::End,
+                },
+            ],
+            edges: vec![BlueprintEdge {
+                id: "e1".to_string(),
+                source: "n_start".to_string(),
+                source_port: "out".to_string(),
+                target: "n_end".to_string(),
+                target_port: "in".to_string(),
+                order: 0,
+            }],
+            comments: vec![],
+            macros: vec![macro_def],
+        };
+
+        let input_json = serde_json::to_string(&graph).expect("serialize test graph");
+        let result = normalize_blueprint_graph(input_json).await.expect("normalization must succeed");
+
+        let normalized_graph: BlueprintGraph =
+            serde_json::from_str(&result.graph_json).expect("deserialize normalized graph");
+
+        assert_eq!(normalized_graph.macros.len(), 1, "macros must be preserved after normalize_blueprint_graph");
+        assert_eq!(normalized_graph.macros[0].id, "m_test");
+        assert_eq!(normalized_graph.macros[0].nodes.len(), 2);
+        assert_eq!(normalized_graph.macros[0].edges.len(), 1);
+    }
+}

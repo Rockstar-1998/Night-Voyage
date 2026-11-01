@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal } from 'solid-js';
-import type { LayoutContainer, LayoutNode, WidgetDefinition } from '../../src/lib/backend/types';
-import { actionBridgeInvoke } from '../../src/lib/backend/actionBridge';
+import type { LayoutContainer, LayoutNode, WidgetDefinition } from '../lib/backend/types';
+import { actionBridgeInvoke } from '../lib/backend/actionBridge';
 
 export interface MobileLayoutTreeProps {
   node: LayoutNode;
@@ -96,20 +96,27 @@ const MobileWidget: Component<{ widget: WidgetDefinition; snapshot: MobileHudSna
     const bound = value();
     const maxBinding = props.widget.config?.max_stat;
     const max = typeof maxBinding === 'string' ? resolveBinding(maxBinding, props.snapshot) : null;
+    const maxValid = typeof max === 'number' && max > 0;
     const percent =
-      typeof bound === 'number' && typeof max === 'number' && max > 0
+      typeof bound === 'number' && maxValid
         ? Math.min(100, Math.max(0, (bound / max) * 100))
         : props.isDesignPreview ? 70 : null;
+    const maxError = !props.isDesignPreview && typeof maxBinding === 'string' && !maxValid;
+
     return (
       <div style={{ padding: '4px 8px', 'border-radius': '8px', background: 'rgba(0,0,0,0.25)', 'min-width': '120px' }}>
         <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'baseline' }}>
           <span style={{ 'font-size': '11px', color: '#94a3b8' }}>{props.widget.label}</span>
           <Show
-            when={text() !== null}
+            when={text() !== null && !maxError}
             fallback={
               <Show
                 when={props.isDesignPreview}
-                fallback={<span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">绑定错误</span>}
+                fallback={
+                  <span style={{ 'font-size': '10px', color: '#fb7185' }} role="alert">
+                    {maxError ? `上限错误: ${maxBinding}` : '绑定错误'}
+                  </span>
+                }
               >
                 <span style={{ 'font-size': '10px', color: '#38bdf8' }}>[{props.widget.dataBinding || '未绑定'}]</span>
               </Show>

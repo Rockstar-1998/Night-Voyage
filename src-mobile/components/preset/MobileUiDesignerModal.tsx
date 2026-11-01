@@ -7,20 +7,22 @@
 
 import { Component, For, Show, createEffect, createResource, createSignal } from 'solid-js';
 import type {
+  ContainerKind,
   LayoutContainer,
   LayoutMountType,
   LayoutNode,
   UILayoutDefinition,
   WidgetDefinition,
   WidgetType,
-} from '../../../src/lib/backend/types';
+} from '../../lib/backend/types';
 import {
   presetUiLayoutActivate,
   presetUiLayoutDelete,
   presetUiLayoutList,
   presetUiLayoutSave,
-} from '../../../src/lib/backend/ui_layout';
-import { presetSchemasList } from '../../../src/lib/backend/schema';
+} from '../../lib/backend/ui_layout';
+import { presetSchemasList } from '../../lib/backend/schema';
+import { sessionGameStateGet } from '../../lib/backend/game_state';
 import { MobileLayoutTree, type MobileHudSnapshot } from '../MobileLayoutTree';
 import { showToast } from '../Toast';
 
@@ -48,14 +50,11 @@ const WIDGET_TYPES: Array<{ value: WidgetType; label: string }> = [
   { value: 'actionButton', label: '动作按钮 (ActionButton)' },
 ];
 
-const PREVIEW_SNAPSHOT: MobileHudSnapshot = {
-  stats: { hp: 85, max_hp: 100, gold: 260, sanity: 70 },
-  inventory: [
-    { id: 'item_1', name: '急救包', count: 3 },
-    { id: 'item_2', name: '通讯器', count: 1 },
-  ],
-  flags: { status: '正常' },
-  schemaPatches: { thinking: '分析当前环境中…' },
+const EMPTY_SNAPSHOT: MobileHudSnapshot = {
+  stats: {},
+  inventory: [],
+  flags: {},
+  schemaPatches: {},
 };
 
 let uid = 0;
@@ -67,6 +66,7 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
   const [busy, setBusy] = createSignal(false);
   const [activeTab, setActiveTab] = createSignal<'designer' | 'preview'>('designer');
   const [selectedWidgetType, setSelectedWidgetType] = createSignal<WidgetType>('statBar');
+  const [liveSnapshot, setLiveSnapshot] = createSignal<MobileHudSnapshot | null>(null);
 
   const [schemaOptions] = createResource(
     () => props.presetId,
@@ -100,6 +100,23 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
   createEffect(() => {
     if (props.isOpen) {
       void refresh();
+      if (props.sessionId) {
+        sessionGameStateGet(props.sessionId)
+          .then((st) => {
+            if (st) {
+              setLiveSnapshot({
+                stats: st.stats || {},
+                inventory: st.inventory || [],
+                flags: st.flags || {},
+                schemaPatches: {},
+              });
+            }
+          })
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            showToast(`获取会话真实状态失败（将使用设计态空快照）：${msg}`, 'warning');
+          });
+      }
     }
   });
 
@@ -455,7 +472,7 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                     <div class="p-4 rounded-2xl border border-white/10 bg-black/40 overflow-x-auto min-h-[220px]">
                       <MobileLayoutTree
                         node={lay().rootContainer}
-                        snapshot={PREVIEW_SNAPSHOT}
+                        snapshot={liveSnapshot() ?? EMPTY_SNAPSHOT}
                         isDesignPreview={true}
                       />
                     </div>
@@ -574,9 +591,9 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                               const widget = child as WidgetDefinition;
                               return (
                                 <div class="space-y-2">
-                                  <div class="grid grid-cols-2 gap-2">
+                                  <div class="grid grid-cols-3 gap-2">
                                     <div>
-                                      <label class="text-[11px] text-mist-solid/50 block mb-1">标题/标签</label>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-1">标题/标签</label>
                                       <input
                                         type="text"
                                         value={widget.label || ''}
@@ -584,13 +601,14 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                                           patchChild(idx(), (w) => ({
                                             ...(w as WidgetDefinition),
                                             label: e.currentTarget.value,
+                                            nodeType: 'widget',
                                           }))
                                         }
                                         class="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white"
                                       />
                                     </div>
                                     <div>
-                                      <label class="text-[11px] text-mist-solid/50 block mb-1">数据绑定路径</label>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-1">数据绑定路径</label>
                                       <input
                                         type="text"
                                         value={widget.dataBinding || ''}
@@ -598,14 +616,137 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                                           patchChild(idx(), (w) => ({
                                             ...(w as WidgetDefinition),
                                             dataBinding: e.currentTarget.value,
+                                            nodeType: 'widget',
                                           }))
                                         }
-                                        placeholder="如 stats.hp 或 inventory"
+                                        placeholder="stats.hp / inventory"
                                         class="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white font-mono"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-1">控件类型</label>
+                                      <select
+                                        value={widget.widgetType}
+                                        onChange={(e) =>
+                                          patchChild(idx(), (w) => ({
+                                            ...(w as WidgetDefinition),
+                                            widgetType: e.currentTarget.value as WidgetType,
+                                            nodeType: 'widget',
+                                          }))
+                                        }
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-xuanqing border border-white/10 text-xs text-white"
+                                      >
+                                        <For each={WIDGET_TYPES}>{(item) => <option value={item.value}>{item.label}</option>}</For>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  {/* 坐标与尺寸 */}
+                                  <div class="grid grid-cols-4 gap-1.5 rounded border border-accent/20 bg-accent/5 p-1.5 text-xs">
+                                    <div>
+                                      <label class="text-[9px] text-mist-solid/50 block">X (px)</label>
+                                      <input
+                                        type="number"
+                                        value={widget.x ?? 0}
+                                        onInput={(e) => patchChild(idx(), (w) => ({ ...(w as WidgetDefinition), x: Number(e.currentTarget.value), nodeType: 'widget' }))}
+                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label class="text-[9px] text-mist-solid/50 block">Y (px)</label>
+                                      <input
+                                        type="number"
+                                        value={widget.y ?? 0}
+                                        onInput={(e) => patchChild(idx(), (w) => ({ ...(w as WidgetDefinition), y: Number(e.currentTarget.value), nodeType: 'widget' }))}
+                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label class="text-[9px] text-mist-solid/50 block">宽 (0=自适应)</label>
+                                      <input
+                                        type="number"
+                                        value={widget.width ?? 0}
+                                        onInput={(e) => patchChild(idx(), (w) => ({ ...(w as WidgetDefinition), width: Number(e.currentTarget.value), nodeType: 'widget' }))}
+                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label class="text-[9px] text-mist-solid/50 block">高 (0=自适应)</label>
+                                      <input
+                                        type="number"
+                                        value={widget.height ?? 0}
+                                        onInput={(e) => patchChild(idx(), (w) => ({ ...(w as WidgetDefinition), height: Number(e.currentTarget.value), nodeType: 'widget' }))}
+                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
                                       />
                                     </div>
                                   </div>
 
+                                  {/* StatBar 专用配置 */}
+                                  <Show when={widget.widgetType === 'statBar'}>
+                                    <div class="grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-2 text-xs">
+                                      <div>
+                                        <label class="text-[10px] text-mist-solid/50 block mb-0.5">条色</label>
+                                        <input
+                                          value={String(widget.config?.bar_color ?? '#38bdf8')}
+                                          onInput={(e) =>
+                                            patchChild(idx(), (w) => {
+                                              const item = w as WidgetDefinition;
+                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), bar_color: e.currentTarget.value } };
+                                            })
+                                          }
+                                          class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label class="text-[10px] text-mist-solid/50 block mb-0.5">上限数据绑定</label>
+                                        <input
+                                          value={String(widget.config?.max_stat ?? '')}
+                                          placeholder="如 stats.max_hp"
+                                          onInput={(e) =>
+                                            patchChild(idx(), (w) => {
+                                              const item = w as WidgetDefinition;
+                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), max_stat: e.currentTarget.value } };
+                                            })
+                                          }
+                                          class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                        />
+                                      </div>
+                                    </div>
+                                  </Show>
+
+                                  {/* Badge 专用配置 */}
+                                  <Show when={widget.widgetType === 'badge'}>
+                                    <div class="grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-2 text-xs">
+                                      <div>
+                                        <label class="text-[10px] text-mist-solid/50 block mb-0.5">徽标底色</label>
+                                        <input
+                                          value={String(widget.config?.badge_background ?? 'rgba(56,189,248,0.15)')}
+                                          onInput={(e) =>
+                                            patchChild(idx(), (w) => {
+                                              const item = w as WidgetDefinition;
+                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), badge_background: e.currentTarget.value } };
+                                            })
+                                          }
+                                          class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label class="text-[10px] text-mist-solid/50 block mb-0.5">徽标文字色</label>
+                                        <input
+                                          value={String(widget.config?.badge_color ?? '#7dd3fc')}
+                                          onInput={(e) =>
+                                            patchChild(idx(), (w) => {
+                                              const item = w as WidgetDefinition;
+                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), badge_color: e.currentTarget.value } };
+                                            })
+                                          }
+                                          class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                        />
+                                      </div>
+                                    </div>
+                                  </Show>
+
+                                  {/* ActionButton 专用配置 */}
                                   <Show when={widget.widgetType === 'actionButton'}>
                                     <div class="pt-1 border-t border-white/5 grid grid-cols-2 gap-2">
                                       <div>
@@ -616,6 +757,7 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                                           onInput={(e) =>
                                             patchChild(idx(), (w) => ({
                                               ...(w as WidgetDefinition),
+                                              nodeType: 'widget',
                                               config: { ...(w as WidgetDefinition).config, command: e.currentTarget.value },
                                             }))
                                           }
@@ -630,6 +772,7 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                                           onChange={(e) =>
                                             patchChild(idx(), (w) => ({
                                               ...(w as WidgetDefinition),
+                                              nodeType: 'widget',
                                               config: { ...(w as WidgetDefinition).config, result_schema_id: e.currentTarget.value },
                                             }))
                                           }
@@ -649,76 +792,453 @@ export const MobileUiDesignerModal: Component<MobileUiDesignerModalProps> = (pro
                           </Show>
 
                           <Show when={child.nodeType === 'container'}>
-                            <div class="space-y-2 pt-2 border-t border-white/5">
-                              <div class="flex items-center justify-between">
-                                <span class="text-[11px] font-semibold text-accent">
-                                  嵌套元素 ({((child as LayoutContainer).children ?? []).length})
-                                </span>
-                                <div class="flex gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => appendChildInto(idx(), { nodeType: 'widget', id: nextId('widget'), widgetType: 'dataLabel', label: '数据标签', dataBinding: 'stats.hp', config: {}, style: {} } as LayoutNode)}
-                                    class="px-2 py-0.5 rounded bg-accent/20 text-accent text-[11px] font-medium"
-                                  >
-                                    + 控件
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => appendChildInto(idx(), { nodeType: 'container', id: nextId('panel'), kind: 'panel', layoutMode: 'flex', x: 0, y: 0, width: 280, height: 80, style: {}, children: [] } as LayoutNode)}
-                                    class="px-2 py-0.5 rounded bg-white/10 text-mist-solid text-[11px]"
-                                  >
-                                    + 容器
-                                  </button>
-                                </div>
-                              </div>
-
-                              <For each={(child as LayoutContainer).children ?? []}>
-                                {(nested, nestedIdx) => (
-                                  <div class="p-2.5 rounded-xl border border-white/5 bg-black/20 space-y-2">
-                                    <div class="flex items-center justify-between text-xs">
-                                      <span class="font-mono text-emerald-400 font-semibold text-[11px]">
-                                        #{nestedIdx() + 1} {nested.nodeType === 'widget' ? (nested as WidgetDefinition).widgetType : (nested as LayoutContainer).kind}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeNestedChild(idx(), nestedIdx())}
-                                        class="text-rose-400 hover:text-rose-300 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10"
+                            {(() => {
+                              const c = child as LayoutContainer;
+                              return (
+                                <div class="space-y-3">
+                                  {/* 容器自身属性 */}
+                                  <div class="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">容器类型</label>
+                                      <select
+                                        value={c.kind}
+                                        onChange={(e) =>
+                                          patchChild(idx(), (n) => ({
+                                            ...(n as LayoutContainer),
+                                            kind: e.currentTarget.value as LayoutContainer['kind'],
+                                            nodeType: 'container',
+                                          }))
+                                        }
+                                        class="w-full px-2 py-1 rounded bg-xuanqing border border-white/10 text-xs text-white"
                                       >
-                                        删除
-                                      </button>
+                                        <option value="panel">panel</option>
+                                        <option value="tabs">tabs（标签页）</option>
+                                        <option value="grid">grid（网格）</option>
+                                      </select>
                                     </div>
-                                    <Show when={nested.nodeType === 'widget'}>
-                                      {(() => {
-                                        const w = nested as WidgetDefinition;
-                                        return (
-                                          <div class="grid grid-cols-2 gap-2 text-xs">
-                                            <div>
-                                              <label class="text-[10px] text-mist-solid/50 block mb-0.5">标签</label>
-                                              <input
-                                                type="text"
-                                                value={w.label || ''}
-                                                onInput={(e) => patchNestedChild(idx(), nestedIdx(), (n) => ({ ...(n as WidgetDefinition), label: e.currentTarget.value, nodeType: 'widget' }))}
-                                                class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label class="text-[10px] text-mist-solid/50 block mb-0.5">数据绑定</label>
-                                              <input
-                                                type="text"
-                                                value={w.dataBinding || ''}
-                                                onInput={(e) => patchNestedChild(idx(), nestedIdx(), (n) => ({ ...(n as WidgetDefinition), dataBinding: e.currentTarget.value, nodeType: 'widget' }))}
-                                                placeholder="如 stats.hp"
-                                                class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white font-mono"
-                                              />
-                                            </div>
-                                          </div>
-                                        );
-                                      })()}
-                                    </Show>
+                                    <div>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">排版模式</label>
+                                      <select
+                                        value={c.layoutMode ?? 'flex'}
+                                        onChange={(e) =>
+                                          patchChild(idx(), (n) => ({
+                                            ...(n as LayoutContainer),
+                                            layoutMode: e.currentTarget.value,
+                                            nodeType: 'container',
+                                          }))
+                                        }
+                                        class="w-full px-2 py-1 rounded bg-xuanqing border border-white/10 text-xs text-white"
+                                      >
+                                        <option value="flex">flex（纵向流式）</option>
+                                        <option value="absolute">absolute（自由坐标）</option>
+                                        <option value="grid">grid（网格）</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">宽 (px)</label>
+                                      <input
+                                        type="number"
+                                        value={c.width ?? 0}
+                                        onInput={(e) =>
+                                          patchChild(idx(), (n) => ({
+                                            ...(n as LayoutContainer),
+                                            width: Number(e.currentTarget.value),
+                                            nodeType: 'container',
+                                          }))
+                                        }
+                                        class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">高 (px)</label>
+                                      <input
+                                        type="number"
+                                        value={c.height ?? 0}
+                                        onInput={(e) =>
+                                          patchChild(idx(), (n) => ({
+                                            ...(n as LayoutContainer),
+                                            height: Number(e.currentTarget.value),
+                                            nodeType: 'container',
+                                          }))
+                                        }
+                                        class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                      />
+                                    </div>
                                   </div>
-                                )}
-                              </For>
-                            </div>
+
+                                  {/* 嵌套子元素 */}
+                                  <div class="space-y-2 pt-2 border-t border-white/5">
+                                    <div class="flex items-center justify-between">
+                                      <span class="text-[11px] font-semibold text-accent">
+                                        嵌套元素 ({((child as LayoutContainer).children ?? []).length})
+                                      </span>
+                                      <div class="flex gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            appendChildInto(idx(), {
+                                              nodeType: 'widget',
+                                              id: nextId('widget'),
+                                              widgetType: 'dataLabel',
+                                              label: '数据标签',
+                                              dataBinding: 'stats.hp',
+                                              x: 0,
+                                              y: 0,
+                                              width: 0,
+                                              height: 0,
+                                              config: {},
+                                              style: {},
+                                            } as LayoutNode)
+                                          }
+                                          class="px-2 py-0.5 rounded bg-accent/20 text-accent text-[11px] font-medium"
+                                        >
+                                          + 控件
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            appendChildInto(idx(), {
+                                              nodeType: 'container',
+                                              id: nextId('panel'),
+                                              kind: 'panel',
+                                              layoutMode: 'flex',
+                                              x: 0,
+                                              y: 0,
+                                              width: 280,
+                                              height: 80,
+                                              style: {},
+                                              children: [],
+                                            } as LayoutNode)
+                                          }
+                                          class="px-2 py-0.5 rounded bg-white/10 text-mist-solid text-[11px]"
+                                        >
+                                          + 容器
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <For each={(child as LayoutContainer).children ?? []}>
+                                      {(nested, nestedIdx) => (
+                                        <div class="p-2.5 rounded-xl border border-white/5 bg-black/20 space-y-2">
+                                          <div class="flex items-center justify-between text-xs">
+                                            <span class="font-mono text-emerald-400 font-semibold text-[11px]">
+                                              #{nestedIdx() + 1} {nested.nodeType === 'widget' ? `控件 · ${(nested as WidgetDefinition).widgetType}` : `容器 · ${(nested as LayoutContainer).kind}`}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => removeNestedChild(idx(), nestedIdx())}
+                                              class="text-rose-400 hover:text-rose-300 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10"
+                                            >
+                                              删除
+                                            </button>
+                                          </div>
+
+                                          <Show when={nested.nodeType === 'widget'}>
+                                            {(() => {
+                                              const w = nested as WidgetDefinition;
+                                              return (
+                                                <div class="space-y-2">
+                                                  <div class="grid grid-cols-3 gap-2 text-xs">
+                                                    <div>
+                                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">标签</label>
+                                                      <input
+                                                        type="text"
+                                                        value={w.label || ''}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            label: e.currentTarget.value,
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                      />
+                                                    </div>
+                                                    <div>
+                                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">数据绑定</label>
+                                                      <input
+                                                        type="text"
+                                                        value={w.dataBinding || ''}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            dataBinding: e.currentTarget.value,
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        placeholder="如 stats.hp"
+                                                        class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white font-mono"
+                                                      />
+                                                    </div>
+                                                    <div>
+                                                      <label class="text-[10px] text-mist-solid/60 block mb-0.5">控件类型</label>
+                                                      <select
+                                                        value={w.widgetType}
+                                                        onChange={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            widgetType: e.currentTarget.value as WidgetType,
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-2 py-1 rounded bg-xuanqing border border-white/10 text-xs text-white"
+                                                      >
+                                                        <For each={WIDGET_TYPES}>{(item) => <option value={item.value}>{item.label}</option>}</For>
+                                                      </select>
+                                                    </div>
+                                                  </div>
+
+                                                  {/* 坐标与尺寸 */}
+                                                  <div class="grid grid-cols-4 gap-1.5 rounded border border-accent/20 bg-accent/5 p-1.5 text-xs">
+                                                    <div>
+                                                      <label class="text-[9px] text-mist-solid/50 block">X (px)</label>
+                                                      <input
+                                                        type="number"
+                                                        value={w.x ?? 0}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            x: Number(e.currentTarget.value),
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                      />
+                                                    </div>
+                                                    <div>
+                                                      <label class="text-[9px] text-mist-solid/50 block">Y (px)</label>
+                                                      <input
+                                                        type="number"
+                                                        value={w.y ?? 0}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            y: Number(e.currentTarget.value),
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                      />
+                                                    </div>
+                                                    <div>
+                                                      <label class="text-[9px] text-mist-solid/50 block">宽 (0=自适应)</label>
+                                                      <input
+                                                        type="number"
+                                                        value={w.width ?? 0}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            width: Number(e.currentTarget.value),
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                      />
+                                                    </div>
+                                                    <div>
+                                                      <label class="text-[9px] text-mist-solid/50 block">高 (0=自适应)</label>
+                                                      <input
+                                                        type="number"
+                                                        value={w.height ?? 0}
+                                                        onInput={(e) =>
+                                                          patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                            ...(n as WidgetDefinition),
+                                                            height: Number(e.currentTarget.value),
+                                                            nodeType: 'widget',
+                                                          }))
+                                                        }
+                                                        class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                      />
+                                                    </div>
+                                                  </div>
+
+                                                  {/* StatBar 专用配置 */}
+                                                  <Show when={w.widgetType === 'statBar'}>
+                                                    <div class="grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-1.5 text-xs">
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">条色</label>
+                                                        <input
+                                                          value={String(w.config?.bar_color ?? '#38bdf8')}
+                                                          onInput={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), bar_color: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">上限数据绑定</label>
+                                                        <input
+                                                          value={String(w.config?.max_stat ?? '')}
+                                                          placeholder="如 stats.max_hp"
+                                                          onInput={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), max_stat: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                        />
+                                                      </div>
+                                                    </div>
+                                                  </Show>
+
+                                                  {/* Badge 专用配置 */}
+                                                  <Show when={w.widgetType === 'badge'}>
+                                                    <div class="grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-1.5 text-xs">
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">底色</label>
+                                                        <input
+                                                          value={String(w.config?.badge_background ?? 'rgba(56,189,248,0.15)')}
+                                                          onInput={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), badge_background: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">字色</label>
+                                                        <input
+                                                          value={String(w.config?.badge_color ?? '#7dd3fc')}
+                                                          onInput={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), badge_color: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                        />
+                                                      </div>
+                                                    </div>
+                                                  </Show>
+
+                                                  {/* ActionButton 专用配置 */}
+                                                  <Show when={w.widgetType === 'actionButton'}>
+                                                    <div class="grid grid-cols-2 gap-2 rounded border border-accent/30 bg-accent/5 p-1.5 text-xs">
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">白名单命令</label>
+                                                        <input
+                                                          value={String(w.config?.command ?? '')}
+                                                          placeholder="如 query_item"
+                                                          onInput={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), command: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <label class="text-[9px] text-mist-solid/50 block">结果卡 Schema</label>
+                                                        <select
+                                                          value={String(w.config?.result_schema_id ?? '')}
+                                                          onChange={(e) =>
+                                                            patchNestedChild(idx(), nestedIdx(), (n) => {
+                                                              const item = n as WidgetDefinition;
+                                                              return { ...item, nodeType: 'widget', config: { ...(item.config ?? {}), result_schema_id: e.currentTarget.value } };
+                                                            })
+                                                          }
+                                                          class="w-full px-1.5 py-0.5 rounded bg-xuanqing border border-white/10 text-xs text-white"
+                                                        >
+                                                          <option value="">(无: 行内回显)</option>
+                                                          <For each={schemaOptions() ?? []}>{(s) => <option value={s.id}>{s.name}</option>}</For>
+                                                        </select>
+                                                      </div>
+                                                    </div>
+                                                  </Show>
+                                                </div>
+                                              );
+                                            })()}
+                                          </Show>
+
+                                          <Show when={nested.nodeType === 'container'}>
+                                            {(() => {
+                                              const nc = nested as LayoutContainer;
+                                              return (
+                                                <div class="grid grid-cols-2 gap-2 text-xs">
+                                                  <div>
+                                                    <label class="text-[10px] text-mist-solid/60 block mb-0.5">容器类型</label>
+                                                    <select
+                                                      value={nc.kind}
+                                                      onChange={(e) =>
+                                                        patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                          ...(n as LayoutContainer),
+                                                          kind: e.currentTarget.value as LayoutContainer['kind'],
+                                                          nodeType: 'container',
+                                                        }))
+                                                      }
+                                                      class="w-full px-2 py-1 rounded bg-xuanqing border border-white/10 text-xs text-white"
+                                                    >
+                                                      <option value="panel">panel</option>
+                                                      <option value="tabs">tabs（标签页）</option>
+                                                      <option value="grid">grid（网格）</option>
+                                                    </select>
+                                                  </div>
+                                                  <div>
+                                                    <label class="text-[10px] text-mist-solid/60 block mb-0.5">排版模式</label>
+                                                    <select
+                                                      value={nc.layoutMode ?? 'flex'}
+                                                      onChange={(e) =>
+                                                        patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                          ...(n as LayoutContainer),
+                                                          layoutMode: e.currentTarget.value,
+                                                          nodeType: 'container',
+                                                        }))
+                                                      }
+                                                      class="w-full px-2 py-1 rounded bg-xuanqing border border-white/10 text-xs text-white"
+                                                    >
+                                                      <option value="flex">flex（纵向流式）</option>
+                                                      <option value="absolute">absolute（自由坐标）</option>
+                                                      <option value="grid">grid（网格）</option>
+                                                    </select>
+                                                  </div>
+                                                  <div>
+                                                    <label class="text-[10px] text-mist-solid/60 block mb-0.5">宽 (px)</label>
+                                                    <input
+                                                      type="number"
+                                                      value={nc.width ?? 0}
+                                                      onInput={(e) =>
+                                                        patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                          ...(n as LayoutContainer),
+                                                          width: Number(e.currentTarget.value),
+                                                          nodeType: 'container',
+                                                        }))
+                                                      }
+                                                      class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                    />
+                                                  </div>
+                                                  <div>
+                                                    <label class="text-[10px] text-mist-solid/60 block mb-0.5">高 (px)</label>
+                                                    <input
+                                                      type="number"
+                                                      value={nc.height ?? 0}
+                                                      onInput={(e) =>
+                                                        patchNestedChild(idx(), nestedIdx(), (n) => ({
+                                                          ...(n as LayoutContainer),
+                                                          height: Number(e.currentTarget.value),
+                                                          nodeType: 'container',
+                                                        }))
+                                                      }
+                                                      class="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white"
+                                                    />
+                                                  </div>
+                                                </div>
+                                              );
+                                            })()}
+                                          </Show>
+                                        </div>
+                                      )}
+                                    </For>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </Show>
                         </div>
                       )}
