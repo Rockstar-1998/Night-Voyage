@@ -592,6 +592,14 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
       svgEl.addEventListener('wheel', handleWheel, { passive: false });
       onCleanup(() => svgEl?.removeEventListener('wheel', handleWheel));
     }
+
+    // Block native webview context menu on the entire blueprint canvas container (capture phase)
+    const handleNativeContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    containerEl?.addEventListener('contextmenu', handleNativeContextMenu, { capture: true });
+    onCleanup(() => containerEl?.removeEventListener('contextmenu', handleNativeContextMenu, { capture: true }));
+
     // Close the context menu / cancel text editing on Escape.
     const handleWindowKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -760,7 +768,13 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
   // ─── Render ───
 
   return (
-    <div class="relative w-full h-full" ref={(el) => { containerEl = el; }}>
+    <div
+      class="relative w-full h-full"
+      ref={(el) => {
+        containerEl = el;
+      }}
+      onContextMenu={handleContextMenu}
+    >
       <svg
         ref={(el) => {
           svgEl = el;
@@ -1189,6 +1203,7 @@ export const BlueprintCanvas: Component<BlueprintCanvasProps> = (props) => {
             class="absolute z-40 w-64 max-h-[70%] overflow-y-auto rounded-xl border border-white/10 bg-night-water/95 backdrop-blur-xl shadow-2xl custom-scrollbar"
             style={{ left: `${Math.min(menu().screenX, 400)}px`, top: `${menu().screenY}px` }}
             onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={handleContextMenu}
           >
             <div class="px-4 pt-3 pb-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-mist-solid/35">
               创建

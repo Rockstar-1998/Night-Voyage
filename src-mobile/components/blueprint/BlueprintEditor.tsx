@@ -956,8 +956,12 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </span>
         </div>
         <button
-          onClick={() => setIsMacroDrawerOpen(true)}
-          class="shrink-0 px-2 py-1.5 rounded-lg bg-accent/20 border border-accent/40 text-accent text-[12px] font-bold active:scale-95 transition-transform"
+          onClick={() => setIsMacroDrawerOpen((v) => !v)}
+          class={`shrink-0 px-2 py-1.5 rounded-lg border text-[12px] font-bold active:scale-95 transition-transform ${
+            isMacroDrawerOpen()
+              ? 'bg-accent border-accent text-white shadow-sm'
+              : 'bg-accent/20 border-accent/40 text-accent'
+          }`}
           aria-label="宏库"
         >
           宏库 ({graph().macros?.length || 0})

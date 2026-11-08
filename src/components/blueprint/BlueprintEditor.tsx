@@ -1303,9 +1303,13 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         <div class="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsMacroDrawerOpen(true)}
-            class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-white/10 hover:bg-white/10 text-mist-solid transition-colors"
-            title="查看与管理 UE5 蓝图宏"
+            onClick={() => setIsMacroDrawerOpen((prev) => !prev)}
+            class={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+              isMacroDrawerOpen()
+                ? 'border-accent bg-accent/20 text-white shadow-sm'
+                : 'border-white/10 hover:bg-white/10 text-mist-solid'
+            }`}
+            title={isMacroDrawerOpen() ? '关闭宏库' : '查看与管理 UE5 蓝图宏'}
           >
             <Layers3 class="w-4 h-4 text-accent" />
             <span>宏库 ({graph.macros?.length || 0})</span>
@@ -1404,6 +1408,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
         <div
           class="flex-1 min-w-0 relative"
           ref={(el) => { canvasContainerEl = el; }}
+          onContextMenu={(e) => e.preventDefault()}
         >
           <BlueprintCanvas
             graph={displayGraph()}
@@ -1444,39 +1449,41 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
           </div>
         </div>
 
-        <div class="w-[360px] flex-shrink-0 h-full min-h-0">
-          <Show
-            when={selectedNode() && selectedNodeIds().size === 1}
-            fallback={
-              <Show when={selectedNodeIds().size > 1}>
-                <div class="h-full flex flex-col items-center justify-center gap-3 px-6 text-center border-l border-white/5">
-                  <div class="text-sm font-bold text-mist-solid/70">
-                    已选中 {selectedNodeIds().size} 个节点
+        <Show when={selectedNodeIds().size > 0}>
+          <div class="w-[360px] flex-shrink-0 h-full min-h-0">
+            <Show
+              when={selectedNode() && selectedNodeIds().size === 1}
+              fallback={
+                <Show when={selectedNodeIds().size > 1}>
+                  <div class="h-full flex flex-col items-center justify-center gap-3 px-6 text-center border-l border-white/5">
+                    <div class="text-sm font-bold text-mist-solid/70">
+                      已选中 {selectedNodeIds().size} 个节点
+                    </div>
+                    <div class="text-xs text-mist-solid/40 leading-6">
+                      拖动任一选中节点可整体移动
+                      <br />
+                      按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">DEL</kbd> 删除全部
+                      <br />
+                      按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">X</kbd> 断开全部连线
+                      <br />
+                      点击单个节点可编辑其配置
+                    </div>
                   </div>
-                  <div class="text-xs text-mist-solid/40 leading-6">
-                    拖动任一选中节点可整体移动
-                    <br />
-                    按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">DEL</kbd> 删除全部
-                    <br />
-                    按 <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-mist-solid/70">X</kbd> 断开全部连线
-                    <br />
-                    点击单个节点可编辑其配置
-                  </div>
-                </div>
-              </Show>
-            }
-          >
-            <NodeConfigPanel
-              node={selectedNode()}
-              onUpdate={handleUpdateNode}
-              onDelete={handleDeleteNode}
-              presetId={props.presetId}
-              macros={graph.macros || []}
-              onOpenMacro={setActiveMacroId}
-              availableTools={availableTools()}
-            />
-          </Show>
-        </div>
+                </Show>
+              }
+            >
+              <NodeConfigPanel
+                node={selectedNode()}
+                onUpdate={handleUpdateNode}
+                onDelete={handleDeleteNode}
+                presetId={props.presetId}
+                macros={graph.macros || []}
+                onOpenMacro={setActiveMacroId}
+                availableTools={availableTools()}
+              />
+            </Show>
+          </div>
+        </Show>
       </div>
 
       <Show when={showCompilePreview()}>

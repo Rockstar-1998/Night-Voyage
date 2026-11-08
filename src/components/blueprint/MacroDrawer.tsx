@@ -9,10 +9,9 @@
  * - Place a MacroInstance node onto the canvas.
  */
 
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { Layers3, Plus, Trash2, X, ChevronRight, FilePlus2 } from '../../lib/icons';
 import type { BlueprintMacro } from '../../lib/blueprint/types';
-import { IconButton } from '../ui/IconButton';
 import { showConfirm } from '../Toast';
 
 export interface MacroDrawerProps {
@@ -39,20 +38,45 @@ export const MacroDrawer: Component<MacroDrawerProps> = (props) => {
     setIsCreating(false);
   };
 
+  onMount(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && props.isOpen) {
+        props.onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    onCleanup(() => window.removeEventListener('keydown', handleKeyDown));
+  });
+
   return (
     <Show when={props.isOpen}>
-      <div class="fixed inset-y-0 right-0 z-40 w-96 bg-night-water/95 backdrop-blur-xl border-l border-white/10 shadow-2xl flex flex-col text-mist-solid">
-        {/* Header */}
-        <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div class="flex items-center gap-2">
-            <Layers3 class="w-5 h-5 text-accent" />
-            <h2 class="text-sm font-semibold text-white">UE5 蓝图宏资产库</h2>
-            <span class="text-xs px-2 py-0.5 rounded-full bg-accent/20 text-accent font-medium">
-              {props.macros.length}
-            </span>
+      <div
+        class="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] animate-fade-in flex justify-end"
+        onClick={props.onClose}
+      >
+        <div
+          class="w-96 max-w-full h-full bg-night-water/95 backdrop-blur-xl border-l border-white/10 shadow-2xl flex flex-col text-mist-solid"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+            <div class="flex items-center gap-2">
+              <Layers3 class="w-5 h-5 text-accent" />
+              <h2 class="text-sm font-semibold text-white">UE5 蓝图宏资产库</h2>
+              <span class="text-xs px-2 py-0.5 rounded-full bg-accent/20 text-accent font-medium">
+                {props.macros.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={props.onClose}
+              class="p-1 rounded-lg text-mist-muted hover:text-white hover:bg-white/10 transition-colors"
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X class="w-4 h-4" />
+            </button>
           </div>
-          <IconButton icon={X} size="sm" onClick={props.onClose} title="关闭" />
-        </div>
 
         {/* Content */}
         <div class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
@@ -197,6 +221,7 @@ export const MacroDrawer: Component<MacroDrawerProps> = (props) => {
           </div>
         </div>
       </div>
-    </Show>
+    </div>
+  </Show>
   );
 };
