@@ -116,6 +116,9 @@ pub enum BlueprintError {
     },
     /// 宏定义无效（缺少 Inputs/Outputs 代理节点或引脚不合法）
     MacroDefinitionInvalid { macro_id: String, reason: String },
+    /// StepBudget 节点的 `max_steps` 为 0：预算连第一步都不允许，属于无效
+    /// 配置，必须在编译期当场失败，不得按 1 悄悄兜底（C2）。
+    InvalidStepBudget { node: String },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -248,6 +251,9 @@ impl std::fmt::Display for BlueprintError {
             }
             Self::MacroDefinitionInvalid { macro_id, reason } => {
                 write!(f, "blueprint macro `{macro_id}` definition invalid: {reason}")
+            }
+            Self::InvalidStepBudget { node } => {
+                write!(f, "step budget node `{node}` has max_steps = 0 (budget must be >= 1)")
             }
         }
     }
@@ -394,6 +400,10 @@ pub async fn execute_blueprint(
         tool_plans: HashMap::new(),
         active_ui_layout: None,
         schema_field_order: Vec::new(),
+        // 步长预算默认单步充填（max_steps=1 + 首步短路）；图中有 StepBudget
+        // 节点时由 traverse 覆盖为节点配置（工单 01）。
+        step_budget: 1,
+        short_circuit_on_first_step: true,
     };
 
     let start_id = working_graph
@@ -747,6 +757,20 @@ fn traverse(
             traverse(graph, &branch_target, context, result, visited, path, values)?;
             let merge_node = find_merge_node(graph, node_id)?;
             traverse(graph, &merge_node, context, result, visited, path, values)?;
+        }
+        NodeConfig::StepBudget(cfg) => {
+            // 步长预算节点：把步长配额物理盖戳到编译上下文后立即沿 `out`
+            // 继续遍历，不中断分支（统一执行架构 spec §2 / 工单 01）。
+            // max_steps == 0 是无效预算（连第一步都不允许），当场硬错（C2）。
+            if cfg.max_steps == 0 {
+                return Err(BlueprintError::InvalidStepBudget {
+                    node: node_id.to_string(),
+                });
+            }
+            result.step_budget = cfg.max_steps;
+            result.short_circuit_on_first_step = cfg.short_circuit_on_tools;
+            let next = next_node_id(graph, node_id, port_names::OUT)?;
+            traverse(graph, &next, context, result, visited, path, values)?;
         }
         NodeConfig::SamplingParams(cfg) => {
             // legacy 通用节点：按当前方言应用对该协议有效的字段子集。
@@ -1382,6 +1406,7 @@ fn get_port_pin_type(
         | NodeConfig::DirectorConfig(_)
         | NodeConfig::ActorDefinition(_)
         | NodeConfig::UiLayoutConfig(_)
+        | NodeConfig::StepBudget(_)
         | NodeConfig::InitialStateConfig(_) => {
             if port == "value" {
                 Some(PinType::Object)
@@ -1765,7 +1790,8 @@ fn output_port_priority(graph: &BlueprintGraph, source: &str, port: &str) -> usi
         | NodeConfig::InitialStateConfig(_)
         | NodeConfig::MacroInstance(_)
         | NodeConfig::MacroInputs(_)
-        | NodeConfig::MacroOutputs(_) => return 0,
+        | NodeConfig::MacroOutputs(_)
+        | NodeConfig::StepBudget(_) => return 0,
     };
     ordered_ports.iter().position(|p| p == port).unwrap_or(usize::MAX)
 }
@@ -2413,6 +2439,7 @@ fn evaluate_port(
         | NodeConfig::MacroInstance(_)
         | NodeConfig::MacroInputs(_)
         | NodeConfig::MacroOutputs(_)
+        | NodeConfig::StepBudget(_)
         | NodeConfig::Branch(_) => Err(BlueprintError::ValueSourceNotValueNode(
             node_id.to_string(),
         )),
@@ -5238,6 +5265,123 @@ mod tests {
                 assert!(reason.contains("缺少 Outputs 输出代理节点"));
             }
             other => panic!("Expected MacroDefinitionInvalid, got: {:?}", other),
+        }
+    }
+
+    // ---- StepBudget 节点（工单 01）----
+
+    fn step_budget(id: &str, max_steps: usize, short_circuit: bool) -> BlueprintNode {
+        BlueprintNode {
+            id: id.to_string(),
+            config: NodeConfig::StepBudget(
+                crate::models::blueprint::StepBudgetConfig {
+                    max_steps,
+                    short_circuit_on_tools: short_circuit,
+                    is_locked: false,
+                },
+            ),
+            position: pos(0.0, 0.0),
+        }
+    }
+
+    /// 工单 01 断言：Start → StepBudget(1, short_circuit=true) → Prompt → End
+    /// 的图遍历必须把 step_budget=1 与 short_circuit_on_first_step=true 注入
+    /// 编译结果，且不中断后续遍历（Prompt 块照常产出）。
+    #[tokio::test]
+    async fn test_step_budget_single_pass_stamps_context_and_continues() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                step_budget("n_budget", 1, true),
+                prompt("n_p1", "role", "system", "You are a narrator."),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_budget", "in"),
+                edge("e2", "n_budget", "out", "n_p1", "in"),
+                edge("e3", "n_p1", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx("legacy"))
+            .await
+            .expect("graph with StepBudget(1) must execute");
+
+        assert_eq!(result.step_budget, 1);
+        assert!(result.short_circuit_on_first_step);
+        assert_eq!(result.blocks.len(), 1, "traversal must continue past StepBudget");
+        assert_eq!(result.blocks[0].identifier, "role");
+    }
+
+    /// 多步分支：StepBudget(5, short_circuit=false) 注入多步预算。
+    #[tokio::test]
+    async fn test_step_budget_multi_pass_stamps_context() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                step_budget("n_budget", 5, false),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_budget", "in"),
+                edge("e2", "n_budget", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx("legacy"))
+            .await
+            .expect("graph with StepBudget(5) must execute");
+
+        assert_eq!(result.step_budget, 5);
+        assert!(!result.short_circuit_on_first_step);
+    }
+
+    /// 图中无 StepBudget 节点时，编译结果保持单步默认（1 / true）。
+    #[tokio::test]
+    async fn test_step_budget_defaults_without_node() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                prompt("n_p1", "role", "system", "You are a narrator."),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_p1", "in"),
+                edge("e2", "n_p1", "out", "n_end", "in"),
+            ],
+        );
+
+        let result = execute_blueprint(&g, &ctx("legacy"))
+            .await
+            .expect("graph without StepBudget must execute");
+
+        assert_eq!(result.step_budget, 1);
+        assert!(result.short_circuit_on_first_step);
+    }
+
+    /// max_steps=0 是无效预算：编译期硬错 InvalidStepBudget（C2，不兜底为 1）。
+    #[tokio::test]
+    async fn test_step_budget_zero_is_rejected() {
+        let g = graph(
+            vec![
+                start("n_start"),
+                step_budget("n_budget", 0, true),
+                end("n_end"),
+            ],
+            vec![
+                edge("e1", "n_start", "out", "n_budget", "in"),
+                edge("e2", "n_budget", "out", "n_end", "in"),
+            ],
+        );
+
+        let err = execute_blueprint(&g, &ctx("legacy"))
+            .await
+            .expect_err("StepBudget with max_steps=0 must fail compilation");
+        match err {
+            BlueprintError::InvalidStepBudget { node } => {
+                assert_eq!(node, "n_budget");
+            }
+            other => panic!("Expected InvalidStepBudget, got: {:?}", other),
         }
     }
 }

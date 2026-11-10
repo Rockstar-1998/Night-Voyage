@@ -9,7 +9,11 @@
 //! - [`director_actor`]：导演分镜 → 演员按裁剪视界演出 → 导演装配定稿。
 //!
 //! 编排层只负责"选谁写 + 怎么串"，推理一律走 [`subagent`]，不新写推理实现。
+//!
+//! - [`cycle`]：通用单核 Agent 循环运行器（工单 01）：以步长预算统一调度
+//!   单步充填与多步推理，单步工具执行后强制短路、步长耗尽熔断。
 
+pub mod cycle;
 pub mod director_actor;
 pub mod nudge;
 pub mod orchestrator;

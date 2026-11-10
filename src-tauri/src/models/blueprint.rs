@@ -24,6 +24,10 @@ pub enum NodeType {
     Constant,
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch,
+    /// 步长预算节点：流程控制节点，图遍历时向编译上下文物理注入
+    /// `max_steps` 步长上限与 `short_circuit_on_tools` 单步短路标志
+    /// （全 Agent 统一执行架构工单 01）。引脚：输入 `in` / 输出 `out`（Exec）。
+    StepBudget,
     /// OpenAI / chat_completions 协议专用采样参数节点。
     ///
     /// serde 显式重命名为 `sampling_params_openai`：容器级 `snake_case` 会把
@@ -100,6 +104,8 @@ pub enum NodeConfig {
     Constant(ConstantConfig),
     /// 分支节点：接收上游 ConstantNode 的值，按 cases 匹配走对应出口。
     Branch(BranchConfig),
+    /// 步长预算节点：向编译上下文注入步长预算（见 [`StepBudgetConfig`]）。
+    StepBudget(StepBudgetConfig),
     /// OpenAI / chat_completions 协议专用采样参数。
     ///
     /// serde 显式重命名对齐前端 `sampling_params_openai`（理由见
@@ -165,6 +171,7 @@ impl NodeConfig {
             Self::SamplingParams(_) => NodeType::SamplingParams,
             Self::Constant(_) => NodeType::Constant,
             Self::Branch(_) => NodeType::Branch,
+            Self::StepBudget(_) => NodeType::StepBudget,
             Self::SamplingParamsOpenAi(_) => NodeType::SamplingParamsOpenAi,
             Self::SamplingParamsAnthropic(_) => NodeType::SamplingParamsAnthropic,
             Self::InvokeSchema(_) => NodeType::InvokeSchema,
@@ -1157,6 +1164,35 @@ pub struct BranchConfig {
     pub default_port: String,
 }
 
+/// 步长预算节点配置（全 Agent 统一执行架构工单 01）。
+///
+/// 位于分支路由或管线入口处，图遍历经过时将步长预算物理写入
+/// [`BlueprintExecutionResult::step_budget`] 与
+/// [`BlueprintExecutionResult::short_circuit_on_first_step`]，供
+/// `AgentCycleRuntime` 作为硬件级配额执行：`max_steps == 1` 为单步充填
+/// （Single-Pass），`max_steps >= 2` 为多步推理（Multi-Pass）。
+/// 引脚规格：输入 `in`（Exec）、输出 `out`（Exec）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepBudgetConfig {
+    /// 步长预算上限（1 表示单步直出，>=2 表示允许多步反思循环）。
+    #[serde(default = "default_step_budget_max_steps")]
+    pub max_steps: usize,
+    /// 是否在第 1 步完成工具执行后强制短路（单步模式下为 true）。
+    #[serde(default = "default_step_budget_short_circuit")]
+    pub short_circuit_on_tools: bool,
+    /// 节点锁状态。
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
+fn default_step_budget_max_steps() -> usize {
+    1
+}
+
+fn default_step_budget_short_circuit() -> bool {
+    true
+}
+
 /// SamplingParams 节点配置，产出 [`CompiledSamplingParams`]。
 ///
 /// 多个 SamplingParams 节点时，图执行器按遍历顺序后者覆盖前者。
@@ -1364,6 +1400,16 @@ pub struct BlueprintExecutionResult {
     /// 仅内部使用，不进入对外序列化合约。
     #[serde(skip)]
     pub schema_field_order: Vec<(String, i32)>,
+    /// 步长预算上限：由图遍历流经的 [`StepBudgetConfig`] 节点物理注入，
+    /// 供 `AgentCycleRuntime` 统一调度单步/多步执行。图中无 StepBudget 节点
+    /// 时为单步默认值 1（单步充填是默认叙事路径，见统一执行架构 spec §1）。
+    #[serde(default = "default_step_budget_max_steps")]
+    pub step_budget: usize,
+    /// 单步短路标志：为 true 时，`AgentCycleRuntime` 在第 1 步工具执行完毕后
+    /// 立即截断，绝不发起第 2 次 API 调用。由 StepBudget 节点注入；
+    /// 无 StepBudget 节点时默认 true（与单步默认配套）。
+    #[serde(default = "default_step_budget_short_circuit")]
+    pub short_circuit_on_first_step: bool,
 }
 
 #[cfg(test)]
@@ -1811,5 +1857,52 @@ mod tests {
         assert_eq!(round_tripped.nodes.len(), 2);
         assert_eq!(round_tripped.nodes[0].node_type(), NodeType::Start);
         assert_eq!(round_tripped.nodes[1].node_type(), NodeType::End);
+    }
+
+    /// 工单 01：StepBudget 节点的 JSON 往返——`type: "step_budget"` 与
+    /// StepBudgetConfig 字段（max_steps / short_circuit_on_tools / is_locked）
+    /// 必须无损；config 缺省字段时按单步默认（1 / true / false）补齐。
+    #[test]
+    fn step_budget_node_round_trips_and_defaults() {
+        let json = r#"{
+            "version": 2,
+            "nodes": [
+                { "id": "n_start", "type": "start", "position": {"x": 0, "y": 300} },
+                { "id": "n_budget", "type": "step_budget", "position": {"x": 200, "y": 300},
+                  "config": { "max_steps": 5, "short_circuit_on_tools": false, "is_locked": true } },
+                { "id": "n_budget_default", "type": "step_budget", "position": {"x": 400, "y": 300},
+                  "config": {} },
+                { "id": "n_end", "type": "end", "position": {"x": 600, "y": 300} }
+            ],
+            "edges": [
+                {"id":"e1","source":"n_start","source_port":"out","target":"n_budget","target_port":"in"},
+                {"id":"e2","source":"n_budget","source_port":"out","target":"n_end","target_port":"in"}
+            ]
+        }"#;
+
+        let graph: BlueprintGraph =
+            serde_json::from_str(json).expect("step_budget graph must deserialize");
+        assert_eq!(graph.nodes[1].node_type(), NodeType::StepBudget);
+        let cfg = match &graph.nodes[1].config {
+            NodeConfig::StepBudget(cfg) => cfg,
+            other => panic!("expected StepBudget config, got {other:?}"),
+        };
+        assert_eq!(cfg.max_steps, 5);
+        assert!(!cfg.short_circuit_on_tools);
+        assert!(cfg.is_locked);
+
+        let default_cfg = match &graph.nodes[2].config {
+            NodeConfig::StepBudget(cfg) => cfg,
+            other => panic!("expected StepBudget config, got {other:?}"),
+        };
+        assert_eq!(default_cfg.max_steps, 1, "missing max_steps defaults to single-pass 1");
+        assert!(default_cfg.short_circuit_on_tools, "missing short_circuit defaults to true");
+        assert!(!default_cfg.is_locked);
+
+        let reserialized = serde_json::to_string(&graph).expect("serialization must succeed");
+        assert!(reserialized.contains("\"step_budget\""));
+        let round_tripped: BlueprintGraph =
+            serde_json::from_str(&reserialized).expect("round-trip must succeed");
+        assert_eq!(round_tripped.nodes[1].node_type(), NodeType::StepBudget);
     }
 }
