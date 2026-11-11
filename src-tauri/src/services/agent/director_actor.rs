@@ -183,10 +183,21 @@ async fn run_director_plan_via_graph(
         }
     }
 
+    // 无效轮次配置显式报错：`max_tool_rounds < 1` 不得按 1 悄悄兜底（C2）；
+    // 编译期网关见 `extract_orchestration_configs` 的 InvalidToolRounds。
     let tool_max_rounds = configs
         .agent_mode_switch
         .as_ref()
-        .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
+        .map(|cfg| {
+            if cfg.max_tool_rounds < 1 {
+                return Err(format!(
+                    "agent_mode_switch 节点 {} 的 max_tool_rounds={} 是无效配置（<1）：编译期校验失效，不得按 1 悄悄兜底（C2）",
+                    configs.agent_mode_switch_node_id, cfg.max_tool_rounds
+                ));
+            }
+            Ok(cfg.max_tool_rounds as usize)
+        })
+        .transpose()?
         .unwrap_or(DEFAULT_TOOL_MAX_ROUNDS);
     let schema_json = serde_json::to_string(&director_plan_schema())
         .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}").replace('\\', "/"))?;

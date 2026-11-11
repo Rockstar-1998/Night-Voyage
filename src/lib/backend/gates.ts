@@ -172,3 +172,36 @@ export interface McpToolNameDto {
 export async function mcpToolNames(): Promise<McpToolNameDto[]> {
   return invokeCommand<McpToolNameDto[]>('mcp_tool_names', {});
 }
+
+/** `.nv.ts` 导入结果 DTO（与后端 `ImportedPresetCodeDto` camelCase 对齐）。 */
+export interface ImportedPresetCode {
+  message: string;
+  bytes: number;
+  migrated: boolean;
+  graphJson: string;
+}
+
+/**
+ * 导出预设蓝图图为 `.nv.ts` 代码（spec §4 / 工单 05 前端挂载入口）。
+ *
+ * 与 MCP 工具 `nv_preset_export_code` 调用同一条后端服务路径（C10）。
+ */
+export async function blueprintExportPresetCode(presetId: number): Promise<string> {
+  return invokeCommand<string>('blueprint_export_preset_code', { presetId });
+}
+
+/**
+ * 把 `.nv.ts` 源码导入为预设蓝图图（spec §4 / 工单 05 前端挂载入口）。
+ *
+ * 与 MCP 工具 `nv_preset_import_code` 调用同一条后端服务路径（C10）；成功后
+ * 后端广播 `blueprint:refreshed`，编辑器监听该事件重载当前图。
+ */
+export async function blueprintImportPresetCode(
+  presetId: number,
+  code: string,
+): Promise<ImportedPresetCode> {
+  return invokeCommand<ImportedPresetCode>('blueprint_import_preset_code', {
+    presetId,
+    code,
+  });
+}

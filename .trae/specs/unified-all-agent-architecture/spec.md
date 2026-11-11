@@ -94,7 +94,7 @@ Deliver a universal, graph-semantic, and code-defined Agent architecture that un
   - Step 1 initiates an HTTP streaming request with authorized tool definitions.
   - If `finish_reason == "stop"` and no tool calls exist, finalize dialogue and return `TextDelivered`.
   - If `finish_reason == "tool_calls"`:
-    - Execute tools atomically against SQLite state containers within a single transaction.
+    - Execute tools atomically against the session state container: tool effects stage into an in-memory working copy and land as one write at round end (round-scoped all-or-nothing; no SQLite transaction is held open across LLM/tool round-trips).
     - If `short_circuit_on_first_step == true` (enforced when `max_steps == 1`), commit transaction, emit HUD patches, and immediately return `ShortCircuitedWithTools` without round 2.
     - If `max_steps > 1` and `current_step < max_steps`, append `LlmContentPart::ToolResult` to history and loop to the next step.
     - If `current_step >= max_steps`, trip the circuit breaker and return `CircuitBreakerTripped` with structured diagnostics (C2).
@@ -129,7 +129,7 @@ Deliver a universal, graph-semantic, and code-defined Agent architecture that un
   When the SSE stream signals `[DONE]`:
   - Validate and parse JSON payloads in `StreamingToolAccumulator`.
   - Execute tool plans sequentially against `AppState`.
-  - Emit `game-state:patch` to trigger reactive SolidJS HUD updates.
+  - Emit `session:hud_state_patch` to trigger reactive SolidJS HUD updates.
   - Emit `agent:timeline_event` to record tool execution trace.
   - If `short_circuit_on_first_step` is active, terminate the turn immediately.
 - **Zero-Delay Fallback Narrative**:
@@ -142,11 +142,12 @@ Deliver a universal, graph-semantic, and code-defined Agent architecture that un
   - External export/import and AI MCP operations operate on `.nv.ts` scripts conforming to the `@night-voyage/blueprint` DSL specification.
 - **Pure-Rust AST Transpiler Engine**:
   - Integrate `oxc_parser` into `services::blueprint_codec` (no Node.js or V8 runtime dependencies).
-  - **AST to Graph**: Parse top-level statements (`definePreset.state`, `Macro.define`, `Tools.define`, `flow.branch`), extract parameters, and construct the node/edge topology. Auto-generate visual coordinates using Dagre layout algorithms.
+  - **AST to Graph**: Parse top-level statements (`definePreset.state`, `Macro.define`, `Tools.define`, `flow.branch`), extract parameters, and construct the node/edge topology. Auto-generate visual coordinates using the built-in layered topological layout approximation in `blueprint_codec` (no external Dagre dependency).
   - **Graph to AST**: Traverse `BlueprintGraph` nodes and macros, formatting clean, idiomatic TypeScript source code with standardized indentation.
 - **MCP Endpoints**:
   - `nv_preset_export_code(preset_id)`: Serializes SQLite graph to `.nv.ts` string.
   - `nv_preset_import_code(preset_id, code_ts)`: Compiles `.nv.ts` string, runs static validation, updates SQLite, and emits `blueprint:refreshed`.
+- **Front-Mounted Authoring Surfaces (C10)**: The blueprint editors on desktop and mobile expose `.nv.ts` export/import buttons that call the same service path as the MCP tools (`blueprint_export_preset_code` / `blueprint_import_preset_code`) and listen to `blueprint:refreshed` to reload the open graph when external imports land.
 
 ### 5. Data-Driven Capability Matrix & Snapshot Rollback
 
@@ -160,6 +161,12 @@ Deliver a universal, graph-semantic, and code-defined Agent architecture that un
 - **Zero Production Legacy Shims**:
   - Remove legacy branching flags from `stream_processor.rs`.
   - Package old preset/session migration logic into a standalone offline converter binary (`nv-converter`), keeping the production codebase clean.
+
+### 6. Graph-Semantic Orchestration Semantics
+
+- **Pipeline Enum As Compile-Route Label**: `AgentPipeline` remains a data-side label whose only duty is selecting which plan the compiler builds (single-pass cycle vs director plan). It carries no execution logic of its own; runtime dispatch is fully graph-driven via `graph_orchestrator`.
+- **FanOut Actor-Miss Degradation**: When a director FanOut stage references an actor name that no `ActorDefinition` node binds, the stage performs as an empty persona (no system-prompt specialization) instead of failing the whole run. The degradation is never silent (C2): it logs explicitly, writes a `fanout:actor_def_missed` marker into the director Scratchpad, and emits a timeline Info event visible in the Agent Timeline.
+- **Invalid Agent-Loop Configurations Fail At Compile Time**: `StepBudget.max_steps == 0` and `AgentModeSwitch.max_tool_rounds < 1` are invalid budgets (the loop would not allow even one step); both hard-error during graph compilation (`InvalidStepBudget` / `InvalidToolRounds`) and are never silently clamped to 1 at runtime (C2).
 
 ---
 

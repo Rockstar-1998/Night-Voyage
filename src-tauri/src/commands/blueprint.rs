@@ -50,6 +50,121 @@ pub async fn normalize_blueprint_graph(
     })
 }
 
+/// IPC DTO：`.nv.ts` 导入结果（字段 camelCase 序列化）。
+///
+/// `graph_json` 为导入并归一化后的图 JSON，前端导入入口可免二次取数直接应用新图。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedPresetCodeDto {
+    pub message: String,
+    pub bytes: usize,
+    pub migrated: bool,
+    pub graph_json: String,
+}
+
+/// 把预设蓝图图导出为 `.nv.ts` 代码（工单 05）。
+///
+/// MCP 工具 `nv_preset_export_code` 与前端「导出 .nv.ts」按钮共用本路径
+/// （C10：前端挂载必须调用与 MCP 相同的后端服务）。
+pub async fn export_preset_code(db: &sqlx::SqlitePool, preset_id: i64) -> Result<String, String> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT name, blueprint_graph FROM presets WHERE id = ? LIMIT 1",
+    )
+    .bind(preset_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| format!("读取预设失败: {}", err).replace('\\', "/"))?;
+    let Some((preset_name, graph_json)) = row else {
+        return Err(format!("预设 {preset_id} 不存在"));
+    };
+    let graph_json = graph_json.ok_or_else(|| format!("预设 {preset_id} 尚未保存蓝图图"))?;
+    let graph: BlueprintGraph = serde_json::from_str(&graph_json)
+        .map_err(|err| format!("蓝图图不是合法的图数据: {}", err).replace('\\', "/"))?;
+    crate::services::blueprint_codec::export_graph_to_code(&graph, &preset_name)
+}
+
+/// 把 `.nv.ts` 代码导入为预设蓝图图并广播刷新事件（工单 05）。
+///
+/// MCP 工具 `nv_preset_import_code` 与前端「导入 .nv.ts」按钮共用本路径（C10）。
+/// 广播失败必须显式报错（C2）：数据已落库但刷新信号未发出，调用方必须知道
+/// 视图与库可能不一致，禁止 `let _ =` 吞错。
+pub async fn import_preset_code(
+    app: &tauri::AppHandle,
+    db: &sqlx::SqlitePool,
+    preset_id: i64,
+    code: &str,
+) -> Result<ImportedPresetCodeDto, String> {
+    // 前向编译：oxc 解析 .nv.ts -> BlueprintGraph（模型层校验合法性）
+    let graph = crate::services::blueprint_codec::import_code_to_graph(code)?;
+    let graph_json = serde_json::to_string(&graph)
+        .map_err(|err| format!("编译出的图序列化失败: {}", err).replace('\\', "/"))?;
+
+    // 与编辑器保存同一条归一化校验路径，非法图不落库
+    let normalized = normalize_blueprint_graph(graph_json).await?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("取当前时间失败: {}", err).replace('\\', "/"))?
+        .as_millis() as i64;
+
+    let rows = sqlx::query("UPDATE presets SET blueprint_graph = ?, updated_at = ? WHERE id = ?")
+        .bind(normalized.graph_json.clone())
+        .bind(now_ms)
+        .bind(preset_id)
+        .execute(db)
+        .await
+        .map_err(|err| format!("保存蓝图图失败: {}", err).replace('\\', "/"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!("预设 {preset_id} 不存在，.nv.ts 未导入"));
+    }
+
+    // 广播视图刷新事件（spec §4：导入后 emit blueprint:refreshed）
+    {
+        use tauri::Emitter;
+        app.emit(
+            "blueprint:refreshed",
+            serde_json::json!({ "presetId": preset_id }),
+        )
+        .map_err(|err| {
+            format!(
+                ".nv.ts 已写入预设 {preset_id} 的蓝图图，但 blueprint:refreshed 广播失败: {}（前端视图可能未刷新，请重新打开蓝图编辑器核对）",
+                err.to_string().replace('\\', "/")
+            )
+        })?;
+    }
+
+    Ok(ImportedPresetCodeDto {
+        message: format!(
+            "已把 .nv.ts 导入预设 {preset_id} 的蓝图图（{} 字节，拓扑迁移={}），并已广播 blueprint:refreshed。",
+            normalized.graph_json.len(),
+            normalized.migrated
+        ),
+        bytes: normalized.graph_json.len(),
+        migrated: normalized.migrated,
+        graph_json: normalized.graph_json,
+    })
+}
+
+/// 前端命令：导出预设蓝图图为 `.nv.ts` 代码（与 MCP `nv_preset_export_code` 同服务路径）。
+#[tauri::command]
+pub async fn blueprint_export_preset_code(
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+) -> Result<String, String> {
+    export_preset_code(&state.db, preset_id).await
+}
+
+/// 前端命令：把 `.nv.ts` 代码导入为预设蓝图图（与 MCP `nv_preset_import_code` 同服务路径）。
+#[tauri::command]
+pub async fn blueprint_import_preset_code(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    preset_id: i64,
+    code: String,
+) -> Result<ImportedPresetCodeDto, String> {
+    import_preset_code(&app, &state.db, preset_id, &code).await
+}
+
 /// IPC 传输用的预设级 Gate 选择 DTO。字段以 camelCase 序列化，供前端直接消费。
 ///
 /// 替代已废弃的 `ConversationGateSelectionDto`：Gate 选择从"会话级运行时"改为

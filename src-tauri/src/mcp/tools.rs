@@ -831,21 +831,8 @@ impl McpTool for NvPresetExportCode {
 
     async fn call(&self, ctx: &ToolContext, args: &Value) -> Result<String, String> {
         let preset_id = require_i64(args, "presetId")?;
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT name, blueprint_graph FROM presets WHERE id = ? LIMIT 1",
-        )
-        .bind(preset_id)
-        .fetch_optional(&ctx.db)
-        .await
-        .map_err(|err| format!("读取预设失败: {}", err))?;
-        let Some((preset_name, graph_json)) = row else {
-            return Err(format!("预设 {} 不存在", preset_id));
-        };
-        let graph_json = graph_json.ok_or_else(|| format!("预设 {} 尚未保存蓝图图", preset_id))?;
-        let graph: crate::models::blueprint::BlueprintGraph =
-            serde_json::from_str(&graph_json)
-                .map_err(|err| format!("蓝图图不是合法的图数据: {}", err))?;
-        crate::services::blueprint_codec::export_graph_to_code(&graph, &preset_name)
+        // 与前端「导出 .nv.ts」按钮共用同一条后端服务路径（C10）
+        crate::commands::blueprint::export_preset_code(&ctx.db, preset_id).await
     }
 }
 
@@ -877,49 +864,11 @@ impl McpTool for NvPresetImportCode {
     async fn call(&self, ctx: &ToolContext, args: &Value) -> Result<String, String> {
         let preset_id = require_i64(args, "presetId")?;
         let code = require_str(args, "code")?;
-
-        // 前向编译：oxc 解析 .nv.ts -> BlueprintGraph（模型层校验合法性）
-        let graph = crate::services::blueprint_codec::import_code_to_graph(code)?;
-        let graph_json = serde_json::to_string(&graph)
-            .map_err(|err| format!("编译出的图序列化失败: {}", err))?;
-
-        // 与编辑器保存同一条归一化校验路径，非法图不落库
-        let normalized =
-            crate::commands::blueprint::normalize_blueprint_graph(graph_json)
-                .await
-                .map_err(|err| err.replace('\\', "/"))?;
-
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| format!("取当前时间失败: {}", err))?
-            .as_millis() as i64;
-
-        let rows = sqlx::query("UPDATE presets SET blueprint_graph = ?, updated_at = ? WHERE id = ?")
-            .bind(normalized.graph_json.clone())
-            .bind(now_ms)
-            .bind(preset_id)
-            .execute(&ctx.db)
+        // 与前端「导入 .nv.ts」按钮共用同一条后端服务路径（C10）；广播失败在
+        // 共享路径内显式报错（C2），此处原样透出
+        crate::commands::blueprint::import_preset_code(&ctx.app, &ctx.db, preset_id, code)
             .await
-            .map_err(|err| format!("保存蓝图图失败: {}", err))?;
-        if rows.rows_affected() == 0 {
-            return Err(format!("预设 {} 不存在，.nv.ts 未导入", preset_id));
-        }
-
-        // 广播视图刷新事件（spec §4：导入后 emit blueprint:refreshed）
-        {
-            use tauri::Emitter;
-            let _ = ctx.app.emit(
-                "blueprint:refreshed",
-                json!({ "presetId": preset_id }),
-            );
-        }
-
-        Ok(format!(
-            "已把 .nv.ts 导入预设 {} 的蓝图图（{} 字节，拓扑迁移={}），并广播 blueprint:refreshed。",
-            preset_id,
-            normalized.graph_json.len(),
-            normalized.migrated
-        ))
+            .map(|out| out.message)
     }
 }
 

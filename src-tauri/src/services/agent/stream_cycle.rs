@@ -33,7 +33,7 @@ use crate::llm::{LlmMessage, LlmToolDefinition};
 use crate::services::agent::cycle::{
     AgentStepProvider, AgentStepResponse, AgentToolExecutor, ExecutedToolReceipt,
 };
-use crate::services::stream_processor::{synthesize_fallback_narrative, ToolReceiptSummary};
+use crate::services::stream_processor::{synthesize_zero_delay_narrative, ToolReceiptSummary};
 
 /// 一跳流式请求的后端接缝：执行恰好一次模型 API 往返（流式发射 +
 /// 工具拼装 + 原子收尾），返回该步的正文与待执行工具调用。
@@ -139,8 +139,8 @@ pub fn translate_step_budget(
 /// 执行时，按回执合成极简行为旁白；正文非空或无回执时返回 `None`。
 ///
 /// 与多步路径共用同一合成函数
-/// [`synthesize_fallback_narrative`]：生产驱动层在短路后调用
-/// `fill_fallback_narrative_if_empty` 把同一合成结果落盘到助手消息，
+/// [`synthesize_zero_delay_narrative`]：生产驱动层在短路后调用
+/// `fill_zero_delay_narrative_if_empty` 把同一合成结果落盘到助手消息，
 /// 本函数是该行为在 Adapter 接缝上的纯函数视图（同一事实、同一文案）。
 pub fn short_circuit_narrative(
     text: &str,
@@ -156,7 +156,7 @@ pub fn short_circuit_narrative(
             is_error: receipt.is_error,
         })
         .collect();
-    synthesize_fallback_narrative(&summaries)
+    synthesize_zero_delay_narrative(&summaries)
 }
 
 #[cfg(test)]
@@ -358,7 +358,7 @@ mod tests {
     /// Adapter 路径的旁白保底：短路步正文为空 + 有工具执行 →
     /// 合成旁白存在且文案与生产落盘路径一致；正文非空时不合成。
     #[tokio::test]
-    async fn adapter_short_circuit_with_empty_text_yields_fallback_narrative() {
+    async fn adapter_short_circuit_with_empty_text_yields_zero_delay_narrative() {
         let step_backend = ScriptedStepBackend::new(vec![tool_step("", "buy_item")]);
         let tool_backend = ScriptedToolBackend::new();
         let provider = StreamingStepProvider::new(step_backend);

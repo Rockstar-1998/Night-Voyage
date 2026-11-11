@@ -119,6 +119,9 @@ pub enum BlueprintError {
     /// StepBudget 节点的 `max_steps` 为 0：预算连第一步都不允许，属于无效
     /// 配置，必须在编译期当场失败，不得按 1 悄悄兜底（C2）。
     InvalidStepBudget { node: String },
+    /// AgentModeSwitch 节点的 `max_tool_rounds` 小于 1：工具循环连一步都不
+    /// 允许，属于无效配置，必须在编译期当场失败，不得按 1 悄悄兜底（C2）。
+    InvalidToolRounds { node: String },
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -254,6 +257,9 @@ impl std::fmt::Display for BlueprintError {
             }
             Self::InvalidStepBudget { node } => {
                 write!(f, "step budget node `{node}` has max_steps = 0 (budget must be >= 1)")
+            }
+            Self::InvalidToolRounds { node } => {
+                write!(f, "agent_mode_switch node `{node}` has max_tool_rounds < 1 (must be >= 1)")
             }
         }
     }
@@ -2262,6 +2268,13 @@ pub fn extract_orchestration_configs(
                     return Err(BlueprintError::DuplicateOrchestrationNode {
                         node_type: "agent_mode_switch",
                         id: node.id.clone(),
+                    });
+                }
+                // 无效轮次配置编译期硬错（与 StepBudget 的 InvalidStepBudget
+                // 同策略）：`max_tool_rounds < 1` 不得在运行期按 1 悄悄兜底（C2）。
+                if cfg.max_tool_rounds < 1 {
+                    return Err(BlueprintError::InvalidToolRounds {
+                        node: node.id.clone(),
                     });
                 }
                 agent_mode_switch = Some(cfg.clone());

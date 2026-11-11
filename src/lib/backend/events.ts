@@ -114,3 +114,17 @@ export async function listenMemoryError(
 ): Promise<UnlistenFn> {
   return listen<MemoryBackendErrorEvent>('llm-memory-error', (event) => handler(event.payload));
 }
+
+/** blueprint:refreshed 事件载荷：`.nv.ts` 导入落库后广播，携带目标预设 id。 */
+export interface BlueprintRefreshedEvent {
+  presetId: number;
+}
+
+/** 订阅 blueprint:refreshed：蓝图编辑器据此重载当前图（spec §4 / C10 前端挂载）。 */
+export async function listenBlueprintRefreshed(
+  handler: (payload: BlueprintRefreshedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<BlueprintRefreshedEvent>('blueprint:refreshed', (event) =>
+    handler(event.payload),
+  );
+}

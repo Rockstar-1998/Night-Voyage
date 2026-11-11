@@ -218,7 +218,7 @@ pub struct ToolReceiptSummary<'a> {
 /// 零延迟旁白合成（spec §3）：模型只发 ToolCall、没写对白时，依据工具
 /// 回执在服务端合成一条极简行为旁白，杜绝空白消息气泡；不发起第二次
 /// 模型请求。无回执时返回 `None`（没有发生过交互结算，不许凭空编旁白）。
-pub fn synthesize_fallback_narrative(receipts: &[ToolReceiptSummary<'_>]) -> Option<String> {
+pub fn synthesize_zero_delay_narrative(receipts: &[ToolReceiptSummary<'_>]) -> Option<String> {
     if receipts.is_empty() {
         return None;
     }
@@ -241,12 +241,12 @@ pub fn synthesize_fallback_narrative(receipts: &[ToolReceiptSummary<'_>]) -> Opt
 /// 返回 `true` 表示确实回填了旁白。回填点选在工具执行完毕、回注下一跳
 /// 之前：此刻回执齐备，且合成文本会随历史进入下一跳上下文，模型读到的
 /// 自己上一 hop 的发言与玩家看到的气泡保持一致。
-pub async fn fill_fallback_narrative_if_empty(
+pub async fn fill_zero_delay_narrative_if_empty(
     db: &SqlitePool,
     round_id: i64,
     receipts: &[ToolReceiptSummary<'_>],
 ) -> Result<bool, String> {
-    let Some(narrative) = synthesize_fallback_narrative(receipts) else {
+    let Some(narrative) = synthesize_zero_delay_narrative(receipts) else {
         return Ok(false);
     };
     let assistant_message_id: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
@@ -1457,7 +1457,7 @@ impl DbStreamingStepBackend {
                 is_error: *is_error,
             })
             .collect();
-        fill_fallback_narrative_if_empty(&self.db, prev_round_id, &summary_refs).await?;
+        fill_zero_delay_narrative_if_empty(&self.db, prev_round_id, &summary_refs).await?;
         let submitted = crate::services::chat_service::ChatService::persist_tool_results_round(
             &self.db,
             self.conversation_id,
@@ -1768,7 +1768,7 @@ async fn stream_llm_response(
                 })
                 .collect();
             let filled =
-                fill_fallback_narrative_if_empty(&db, current_round_id, &summary_refs).await?;
+                fill_zero_delay_narrative_if_empty(&db, current_round_id, &summary_refs).await?;
             let (mut data, db_mappings, persistent_hud_keys) = take_last(&session)?;
             if filled && data.full_content.trim().is_empty() {
                 // 内存中的整轮产物与落盘保持一致：spawn 层的禁词校验与
@@ -3688,11 +3688,11 @@ mod tests {
     }
 
     #[test]
-    fn fallback_narrative_synthesizes_from_receipts() {
-        assert!(synthesize_fallback_narrative(&[]).is_none());
+    fn zero_delay_narrative_synthesizes_from_receipts() {
+        assert!(synthesize_zero_delay_narrative(&[]).is_none());
         let single = [ToolReceiptSummary { tool_name: "buy_item", is_error: false }];
         assert_eq!(
-            synthesize_fallback_narrative(&single).as_deref(),
+            synthesize_zero_delay_narrative(&single).as_deref(),
             Some("*（完成了交互结算：[buy_item 成功]）*")
         );
         let mixed = [
@@ -3700,7 +3700,7 @@ mod tests {
             ToolReceiptSummary { tool_name: "buy_item", is_error: true },
         ];
         assert_eq!(
-            synthesize_fallback_narrative(&mixed).as_deref(),
+            synthesize_zero_delay_narrative(&mixed).as_deref(),
             Some("*（完成了交互结算：[deduct_gold 成功、buy_item 失败]）*")
         );
     }
@@ -3725,7 +3725,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_narrative_lands_in_sqlite_for_empty_tool_turn() {
+    async fn zero_delay_narrative_lands_in_sqlite_for_empty_tool_turn() {
         let pool = setup_narrative_db().await;
         sqlx::query("INSERT INTO messages (id, content) VALUES (10, '')")
             .execute(&pool)
@@ -3737,7 +3737,7 @@ mod tests {
             .expect("insert round");
 
         let receipts = [ToolReceiptSummary { tool_name: "buy_item", is_error: false }];
-        let filled = fill_fallback_narrative_if_empty(&pool, 5, &receipts)
+        let filled = fill_zero_delay_narrative_if_empty(&pool, 5, &receipts)
             .await
             .expect("fill should succeed");
         assert!(filled, "empty tool turn must receive the synthesized narrative");
@@ -3750,7 +3750,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_narrative_never_overwrites_existing_text() {
+    async fn zero_delay_narrative_never_overwrites_existing_text() {
         let pool = setup_narrative_db().await;
         sqlx::query("INSERT INTO messages (id, content) VALUES (10, '原有对白')")
             .execute(&pool)
@@ -3762,7 +3762,7 @@ mod tests {
             .expect("insert round");
 
         let receipts = [ToolReceiptSummary { tool_name: "buy_item", is_error: false }];
-        let filled = fill_fallback_narrative_if_empty(&pool, 5, &receipts)
+        let filled = fill_zero_delay_narrative_if_empty(&pool, 5, &receipts)
             .await
             .expect("fill should succeed");
         assert!(!filled);
@@ -3774,7 +3774,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_narrative_skips_without_receipts_or_active_message() {
+    async fn zero_delay_narrative_skips_without_receipts_or_active_message() {
         let pool = setup_narrative_db().await;
         sqlx::query("INSERT INTO messages (id, content) VALUES (10, '')")
             .execute(&pool)
@@ -3791,13 +3791,13 @@ mod tests {
 
         let receipts = [ToolReceiptSummary { tool_name: "buy_item", is_error: false }];
         assert!(
-            !fill_fallback_narrative_if_empty(&pool, 5, &[])
+            !fill_zero_delay_narrative_if_empty(&pool, 5, &[])
                 .await
                 .expect("no receipts"),
             "no tool execution means no synthesized narrative"
         );
         assert!(
-            !fill_fallback_narrative_if_empty(&pool, 6, &receipts)
+            !fill_zero_delay_narrative_if_empty(&pool, 6, &receipts)
                 .await
                 .expect("no active message"),
             "round without an active assistant message cannot be filled"

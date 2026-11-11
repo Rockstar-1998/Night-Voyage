@@ -663,7 +663,9 @@ impl ChatService {
 
         let round_state =
             RoundRepository::load_state(&db, conversation_id, Some(submitted.new_round_id)).await?;
-        Ok(serde_json::to_value(round_state).unwrap_or_default())
+        // 序列化失败显式上抛（C2）：不得用 `unwrap_or_default()` 把失败伪装成空对象
+        Ok(serde_json::to_value(round_state)
+            .map_err(|err| format!("序列化回合状态失败: {}", err).replace('\\', "/"))?)
     }
 
     /// 工具回执落盘核心：一条 user 消息承载 N 个 `tool_result` part，

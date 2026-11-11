@@ -34,7 +34,7 @@
 
 import { Component, For, Show, createEffect, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { ArrowLeft, ChevronRight, Eye, FileText, Layers3, LayoutGrid, Save } from '../../lib/icons';
+import { ArrowLeft, ChevronRight, Copy, Download, Eye, FileText, Layers3, LayoutGrid, Save, Upload } from '../../lib/icons';
 import {
   NODE_TYPES,
   type BlueprintComment,
@@ -50,7 +50,10 @@ import {
 } from '../../lib/blueprint/types';
 import {
   actionBridgeWhitelistGet,
+  blueprintExportPresetCode,
+  blueprintImportPresetCode,
   blueprintValidateUiContract,
+  listenBlueprintRefreshed,
   mcpToolNames,
   normalizeBlueprintGraph,
   presetsGet,
@@ -734,12 +737,15 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     }
   };
 
+  let unlistenBlueprintRefreshed: (() => void) | null = null;
+
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
   });
 
   onCleanup(() => {
     window.removeEventListener('keydown', handleKeyDown);
+    unlistenBlueprintRefreshed?.();
   });
 
   const selectedNode = createMemo<BlueprintNode | null>(() => {
@@ -750,7 +756,7 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
 
   // ─── Load + migrate ───
 
-  onMount(async () => {
+  const loadGraph = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -823,6 +829,87 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  onMount(() => {
+    void loadGraph();
+  });
+
+  // ─── .nv.ts 导出 / 导入（工单 05 C10 前端挂载：与 MCP 工具同服务路径）───
+
+  const [isExportCodeOpen, setIsExportCodeOpen] = createSignal(false);
+  const [exportCode, setExportCode] = createSignal('');
+  const [isExporting, setIsExporting] = createSignal(false);
+  const [isImportCodeOpen, setIsImportCodeOpen] = createSignal(false);
+  const [importCodeText, setImportCodeText] = createSignal('');
+  const [isImporting, setIsImporting] = createSignal(false);
+  // 导入成功后的重载由本入口直呼 loadGraph 完成；抑制同一次导入触发的
+  // blueprint:refreshed 监听重载，避免双次拉取（C3）。
+  const [suppressExternalRefresh, setSuppressExternalRefresh] = createSignal(false);
+
+  const handleExportCode = async () => {
+    setIsExporting(true);
+    try {
+      setExportCode(await blueprintExportPresetCode(props.presetId));
+      setIsExportCodeOpen(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`导出 .nv.ts 失败：${msg}`, 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopyExportCode = async () => {
+    try {
+      await navigator.clipboard.writeText(exportCode());
+      showToast('已复制到剪贴板', 'success', 1500);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`复制失败：${msg}`, 'error');
+    }
+  };
+
+  const handleImportCode = async () => {
+    if (importCodeText().trim() === '') {
+      showToast('请先粘贴 .nv.ts 源码', 'warning');
+      return;
+    }
+    setIsImporting(true);
+    try {
+      const out = await blueprintImportPresetCode(props.presetId, importCodeText());
+      setIsImportCodeOpen(false);
+      setImportCodeText('');
+      showToast(out.message, 'success', 4000);
+      setDirty(false);
+      setSuppressExternalRefresh(true);
+      try {
+        await loadGraph();
+      } finally {
+        setSuppressExternalRefresh(false);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`导入 .nv.ts 失败：${msg}`, 'error', 6000);
+      // 失败路径可能已落库但广播未发出（错误信息会说明）——主动重载对齐视图
+      void loadGraph();
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  onMount(() => {
+    // blueprint:refreshed（spec §4 / C10）：外部（MCP 导入）改写当前预设蓝图后
+    // 重载画布；本地有未保存修改时不自动覆盖，只给可见警示（C2 不静默丢弃）。
+    void listenBlueprintRefreshed((payload) => {
+      if (payload.presetId !== props.presetId || suppressExternalRefresh()) return;
+      if (isDirty() || isSaving()) {
+        showToast('蓝图刚被外部导入更新，但本地有未保存修改——未自动重载，请先保存或放弃修改后重新打开', 'warning', 6000);
+        return;
+      }
+      showToast('蓝图已被外部导入更新，正在重新加载', 'info', 2000);
+      void loadGraph();
+    }).then((unlisten) => { unlistenBlueprintRefreshed = unlisten; });
   });
 
   // ─── View center helper ───
@@ -1356,6 +1443,22 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
             <FileText size={16} />
           </IconButton>
           <IconButton
+            onClick={() => void handleExportCode()}
+            disabled={isLoading() || isExporting()}
+            label={isExporting() ? '导出中…' : '导出 .nv.ts 代码'}
+            size="sm"
+          >
+            <Download size={16} />
+          </IconButton>
+          <IconButton
+            onClick={() => setIsImportCodeOpen(true)}
+            disabled={isLoading()}
+            label="导入 .nv.ts 代码"
+            size="sm"
+          >
+            <Upload size={16} />
+          </IconButton>
+          <IconButton
             onClick={() => void handleSave()}
             disabled={
               isLoading() ||
@@ -1610,6 +1713,85 @@ export const BlueprintEditor: Component<BlueprintEditorProps> = (props) => {
                   </div>
                 </Show>
               </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* .nv.ts 导出模态（C10 前端挂载：与 MCP nv_preset_export_code 同服务路径） */}
+      <Show when={isExportCodeOpen()}>
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-6"
+          onClick={() => setIsExportCodeOpen(false)}
+        >
+          <div
+            class="w-full max-w-3xl h-[70vh] flex flex-col rounded-2xl border border-white/10 bg-night-water shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
+              <span class="text-sm font-bold text-white">导出 .nv.ts 代码</span>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCopyExportCode()}
+                  class="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-white/10 hover:bg-white/10 text-mist-solid"
+                >
+                  <Copy size={14} /> 复制
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsExportCodeOpen(false)}
+                  class="px-2.5 py-1 text-xs rounded-lg border border-white/10 hover:bg-white/10 text-mist-solid"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+            <textarea
+              readonly
+              class="flex-1 min-h-0 m-4 p-3 rounded-lg bg-black/40 border border-white/10 text-[11px] font-mono text-mist-solid resize-none"
+              value={exportCode()}
+            />
+          </div>
+        </div>
+      </Show>
+
+      {/* .nv.ts 导入模态（C10 前端挂载：与 MCP nv_preset_import_code 同服务路径） */}
+      <Show when={isImportCodeOpen()}>
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-6"
+          onClick={() => !isImporting() && setIsImportCodeOpen(false)}
+        >
+          <div
+            class="w-full max-w-3xl h-[70vh] flex flex-col rounded-2xl border border-white/10 bg-night-water shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
+              <span class="text-sm font-bold text-white">导入 .nv.ts 代码</span>
+              <button
+                type="button"
+                onClick={() => setIsImportCodeOpen(false)}
+                disabled={isImporting()}
+                class="px-2.5 py-1 text-xs rounded-lg border border-white/10 hover:bg-white/10 text-mist-solid"
+              >
+                关闭
+              </button>
+            </div>
+            <textarea
+              class="flex-1 min-h-0 m-4 p-3 rounded-lg bg-black/40 border border-white/10 text-[11px] font-mono text-mist-solid resize-none"
+              placeholder="粘贴 .nv.ts 源码全文：经与 MCP 导入相同的编译与归一化校验后写回当前预设蓝图"
+              value={importCodeText()}
+              onInput={(e) => setImportCodeText(e.currentTarget.value)}
+            />
+            <div class="flex items-center justify-end gap-2 px-5 pb-4 shrink-0">
+              <button
+                type="button"
+                onClick={() => void handleImportCode()}
+                disabled={isImporting() || importCodeText().trim() === ''}
+                class="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent text-white disabled:opacity-50"
+              >
+                {isImporting() ? '导入中…' : '导入并写回预设'}
+              </button>
             </div>
           </div>
         </div>

@@ -132,6 +132,8 @@ pub fn run() {
             commands::blueprint::clear_preset_gate_selection,
             commands::blueprint::load_blueprint_gates,
             commands::blueprint::normalize_blueprint_graph,
+            commands::blueprint::blueprint_export_preset_code,
+            commands::blueprint::blueprint_import_preset_code,
             commands::blueprint::list_preset_conversations,
             commands::blueprint::preview_blueprint_with_session,
             commands::blueprint::blueprint_validate_ui_contract,
