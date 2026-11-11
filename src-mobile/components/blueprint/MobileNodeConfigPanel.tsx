@@ -141,6 +141,7 @@ export const MobileNodeConfigPanel: Component<MobileNodeConfigPanelProps> = (pro
       case 'role_switch': return 'RoleSwitch（已废弃）';
       case 'constant': return 'Constant（常量）';
       case 'branch': return 'Branch（分支）';
+      case 'step_budget': return 'StepBudget（步长预算）';
       case 'invoke_schema': return 'InvokeSchema（调用 Schema）';
       case 'tool_definition': return 'ToolDefinition（工具定义）';
       case 'calculator': return 'Calculator（数值/道具运算）';

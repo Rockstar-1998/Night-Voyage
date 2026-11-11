@@ -165,6 +165,15 @@ function defaultConfigForType(type: NodeType): NodeConfig {
           default_port: 'out_single',
         },
       };
+    case 'step_budget':
+      return {
+        type: 'step_budget',
+        config: {
+          max_steps: 1,
+          short_circuit_on_tools: true,
+          is_locked: false,
+        },
+      };
     case 'sampling_params':
       return {
         type: 'sampling_params',

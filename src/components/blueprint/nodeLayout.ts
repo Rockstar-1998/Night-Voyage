@@ -135,6 +135,7 @@ const NODE_ACCENT_COLORS: Record<NodeType, string> = {
   sampling_params_anthropic: '#d97757',
   constant: '#14b8a6',
   branch: '#d946ef',
+  step_budget: '#f43f5e',
   invoke_schema: '#8b5cf6',
   tool_definition: '#38bdf8',
   calculator: '#f59e0b',
@@ -212,6 +213,7 @@ export function getOutputPorts(
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
+    case 'step_budget':
       return [{ port: 'out', label: null, kind: 'exec', direction: 'output', pinType: 'exec' }];
     case 'scriptwriter_pipeline': {
       const hasReject = Array.isArray(node.config.stages) && node.config.stages.some((s) => s.reject_target && s.reject_target.trim() !== '');
@@ -355,6 +357,7 @@ export function getInputPorts(
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
+    case 'step_budget':
       return [{ port: 'in', label: null, kind: 'exec', direction: 'input', pinType: 'exec' }];
   }
 }
@@ -389,6 +392,7 @@ export function isNodeLocked(node: BlueprintNode): boolean {
     case 'actor_definition':
     case 'ui_layout_config':
     case 'initial_state_config':
+    case 'step_budget':
       return node.config.is_locked;
     case 'start':
     case 'end':
@@ -438,6 +442,8 @@ function computeNodeTitle(
       return node.config.label || 'Constant';
     case 'branch':
       return node.config.label || 'Branch';
+    case 'step_budget':
+      return `Step Budget: ${node.config.max_steps} 步`;
     case 'sampling_params':
       return 'Sampling Params';
     case 'sampling_params_openai':
@@ -509,6 +515,8 @@ function computeNodeSubtitle(
       return node.config.source;
     case 'branch':
       return `${node.config.cases.length} cases`;
+    case 'step_budget':
+      return node.config.max_steps <= 1 ? '单步直出' : `${node.config.max_steps} 步预算`;
     case 'start':
     case 'end':
     case 'sampling_params':

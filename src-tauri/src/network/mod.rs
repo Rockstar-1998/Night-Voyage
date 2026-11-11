@@ -178,6 +178,9 @@ pub enum RoomMessage {
         conversation_id: i64,
         message_id: i64,
         round_deleted: bool,
+        /// 删除中间轮时被级联失效的后续轮快照基线条数（阶段 1c）；
+        /// 删最后一轮或未删轮时为 0。
+        invalidated_later_snapshots: u64,
     },
     SwipeActivated {
         conversation_id: i64,
@@ -385,6 +388,8 @@ pub struct RoomMessageDeletedEvent {
     pub conversation_id: i64,
     pub message_id: i64,
     pub round_deleted: bool,
+    /// 删除中间轮时被级联失效的后续轮快照基线条数（阶段 1c）。
+    pub invalidated_later_snapshots: u64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -667,10 +672,12 @@ impl RoomMessage {
                 conversation_id,
                 message_id,
                 round_deleted,
+                invalidated_later_snapshots,
             } => serde_json::to_value(RoomMessageDeletedEvent {
                 conversation_id: *conversation_id,
                 message_id: *message_id,
                 round_deleted: *round_deleted,
+                invalidated_later_snapshots: *invalidated_later_snapshots,
             })
             .ok(),
             RoomMessage::SwipeActivated {

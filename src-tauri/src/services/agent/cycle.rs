@@ -26,7 +26,9 @@ use crate::services::provider_adapter::build_provider_http_request;
 
 /// 单次循环运行的配置。步长字段通常来自蓝图编译结果
 /// （`BlueprintExecutionResult::step_budget` /
-/// `short_circuit_on_first_step`，由 StepBudget 节点物理注入）。
+/// `short_circuit_on_first_step`，由 StepBudget 节点物理盖章为 `Some(..)`）。
+/// 编译结果为 `None` 时表示图未声明预算：装配本配置的调用方必须显式
+/// 决定步长（本运行器不设隐含默认，更不得把 `None` 翻译成单步 1）。
 #[derive(Debug, Clone)]
 pub struct AgentCycleConfig {
     /// 步长预算上限：1 = 单步充填，>= 2 = 多步推理。0 为无效配置，运行期硬错。
@@ -372,7 +374,20 @@ fn parse_step_response(provider_kind: &str, value: &Value) -> Result<AgentStepRe
                         let input_json = block.get("input").cloned().unwrap_or(Value::Null);
                         tool_calls.push(AgentToolCall { id, name, input_json });
                     }
-                    _ => {}
+                    Some(other) => {
+                        // 本运行器不消费的块类型（如 thinking /
+                        // server_tool_use）：显式记录类型名后跳过，使「忽略」
+                        // 成为有日志的行为，禁止 `_ =>` 无声吞没未知变体
+                        // （C2 / Code Style；code-review 2026-11-11 修正）。
+                        crate::dbg_eprintln!(
+                            "[agent/cycle] skipping unconsumed Anthropic content block type: {other}"
+                        );
+                    }
+                    None => {
+                        crate::dbg_eprintln!(
+                            "[agent/cycle] skipping Anthropic content block without a type field"
+                        );
+                    }
                 }
             }
             let finish_reason = match value.get("stop_reason").and_then(|v| v.as_str()) {
@@ -771,6 +786,28 @@ mod tests {
         assert_eq!(parsed.finish_reason, AgentFinishReason::ToolCalls);
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].input_json, serde_json::json!({ "slot": 3 }));
+    }
+
+    #[test]
+    fn parse_anthropic_response_skips_unknown_block_types() {
+        // C2 回归（code-review 2026-11-11）：本运行器不消费的块类型
+        // （thinking 等）被显式记录后跳过——正文与工具调用照常解析，
+        // 未知块既不污染结果，也不被无声吞没成错误数据。
+        let value = serde_json::json!({
+            "stop_reason": "tool_use",
+            "content": [
+                { "type": "thinking", "thinking": "内部推理", "signature": "sig" },
+                { "type": "text", "text": "可见正文" },
+                { "type": "tool_use", "id": "toolu_9", "name": "buy_item", "input": { "amount": 30 } },
+                { "type": "redacted_thinking", "data": "opaque" }
+            ]
+        });
+        let parsed = parse_step_response("anthropic", &value)
+            .expect("unknown block types must be skipped, not fatal");
+        assert_eq!(parsed.text, "可见正文");
+        assert_eq!(parsed.finish_reason, AgentFinishReason::ToolCalls);
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].name, "buy_item");
     }
 
     #[test]

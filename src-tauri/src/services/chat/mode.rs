@@ -91,6 +91,28 @@ impl ModeCapabilities {
             Operation::Rewind => self.rewind,
         }
     }
+
+    /// 该操作执行时是否必须联动状态快照回滚（工单 04：能力矩阵与智能体
+    /// ToolCall 状态突变生命周期的契合点，纯数据推导、无副作用）。
+    ///
+    /// 语义：会撤销或重做轮次的操作（Regenerate / Delete / Rewind）只要在
+    /// 本模式下被放行（`Allow` 或 `SnapshotLimited`），执行时就必须先把
+    /// `game_state` 还原到目标轮的 `RoundSnapshot` 基线，否则被撤销轮次的
+    /// 扣款/背包突变会残留（重复扣款与数据膨胀）。被 `Block` 的操作根本不
+    /// 执行，自然无需回滚；其余操作不触碰轮次撤销语义，恒为 `false`。
+    pub fn requires_snapshot_rollback(&self, op: Operation) -> bool {
+        match op {
+            Operation::Regenerate | Operation::Delete | Operation::Rewind => {
+                self.get(op) != OpCapability::Block
+            }
+            // 其余操作不触碰轮次撤销语义：逐一列全变体而不用 `_ =>` 通配，
+            // 新增 Operation 变体时由编译器强制重新裁定本谓词（提交前
+            // 自检循环 2026-11-11 修正）。
+            Operation::Edit | Operation::Fork | Operation::SubmitAbort | Operation::Send => {
+                false
+            }
+        }
+    }
 }
 
 /// 9 个模式的能力查表，下标与 `ConversationMode` 枚举序对齐。
@@ -368,6 +390,43 @@ mod tests {
             MODE_CAPABILITIES[ConversationMode::OnlineMem0Guest as usize].send,
             OpCapability::Allow
         );
+    }
+
+    /// 工单 04：快照回滚联动谓词——被放行的轮次撤销类操作必须回滚，
+    /// 被阻断的操作与无关操作不回滚（逐模式 × 逐操作全矩阵断言）。
+    #[test]
+    fn test_requires_snapshot_rollback_matrix() {
+        let rollback_ops = [Operation::Regenerate, Operation::Delete, Operation::Rewind];
+        let plain_ops = [
+            Operation::Edit,
+            Operation::Fork,
+            Operation::SubmitAbort,
+            Operation::Send,
+        ];
+        for (index, caps) in MODE_CAPABILITIES.iter().enumerate() {
+            for op in rollback_ops {
+                assert_eq!(
+                    caps.requires_snapshot_rollback(op),
+                    caps.get(op) != OpCapability::Block,
+                    "mode #{index} op {op:?} 的回滚联动必须与能力三态一致"
+                );
+            }
+            for op in plain_ops {
+                assert!(
+                    !caps.requires_snapshot_rollback(op),
+                    "mode #{index} op {op:?} 不涉及轮次撤销，恒不回滚"
+                );
+            }
+        }
+        // 抽查具体模式：mem0 的 SnapshotLimited 仍须回滚；房客全 Block 不回滚。
+        let mem0 = ConversationMode::SingleMem0.capabilities();
+        assert!(mem0.requires_snapshot_rollback(Operation::Regenerate));
+        assert!(mem0.requires_snapshot_rollback(Operation::Rewind));
+        assert!(!mem0.requires_snapshot_rollback(Operation::Delete)); // mem0 delete = Block
+        let guest = ConversationMode::OnlineLegacyGuest.capabilities();
+        assert!(!guest.requires_snapshot_rollback(Operation::Regenerate));
+        assert!(!guest.requires_snapshot_rollback(Operation::Rewind));
+        assert!(!guest.requires_snapshot_rollback(Operation::Delete));
     }
 
     /// `get(op)` 与直接字段读取必须一致。

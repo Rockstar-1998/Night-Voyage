@@ -17,6 +17,7 @@ export const NODE_TYPES = [
   'sampling_params',
   'constant',
   'branch',
+  'step_budget',
   'sampling_params_openai',
   'sampling_params_anthropic',
   'invoke_schema',
@@ -132,6 +133,12 @@ export interface BranchConfig {
   label: string;
   cases: BranchCase[];
   default_port: string;
+}
+
+export interface StepBudgetConfig {
+  max_steps: number;
+  short_circuit_on_tools: boolean;
+  is_locked: boolean;
 }
 
 export interface SamplingParamsConfig {
@@ -347,6 +354,7 @@ export type NodeConfig =
   | { type: 'role_switch'; config: RoleSwitchConfig }
   | { type: 'constant'; config: ConstantConfig }
   | { type: 'branch'; config: BranchConfig }
+  | { type: 'step_budget'; config: StepBudgetConfig }
   | { type: 'sampling_params'; config: SamplingParamsConfig }
   | { type: 'sampling_params_openai'; config: OpenAiSamplingParamsConfig }
   | { type: 'sampling_params_anthropic'; config: AnthropicSamplingParamsConfig }

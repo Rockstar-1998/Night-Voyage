@@ -31,6 +31,11 @@ minijinja = "2"
 regex = "1"
 # 禁词门禁的多模式单遍匹配（计划 §6.3）；lock 中已作为传递依赖存在。
 aho-corasick = "1"
+# 工单 05：.nv.ts 双向 AST 编译（纯 Rust TS 解析，无 Node 依赖）
+oxc_allocator = "0.110"
+oxc_ast = "0.110"
+oxc_parser = "0.110"
+oxc_span = "0.110"
 # D20 骰点的密码学安全随机源（计划 §6.3）。
 getrandom = "0.2"
 async-trait = "0.1"

@@ -1,3 +1,4 @@
+pub mod blueprint_codec;
 pub mod blueprint_executor;
 pub mod action_bridge;
 pub mod chat;

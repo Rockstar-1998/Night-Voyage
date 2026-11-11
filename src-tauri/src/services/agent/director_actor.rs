@@ -1,16 +1,21 @@
-//! 导演-演员流水线（计划 §6.1）。
+//! 导演-演员流水线薄入口（工单 03 第 1 项，FanOut 入图）。
 //!
-//! 分两步走，中间是"视界裁剪"：
-//! 1. **导演**：产出结构化分镜计划（JSON），每个镜头一个槽位（`slot_id` + 角色 + 该镜头要点）；
-//! 2. **演员**：每个槽位一次独立调用，且**只给该演员该看的东西**——
-//!    角色设定只放自己那一份，上下文只放本镜头要点，避免演员看到别人的戏；
-//! 3. **导演装配**：把各槽位产出按 `slot_id` 顺序缝合成定稿。
+//! 本模块不再持有任何硬编码编排实现：分镜 → 扇出 → 汇聚的执行语义全部在
+//! [`super::graph_orchestrator`] 的拓扑执行器内（导演节点产出分镜集 →
+//! FanOut 节点运行时按分镜数实例化演员节点 → 汇聚节点收尾）。本入口只做
+//! 三件事：
+//! 1. 装配编排资产（蓝图 `DirectorConfig` / `ActorDefinition`、工具契约表）；
+//! 2. 经 [`super::graph_orchestrator::compile_director_plan`] 编译导演计划；
+//! 3. 提供阶段调用闭包（导演 / 演员 / 装配三类阶段的真实 LLM 调用、视界
+//!    裁剪、时间线事件与草稿记账），把计划交给图执行器游走。
 //!
-//! 所有调用都走 [`super::subagent`]；中间稿写 `agent_drafts`，全程发 `SubAgent` 时序事件。
-//! 导演计划不是合法 JSON / 缺槽位时**报错**，不做"按空计划继续"的兜底。
+//! 导演分镜类型与解析函数（`DirectorBeat` / `DirectorPlan` /
+//! `parse_director_plan` / `director_plan_schema`）已随计划 IR 归入
+//! `graph_orchestrator`，此处再导出以保持既有引用路径不变。
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use std::future::Future;
+use std::sync::Arc;
+
 use sqlx::SqlitePool;
 use tauri::AppHandle;
 
@@ -18,106 +23,19 @@ use crate::models::ApiProvider;
 use crate::services::agent::orchestrator::{
     record_draft, record_run_finish, record_run_start, stage_call,
 };
+use crate::services::agent::scratchpad::Scratchpad;
 use crate::services::agent::subagent::{run_subagent, run_subagent_with_tools, SubAgentRequest};
-use std::future::Future;
 use crate::services::agent::timeline::{self, TimelineKind, TimelineStatus};
 
-/// 导演产出的一个分镜槽位。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DirectorBeat {
-    pub slot_id: String,
-    /// 该镜头由哪个角色出演（用于视界裁剪）
-    pub character: Option<String>,
-    /// 这一镜要发生什么
-    pub focus: String,
-}
+#[allow(unused_imports)]
+pub use super::graph_orchestrator::{
+    director_plan_schema, parse_director_plan, DirectorBeat, DirectorPlan,
+};
 
-/// 导演分镜计划。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DirectorPlan {
-    pub beats: Vec<DirectorBeat>,
-}
+/// 无 AgentModeSwitch 资产时导演 / 演员工具循环的默认轮次上限：
+/// 蓝图未声明模式切换节点则无从读取 `max_tool_rounds`，按此默认值封顶。
+const DEFAULT_TOOL_MAX_ROUNDS: usize = 5;
 
-/// 返回导演分镜计划（DirectorPlan）的标准 JSON Schema 定义。
-///
-/// 遵循 `InvokeSchema` 规范，用于强制约束模型以标准 JSON 产出分镜槽位。
-pub fn director_plan_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "beats": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "slot_id": { "type": "string" },
-                        "character": { "type": "string" },
-                        "focus": { "type": "string" }
-                    },
-                    "required": ["slot_id", "focus"]
-                }
-            }
-        },
-        "required": ["beats"]
-    })
-}
-
-/// 解析导演计划：必须是 JSON 对象且含非空 `beats` 数组。
-///
-/// 允许模型把 JSON 包在 ```json 代码块里；除此之外任何偏差都报错——
-/// 解析失败就改写或降级，等于让导演"什么都没说"也照演。
-pub fn parse_director_plan(raw: &str) -> Result<DirectorPlan, String> {
-    let cleaned = raw.trim().trim_start_matches("```json").trim_end_matches("```").trim();
-    let value: Value = serde_json::from_str(cleaned)
-        .map_err(|err| format!("导演计划不是合法 JSON: {}（原文前 200 字：{}）", err, cleaned.chars().take(200).collect::<String>()))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "导演计划必须是 JSON 对象".to_string())?;
-    let beats_value = object
-        .get("beats")
-        .ok_or_else(|| "导演计划缺少 beats 数组".to_string())?;
-    let beats_raw = beats_value
-        .as_array()
-        .ok_or_else(|| "导演计划的 beats 必须是数组".to_string())?;
-    if beats_raw.is_empty() {
-        return Err("导演计划的 beats 为空：本轮没有可演的镜头".to_string());
-    }
-
-    let mut beats = Vec::with_capacity(beats_raw.len());
-    for (index, raw_beat) in beats_raw.iter().enumerate() {
-        let beat_object = raw_beat
-            .as_object()
-            .ok_or_else(|| format!("分镜 #{} 不是 JSON 对象", index + 1))?;
-        let slot_id = beat_object
-            .get("slot_id")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("分镜 #{} 缺少 slot_id", index + 1))?
-            .to_string();
-        let focus = beat_object
-            .get("focus")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("分镜 `{}` 缺少 focus", slot_id))?
-            .to_string();
-        let character = beat_object
-            .get("character")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        beats.push(DirectorBeat { slot_id, character, focus });
-    }
-
-    Ok(DirectorPlan { beats })
-}
-
-/// 跑完导演-演员流水线，返回定稿正文。
-///
-/// 导演提示词与演员 persona 来自蓝图 `DirectorConfig` / `ActorDefinition` 节点资产
-/// （D-5：节点缺失 = 显式报错 I2）。演员的 `tools` 声明用于子代理 function-calling。
 /// 依据智能体权限配置解析生效的工具定义列表。
 fn resolve_allowed_tool_definitions(
     agent: &impl crate::models::blueprint::HasAgentToolPermissions,
@@ -134,6 +52,42 @@ fn resolve_allowed_tool_definitions(
     }
 }
 
+/// 构建子代理工具执行回调（走 `execute_tool_call_with_plan` 同一条链：
+/// 白名单 → 契约 → 门禁 → 容器）。
+fn make_tool_execute(
+    db: SqlitePool,
+    app: AppHandle,
+    conversation_id: i64,
+    round_id: i64,
+) -> impl Fn(String, String) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
+    move |name: String, args_json: String| {
+        let db = db.clone();
+        let app = app.clone();
+        std::pin::Pin::from(Box::pin(async move {
+            let plan =
+                crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
+                    .await?;
+            crate::services::agent_runtime::execute_tool_call_with_plan(
+                &db,
+                &app,
+                conversation_id,
+                round_id,
+                false,
+                &name,
+                &args_json,
+                plan.as_ref(),
+            )
+            .await
+        }))
+            as std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+    }
+}
+
+/// 跑完导演-演员流水线，返回定稿正文（薄入口：编译导演计划 + 图执行器）。
+///
+/// 导演提示词与演员 persona 来自蓝图 `DirectorConfig` / `ActorDefinition`
+/// 节点资产（D-5：节点缺失 = 显式报错）。执行失败时运行记录统一标记
+/// `failed` 后显式返回错误（C2）。
 pub async fn run_director_actor_pipeline(
     app: &AppHandle,
     db: &SqlitePool,
@@ -145,6 +99,35 @@ pub async fn run_director_actor_pipeline(
 ) -> Result<String, String> {
     let run_id = record_run_start(db, conversation_id, round_id, "director_actor").await?;
 
+    let result = run_director_plan_via_graph(
+        app, db, run_id, conversation_id, round_id, provider, system, user_input,
+    )
+    .await;
+
+    match result {
+        Ok(final_text) => {
+            record_run_finish(db, run_id, "completed").await?;
+            Ok(final_text)
+        }
+        Err(err) => {
+            let _ = record_run_finish(db, run_id, "failed").await;
+            Err(err)
+        }
+    }
+}
+
+/// 编译导演计划并交图执行器游走（薄入口的实质部分：资产装配 + 闭包分发）。
+#[allow(clippy::too_many_arguments)]
+async fn run_director_plan_via_graph(
+    app: &AppHandle,
+    db: &SqlitePool,
+    run_id: i64,
+    conversation_id: i64,
+    round_id: i64,
+    provider: &ApiProvider,
+    system: &[String],
+    user_input: &str,
+) -> Result<String, String> {
     // 编排资产（D-5）：导演提示词与演员定义来自蓝图节点
     let configs = crate::services::agent_runtime::load_blueprint_configs_for_conversation(
         db,
@@ -154,16 +137,6 @@ pub async fn run_director_actor_pipeline(
     let director_cfg = configs.director_config.ok_or_else(|| {
         "蓝图缺少 DirectorConfig 节点，无法运行导演-演员流水线（请在该预设蓝图中添加）".to_string()
     })?;
-    let actor_defs: std::collections::HashMap<&str, &crate::models::blueprint::ActorDefinition> =
-        configs.actors.iter().map(|a| (a.actor_name.as_str(), a)).collect();
-
-    let director_system: Vec<String> = {
-        let mut blocks = system.to_vec();
-        if !director_cfg.director_prompt.trim().is_empty() {
-            blocks.push(director_cfg.director_prompt.clone());
-        }
-        blocks
-    };
 
     // 编译蓝图中声明的真实 ToolCall 契约（A12 闭环：使用真实的 parameters_schema 与 description）
     let mut tool_defs_by_name: std::collections::HashMap<String, crate::llm::LlmToolDefinition> = configs
@@ -210,310 +183,269 @@ pub async fn run_director_actor_pipeline(
         }
     }
 
-    let director_tools = resolve_allowed_tool_definitions(&director_cfg, &tool_defs_by_name);
-
+    let tool_max_rounds = configs
+        .agent_mode_switch
+        .as_ref()
+        .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
+        .unwrap_or(DEFAULT_TOOL_MAX_ROUNDS);
     let schema_json = serde_json::to_string(&director_plan_schema())
         .map_err(|e| format!("序列化导演分镜 Schema 失败: {e}").replace('\\', "/"))?;
 
-    let plan_raw = if director_tools.is_empty() {
-        let req = SubAgentRequest::new(
-            "导演·分镜",
-            director_system.clone(),
-            user_input,
-            provider.temperature,
-            provider.max_tokens,
-        )
-        .with_structured_schema(&schema_json);
-        let res = run_subagent(provider, req).await?;
-        record_draft(
-            db,
-            run_id,
-            "director:plan",
-            &res.text,
-            user_input,
-        )
-        .await?;
-        timeline::emit(
-            app,
-            conversation_id,
-            round_id,
-            TimelineKind::SubAgent,
-            TimelineStatus::Success,
-            "导演·分镜".to_string(),
-            format!("分镜计划产出 {} 字", res.text.chars().count()),
-        );
-        res.text
-    } else {
-        let max_rounds = configs
-            .agent_mode_switch
-            .as_ref()
-            .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
-            .unwrap_or(5);
-        let execute = {
-            let db = db.clone();
+    // 图语义编排（工单 03 第 1 项）：资产先编译为导演计划（导演节点 →
+    // FanOut 节点 → 汇聚节点），编译失败（演员名为空 / 重复）即显式报错。
+    let plan = super::graph_orchestrator::compile_director_plan(&director_cfg, &configs.actors)?;
+
+    let scratchpad = Scratchpad::new();
+    let tool_defs = Arc::new(tool_defs_by_name);
+    let schema_json = Arc::new(schema_json);
+    let system_owned: Vec<String> = system.to_vec();
+    let user_input_owned = user_input.to_string();
+
+    super::graph_orchestrator::execute_orchestration_plan(
+        &plan,
+        user_input,
+        &scratchpad,
+        |stage_cfg, _label, instruction, payload, pad| {
             let app = app.clone();
-            move |name: String, args_json: String| {
-                let db = db.clone();
-                let app = app.clone();
-                std::pin::Pin::from(Box::pin(async move {
-                    let plan =
-                        crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
-                            .await?;
-                    crate::services::agent_runtime::execute_tool_call_with_plan(
-                        &db,
-                        &app,
-                        conversation_id,
-                        round_id,
-                        false,
-                        &name,
-                        &args_json,
-                        plan.as_ref(),
+            let db = db.clone();
+            let provider = provider.clone();
+            let system = system_owned.clone();
+            let tool_defs = tool_defs.clone();
+            let schema_json = schema_json.clone();
+            let user_input = user_input_owned.clone();
+            let stage = stage_cfg.clone();
+            async move {
+                if stage.stage == "director:plan" {
+                    run_director_stage(
+                        &app, &db, run_id, conversation_id, round_id, &provider, &system,
+                        &stage, &payload, &tool_defs, &schema_json, &user_input, tool_max_rounds,
                     )
                     .await
-                }))
-                    as std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+                } else if stage.stage.starts_with("actor:") {
+                    run_actor_stage(
+                        &app, &db, run_id, conversation_id, round_id, &provider, &system,
+                        &stage, &instruction, &payload, &pad, &tool_defs, tool_max_rounds,
+                    )
+                    .await
+                } else if stage.stage == "director:assembly" {
+                    stage_call(
+                        &app, &db, run_id, conversation_id, round_id, &provider, &system,
+                        "导演·装配", &instruction, &payload,
+                    )
+                    .await
+                } else {
+                    Err(format!(
+                        "导演计划出现未知阶段 `{}`（图执行器分发失败，C2 显式报错）",
+                        stage.stage
+                    ))
+                }
             }
-        };
+        },
+        |_state| {},
+    )
+    .await
+}
+
+/// 导演阶段真实调用：全量系统块 + 导演提示词，结构化 Schema 约束分镜产出；
+/// 工具非空时走工具循环。成功后记草稿并发表演时间线（与旧实现一致）。
+#[allow(clippy::too_many_arguments)]
+async fn run_director_stage(
+    app: &AppHandle,
+    db: &SqlitePool,
+    run_id: i64,
+    conversation_id: i64,
+    round_id: i64,
+    provider: &ApiProvider,
+    system: &[String],
+    stage: &crate::models::blueprint::ScriptwriterStage,
+    payload: &str,
+    tool_defs_by_name: &std::collections::HashMap<String, crate::llm::LlmToolDefinition>,
+    schema_json: &str,
+    user_input: &str,
+    max_rounds: usize,
+) -> Result<String, String> {
+    let director_system: Vec<String> = {
+        let mut blocks = system.to_vec();
+        if !stage.prompt.trim().is_empty() {
+            blocks.push(stage.prompt.clone());
+        }
+        blocks
+    };
+    let director_tools = resolve_allowed_tool_definitions(stage, tool_defs_by_name);
+    let req = SubAgentRequest::new(
+        "导演·分镜",
+        director_system,
+        payload,
+        provider.temperature,
+        provider.max_tokens,
+    )
+    .with_structured_schema(schema_json);
+
+    let res = if director_tools.is_empty() {
+        run_subagent(provider, req).await?
+    } else {
+        let execute = make_tool_execute(db.clone(), app.clone(), conversation_id, round_id);
         let runtime = super::subagent::SubAgentToolRuntime {
             tools: director_tools,
             max_rounds,
             execute: &execute,
         };
-        let req = SubAgentRequest::new(
-            "导演·分镜",
-            director_system.clone(),
-            user_input,
-            provider.temperature,
-            provider.max_tokens,
-        )
-        .with_structured_schema(&schema_json);
-        let res = run_subagent_with_tools(
-            provider,
-            req,
-            &runtime,
-        )
-        .await?;
-        record_draft(
-            db,
-            run_id,
-            "director:plan",
-            &res.text,
-            user_input,
-        )
-        .await?;
-        timeline::emit(
-            app,
-            conversation_id,
-            round_id,
-            TimelineKind::SubAgent,
-            TimelineStatus::Success,
-            "导演·分镜".to_string(),
-            format!("分镜计划产出 {} 字", res.text.chars().count()),
-        );
-        res.text
+        run_subagent_with_tools(provider, req, &runtime).await?
     };
 
-    let plan = parse_director_plan(&plan_raw)?;
-
-    // 演员视界裁剪（计划 §6.1"视界裁剪"，D-5）——真裁剪，不叠加：
-    // ① 蓝图 ActorDefinition 命中：演员上下文 = **仅** persona + 本镜 focus 纸条；
-    //    全量共享设定一律不给（此前"persona 追加在全量设定之上"= 全知演员，已修）。
-    // ② 旧路径（无蓝图定义）：仅保留名称命中的设定块；未命中也不得全量放行——
-    //    只用本镜 focus 出演，并以 Info 事件明示（诚实呈现裁剪结果）。
-    // ③ tools 非空的演员进入工具循环（run_subagent_with_tools）：真实参数 Schema 来自蓝图，
-    //    执行走 execute_tool_call_with_plan 同一条链（白名单→契约→门禁→容器）。
-    let mut performed: Vec<(String, String)> = Vec::with_capacity(plan.beats.len());
-
-    for (index, beat) in plan.beats.iter().enumerate() {
-        let actor_def = beat
-            .character
-            .as_deref()
-            .and_then(|name| actor_defs.get(name))
-            .copied();
-
-        let mut actor_system: Vec<String> = Vec::new();
-        match actor_def {
-            Some(def) => {
-                // 视界裁剪：只给 persona（蓝图角色设定），不给共享设定全量。
-                actor_system.push(format!("【你的角色设定】\n{}", def.persona));
-            }
-            None => {
-                let character = beat.character.as_deref();
-                if let Some(character) = character {
-                    // 旧路径：只把含该角色名的设定块留给这位演员（真裁剪）
-                    for block in system {
-                        if block.contains(character) {
-                            actor_system.push(block.clone());
-                        }
-                    }
-                }
-                // 未命中任何设定块：不再全量放行——只用本镜 focus 出演（诚实裁剪）。
-                if let Some(character) = character {
-                    if actor_system.is_empty() {
-                        timeline::emit(
-                            app,
-                            conversation_id,
-                            round_id,
-                            TimelineKind::SubAgent,
-                            TimelineStatus::Info,
-                            format!("演员 {character} 视界裁剪：未命中设定块"),
-                            "共享设定中无含该角色名的块——该演员仅以本镜 focus 指令出演（视界已裁剪）".to_string(),
-                        );
-                    }
-                }
-            }
-        }
-        // 本镜台词纸条约束指示
-        actor_system.push(format!(
-            "你现在只出演这一镜：{}。只写这一镜的表演，不要替其他角色写戏，不要写总结。",
-            beat.focus
-        ));
-
-        // 装配演员用户提示词：前序分镜演出 + 当前分镜任务（台词纸条）+ 玩家输入
-        let mut actor_user_prompt = String::new();
-        if !performed.is_empty() {
-            actor_user_prompt.push_str("【本轮前序分镜演出】\n");
-            for (prev_slot, prev_text) in &performed {
-                actor_user_prompt.push_str(&format!("分镜 {}:\n{}\n\n", prev_slot, prev_text));
-            }
-        }
-        actor_user_prompt.push_str(&format!(
-            "【当前分镜任务（台词纸条）】\n{}\n\n【玩家输入】\n{}",
-            beat.focus, user_input
-        ));
-
-        // 工具循环：蓝图 tools / tool_permissions 非空的演员启用 function-calling 闭环。
-        let actor_tools = actor_def
-            .map(|def| resolve_allowed_tool_definitions(def, &tool_defs_by_name))
-            .unwrap_or_default();
-
-        let execute = {
-            let db = db.clone();
-            let app = app.clone();
-            move |name: String, args_json: String| {
-                let db = db.clone();
-                let app = app.clone();
-                std::pin::Pin::from(Box::pin(async move {
-                    let plan =
-                        crate::services::agent_runtime::resolve_tool_plan(&db, conversation_id, &name)
-                            .await?;
-                    crate::services::agent_runtime::execute_tool_call_with_plan(
-                        &db,
-                        &app,
-                        conversation_id,
-                        round_id,
-                        false,
-                        &name,
-                        &args_json,
-                        plan.as_ref(),
-                    )
-                    .await
-                }))
-                    as std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
-            }
-        };
-
-        let actor_label = format!("演员 {}", beat.slot_id);
-        let response = if actor_tools.is_empty() {
-            run_subagent(
-                provider,
-                SubAgentRequest::new(
-                    &actor_label,
-                    actor_system,
-                    actor_user_prompt,
-                    provider.temperature,
-                    provider.max_tokens,
-                ),
-            )
-            .await
-        } else {
-            let max_rounds = configs
-                .agent_mode_switch
-                .as_ref()
-                .map(|cfg| cfg.max_tool_rounds.max(1) as usize)
-                .unwrap_or(5);
-            let runtime = super::subagent::SubAgentToolRuntime {
-                tools: actor_tools,
-                max_rounds,
-                execute: &execute,
-            };
-            run_subagent_with_tools(
-                provider,
-                SubAgentRequest::new(
-                    &actor_label,
-                    actor_system,
-                    actor_user_prompt,
-                    provider.temperature,
-                    provider.max_tokens,
-                ),
-                &runtime,
-            )
-            .await
-        };
-
-        match response {
-            Ok(response) => {
-                record_draft(
-                    db,
-                    run_id,
-                    &format!("actor:{}", beat.slot_id),
-                    &response.text,
-                    &beat.focus,
-                )
-                .await?;
-                timeline::emit(
-                    app,
-                    conversation_id,
-                    round_id,
-                    TimelineKind::SubAgent,
-                    TimelineStatus::Success,
-                    format!("演员 {} 出演 {}（{}/{}）", beat.slot_id, beat.focus, index + 1, plan.beats.len()),
-                    format!("产出 {} 字", response.text.chars().count()),
-                );
-                performed.push((beat.slot_id.clone(), response.text));
-            }
-            Err(err) => {
-                timeline::emit(
-                    app,
-                    conversation_id,
-                    round_id,
-                    TimelineKind::SubAgent,
-                    TimelineStatus::Failed,
-                    format!("演员 {} 演出失败", beat.slot_id),
-                    err.clone(),
-                );
-                let _ = record_run_finish(db, run_id, "failed").await;
-                return Err(err);
-            }
-        }
-    }
-
-    // 导演装配：把各槽位按 slot_id 顺序交给导演缝合，避免生硬拼接导致前后不连贯。
-    let assembly_input = {
-        let mut joined = String::from("以下各镜头的演出成品（按 slot_id 顺序）：\n\n");
-        for (slot_id, text) in &performed {
-            joined.push_str(&format!("【{}】\n{}\n\n", slot_id, text));
-        }
-        joined.push_str("请把以上镜头缝合成一整段顺畅的正文。保持每个镜头已发生的事实不变，不要新增事实。");
-        joined
-    };
-
-    let final_text = stage_call(
+    record_draft(db, run_id, "director:plan", &res.text, user_input).await?;
+    timeline::emit(
         app,
-        db,
-        run_id,
         conversation_id,
         round_id,
-        provider,
-        system,
-        "导演·装配",
-        "你是导演，负责把分镜成品缝合成最终正文。只输出正文。",
-        &assembly_input,
-    )
-    .await?;
+        TimelineKind::SubAgent,
+        TimelineStatus::Success,
+        "导演·分镜".to_string(),
+        format!("分镜计划产出 {} 字", res.text.chars().count()),
+    );
+    Ok(res.text)
+}
 
-    record_run_finish(db, run_id, "completed").await?;
-    Ok(final_text)
+/// 演员阶段真实调用：视界裁剪 + 工具循环（与旧实现逐项一致）。
+///
+/// 视界裁剪（计划 §6.1，D-5）——真裁剪，不叠加：
+/// ① 执行器已按分镜 `character` 命中蓝图 `ActorDefinition` 时，演员阶段
+///    资产的 `prompt` 即 persona：上下文 = **仅** persona + 本镜 focus 纸条；
+/// ② 未命中（执行器经 Scratchpad `fanout:actor_def_missed` 显式信号）：
+///    旧路径——只保留含该角色名的共享设定块；未命中任何设定块也不全量
+///    放行，只用本镜 focus 出演，并以 Info 事件明示。
+/// ③ tools 非空的演员进入工具循环（`run_subagent_with_tools`）。
+#[allow(clippy::too_many_arguments)]
+async fn run_actor_stage(
+    app: &AppHandle,
+    db: &SqlitePool,
+    run_id: i64,
+    conversation_id: i64,
+    round_id: i64,
+    provider: &ApiProvider,
+    system: &[String],
+    stage: &crate::models::blueprint::ScriptwriterStage,
+    instruction: &str,
+    payload: &str,
+    pad: &Scratchpad,
+    tool_defs_by_name: &std::collections::HashMap<String, crate::llm::LlmToolDefinition>,
+    max_rounds: usize,
+) -> Result<String, String> {
+    // 当前镜头上下文由图执行器写入 Scratchpad（FanOut 实例化协议）。
+    let beat_json = pad.read_text("fanout:current_beat")?;
+    let beat: DirectorBeat = serde_json::from_str(&beat_json)
+        .map_err(|e| format!("解析当前分镜上下文失败: {e}").replace('\\', "/"))?;
+    let beat_index: usize = pad
+        .read_text("fanout:beat_index")?
+        .parse()
+        .map_err(|_| "Scratchpad fanout:beat_index 不是合法序号".to_string())?;
+    let beat_total: usize = pad
+        .read_text("fanout:beat_total")?
+        .parse()
+        .map_err(|_| "Scratchpad fanout:beat_total 不是合法总数".to_string())?;
+
+    // 未命中信号由图执行器显式写入 Scratchpad（与 fanout:beat_index 同
+    // 协议，键缺失即显式报错）：不再靠 persona 是否为空反推——旧实现按
+    // ActorDefinition 命中与否分流，命中但 persona 为空的演员同样只吃
+    // persona，靠空串推断会把他误判进旧路径裁剪（C2 可见性修正）。
+    let actor_def_missed = pad.read_text("fanout:actor_def_missed")? == "true";
+
+    let mut actor_system: Vec<String> = Vec::new();
+    if !actor_def_missed {
+        // 视界裁剪：只给 persona（蓝图角色设定），不给共享设定全量。
+        actor_system.push(format!("【你的角色设定】\n{}", stage.prompt));
+    } else if let Some(character) = beat.character.as_deref() {
+        // 旧路径：只把含该角色名的设定块留给这位演员（真裁剪）
+        for block in system {
+            if block.contains(character) {
+                actor_system.push(block.clone());
+            }
+        }
+        // 未命中任何设定块：不再全量放行——只用本镜 focus 出演（诚实裁剪）。
+        if actor_system.is_empty() {
+            timeline::emit(
+                app,
+                conversation_id,
+                round_id,
+                TimelineKind::SubAgent,
+                TimelineStatus::Info,
+                format!("演员 {character} 视界裁剪：未命中设定块"),
+                "共享设定中无含该角色名的块——该演员仅以本镜 focus 指令出演（视界已裁剪）".to_string(),
+            );
+        }
+    }
+    // 本镜台词纸条约束指示（图执行器装配）
+    actor_system.push(instruction.to_string());
+
+    let actor_tools = resolve_allowed_tool_definitions(stage, tool_defs_by_name);
+    let actor_label = format!("演员 {}", beat.slot_id);
+    let response = if actor_tools.is_empty() {
+        run_subagent(
+            provider,
+            SubAgentRequest::new(
+                &actor_label,
+                actor_system,
+                payload,
+                provider.temperature,
+                provider.max_tokens,
+            ),
+        )
+        .await
+    } else {
+        let execute = make_tool_execute(db.clone(), app.clone(), conversation_id, round_id);
+        let runtime = super::subagent::SubAgentToolRuntime {
+            tools: actor_tools,
+            max_rounds,
+            execute: &execute,
+        };
+        run_subagent_with_tools(
+            provider,
+            SubAgentRequest::new(
+                &actor_label,
+                actor_system,
+                payload,
+                provider.temperature,
+                provider.max_tokens,
+            ),
+            &runtime,
+        )
+        .await
+    };
+
+    match response {
+        Ok(response) => {
+            record_draft(
+                db,
+                run_id,
+                &format!("actor:{}", beat.slot_id),
+                &response.text,
+                &beat.focus,
+            )
+            .await?;
+            timeline::emit(
+                app,
+                conversation_id,
+                round_id,
+                TimelineKind::SubAgent,
+                TimelineStatus::Success,
+                format!("演员 {} 出演 {}（{}/{}）", beat.slot_id, beat.focus, beat_index, beat_total),
+                format!("产出 {} 字", response.text.chars().count()),
+            );
+            Ok(response.text)
+        }
+        Err(err) => {
+            timeline::emit(
+                app,
+                conversation_id,
+                round_id,
+                TimelineKind::SubAgent,
+                TimelineStatus::Failed,
+                format!("演员 {} 演出失败", beat.slot_id),
+                err.clone(),
+            );
+            Err(err)
+        }
+    }
 }
 
 /// 禁词 Nudge 单趟重写（导演-演员路径）：以驳回意见为指令，单模型调用重写终稿。

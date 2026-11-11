@@ -1329,6 +1329,19 @@ pub async fn conversations_fork(
                 .await
                 .map_err(|err| err.to_string())?;
         }
+
+        // 工单 04 / 阶段 1a（spec 用户故事 22）：把源轮的快照基线克隆到
+        // 新分支对应轮，使新分支起始轮次的回滚基线来自源轮基线而非空。
+        // 复制细节（读源基线、目标轮序号、序列化）全部收在仓储内部；
+        // 源轮无基线（历史轮次）时仓储显式返回 false 的 no-op，Fork 继续。
+        crate::repositories::round_snapshot_repository::RoundSnapshotRepository::clone_snapshot(
+            &state.db,
+            conversation_id,
+            orig_round_id,
+            fork_id,
+            new_round_id,
+        )
+        .await?;
     }
 
     dbg_eprintln!(

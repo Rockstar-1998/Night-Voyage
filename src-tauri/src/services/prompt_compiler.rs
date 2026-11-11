@@ -430,6 +430,14 @@ pub struct PromptCompileResult {
     /// `tool_calls` 时，编排层**直接用这份计划**执行工具，不再重新加载蓝图——避免二次编译
     /// 与「同一份图两处解析」的漂移风险。
     pub tool_plans: HashMap<String, crate::models::tool_plan::ToolPlan>,
+    /// 步长预算盖章（工单 01-S1）：原样透传蓝图编译结果
+    /// `BlueprintExecutionResult::step_budget`。`None` = 图未声明预算，
+    /// 装配 `AgentCycleConfig` 时必须显式翻译为不限制步数，禁止默默当 1。
+    pub step_budget: Option<usize>,
+    /// 单步短路盖章：原样透传
+    /// `BlueprintExecutionResult::short_circuit_on_first_step`。
+    /// `None` = 图未声明短路，装配时显式翻译为不短路。
+    pub short_circuit_on_first_step: Option<bool>,
 }
 
 /// 把蓝图激活的 ToolCall 契约编译成 function-calling 定义。
@@ -929,6 +937,11 @@ pub async fn compile_prompt(
     // 7. 每个契约的执行计划：随编译结果一起交给编排层执行（不再二次编译蓝图）。
     let tool_plans = blueprint_result.tool_plans.clone();
 
+    // 8. 步长预算盖章（工单 01-S1）：Option 语义原样透传（Copy），
+    //    翻译责任在装配 AgentCycleConfig 的 stream_processor 侧。
+    let step_budget = blueprint_result.step_budget;
+    let short_circuit_on_first_step = blueprint_result.short_circuit_on_first_step;
+
     debug
         .input_sources
         .push(format!("preset:blueprint_graph:{}", input.conversation_id));
@@ -1208,6 +1221,8 @@ pub async fn compile_prompt(
         tools,
         persistent_hud_keys,
         tool_plans,
+        step_budget,
+        short_circuit_on_first_step,
     };
 
     result.debug.total_token_estimate_before_trim = total_estimated_tokens(&result);

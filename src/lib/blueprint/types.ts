@@ -28,6 +28,7 @@ export const NODE_TYPES = [
   'sampling_params',
   'constant',
   'branch',
+  'step_budget',
   'sampling_params_openai',
   'sampling_params_anthropic',
   'invoke_schema',
@@ -171,6 +172,18 @@ export interface BranchConfig {
   label: string;
   cases: BranchCase[];
   default_port: string;
+}
+
+/**
+ * 步长预算节点配置（工单 01 后端 StepBudgetConfig 的前端镜像）。
+ * 放在分支路由下游，把 max_steps 物理盖戳到本轮执行上下文：
+ * 1 = 单步直出（首步工具执行后按 short_circuit_on_tools 短路），
+ * >=2 = 允许多步推理循环，步长耗尽熔断报错。
+ */
+export interface StepBudgetConfig {
+  max_steps: number;
+  short_circuit_on_tools: boolean;
+  is_locked: boolean;
 }
 
 /**
@@ -399,6 +412,7 @@ export type NodeConfig =
   | { type: 'role_switch'; config: RoleSwitchConfig }
   | { type: 'constant'; config: ConstantConfig }
   | { type: 'branch'; config: BranchConfig }
+  | { type: 'step_budget'; config: StepBudgetConfig }
   | { type: 'sampling_params'; config: SamplingParamsConfig }
   | { type: 'sampling_params_openai'; config: OpenAiSamplingParamsConfig }
   | { type: 'sampling_params_anthropic'; config: AnthropicSamplingParamsConfig }

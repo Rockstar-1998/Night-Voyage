@@ -1400,16 +1400,19 @@ pub struct BlueprintExecutionResult {
     /// 仅内部使用，不进入对外序列化合约。
     #[serde(skip)]
     pub schema_field_order: Vec<(String, i32)>,
-    /// 步长预算上限：由图遍历流经的 [`StepBudgetConfig`] 节点物理注入，
-    /// 供 `AgentCycleRuntime` 统一调度单步/多步执行。图中无 StepBudget 节点
-    /// 时为单步默认值 1（单步充填是默认叙事路径，见统一执行架构 spec §1）。
-    #[serde(default = "default_step_budget_max_steps")]
-    pub step_budget: usize,
-    /// 单步短路标志：为 true 时，`AgentCycleRuntime` 在第 1 步工具执行完毕后
-    /// 立即截断，绝不发起第 2 次 API 调用。由 StepBudget 节点注入；
-    /// 无 StepBudget 节点时默认 true（与单步默认配套）。
-    #[serde(default = "default_step_budget_short_circuit")]
-    pub short_circuit_on_first_step: bool,
+    /// 步长预算上限：由图遍历流经的 [`StepBudgetConfig`] 节点物理盖章
+    /// （`Some(max_steps)`），供 `AgentCycleRuntime` 统一调度单步/多步
+    /// 执行。图中无 StepBudget 节点时为 `None`——图未声明预算，下游
+    /// 必须按「不限制步数」处理，不得套用任何隐含默认值（spec §2 只
+    /// 定义节点盖章，未定义无节点默认；阶段 1b 纠正）。
+    #[serde(default)]
+    pub step_budget: Option<usize>,
+    /// 单步短路标志：由 StepBudget 节点盖章（`Some(cfg.short_circuit_on_tools)`）。
+    /// 为 `Some(true)` 时，`AgentCycleRuntime` 在第 1 步工具执行完毕后
+    /// 立即截断，绝不发起第 2 次 API 调用。无 StepBudget 节点时为
+    /// `None`——图未声明短路，下游按「不短路」处理。
+    #[serde(default)]
+    pub short_circuit_on_first_step: Option<bool>,
 }
 
 #[cfg(test)]
@@ -1904,5 +1907,67 @@ mod tests {
         let round_tripped: BlueprintGraph =
             serde_json::from_str(&reserialized).expect("round-trip must succeed");
         assert_eq!(round_tripped.nodes[1].node_type(), NodeType::StepBudget);
+    }
+
+    fn execution_result_with_budget(
+        step_budget: Option<usize>,
+        short_circuit: Option<bool>,
+    ) -> BlueprintExecutionResult {
+        BlueprintExecutionResult {
+            blocks: Vec::new(),
+            structured_output_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+            }),
+            sampling_params: CompiledSamplingParams::default(),
+            db_mappings: HashMap::new(),
+            context_included_keys: HashMap::new(),
+            display_config: HashMap::new(),
+            active_schemas: Vec::new(),
+            active_tools: Vec::new(),
+            tool_plans: HashMap::new(),
+            active_ui_layout: None,
+            schema_field_order: Vec::new(),
+            step_budget,
+            short_circuit_on_first_step: short_circuit,
+        }
+    }
+
+    /// 阶段 1b：执行结果的步长字段是 Option——「未盖章」序列化为 null 并
+    /// 无损往返；旧 JSON 缺这两个字段时反序列化为 None（无预算声明），
+    /// 不得被旧默认值（1 / true）顶替成强制单步。
+    #[test]
+    fn execution_result_step_budget_option_round_trips() {
+        let unstamped = execution_result_with_budget(None, None);
+        let json = serde_json::to_string(&unstamped).expect("serialize unstamped result");
+        assert!(json.contains("\"step_budget\":null"), "unstamped must serialize as null: {json}");
+        let back: BlueprintExecutionResult =
+            serde_json::from_str(&json).expect("round-trip unstamped result");
+        assert_eq!(back.step_budget, None);
+        assert_eq!(back.short_circuit_on_first_step, None);
+
+        let stamped = execution_result_with_budget(Some(3), Some(false));
+        let json = serde_json::to_string(&stamped).expect("serialize stamped result");
+        let back: BlueprintExecutionResult =
+            serde_json::from_str(&json).expect("round-trip stamped result");
+        assert_eq!(back.step_budget, Some(3));
+        assert_eq!(back.short_circuit_on_first_step, Some(false));
+
+        // 旧载荷（无 step_budget / short_circuit_on_first_step 两键）→ None
+        let legacy_json = r#"{
+            "blocks": [],
+            "structured_output_schema": {"type": "object", "properties": {}, "required": []},
+            "sampling_params": {
+                "temperature": null, "max_tokens": null, "top_p": null,
+                "frequency_penalty": null, "presence_penalty": null, "stop": [],
+                "thinking_enabled": null, "thinking_budget_tokens": null
+            },
+            "db_mappings": {}
+        }"#;
+        let legacy: BlueprintExecutionResult =
+            serde_json::from_str(legacy_json).expect("legacy result payload must deserialize");
+        assert_eq!(legacy.step_budget, None, "缺字段必须是无声明，不得顶替为 1");
+        assert_eq!(legacy.short_circuit_on_first_step, None);
     }
 }

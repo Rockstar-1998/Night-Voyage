@@ -871,6 +871,8 @@ mod tests {
             tools: vec![],
             persistent_hud_keys: std::collections::HashSet::new(),
             tool_plans: std::collections::HashMap::new(),
+            step_budget: None,
+            short_circuit_on_first_step: None,
         }
     }
 

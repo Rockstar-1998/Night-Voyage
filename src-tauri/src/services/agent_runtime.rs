@@ -105,6 +105,16 @@ pub async fn flush_session_state_cache(db: &SqlitePool, app: &AppHandle, session
     }
 }
 
+/// 物理丢弃回合内未提交的工作副本（工单 04 SubmitAbort 语义）：用户中途
+/// 中止时，未定稿的工具状态突变只存在于本缓存中，丢弃即回滚未提交部分，
+/// 确保无脏数据在后续回合被 `load_session_state_cached` 读到或被 flush 落盘。
+/// 无缓存条目时为 no-op。
+pub async fn discard_session_state_cache(app: &AppHandle, session_id: i64) {
+    let app_state = app.state::<crate::AppState>();
+    let mut guard = app_state.session_state_cache.lock().await;
+    guard.remove(&session_id);
+}
+
 /// 为指定会话根据其绑定的蓝图配置生成初始 DataContainer。
 /// 若会话绑定了包含 `InitialStateConfig` 的预设蓝图，则使用该配置中的自定义属性、初始物品和标志位初始化；
 /// 否则返回空的默认 DataContainer（遵循无奇幻 RPG 默认值契约）。

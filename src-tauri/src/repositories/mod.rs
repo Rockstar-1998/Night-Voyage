@@ -5,3 +5,4 @@ pub mod llm_retry_snapshot_repository;
 pub mod preset_gate_repository;
 pub mod preset_repository;
 pub mod round_repository;
+pub mod round_snapshot_repository;

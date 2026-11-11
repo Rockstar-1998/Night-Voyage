@@ -10,7 +10,7 @@ use crate::models::{
 };
 use crate::repositories::conversation_repository::ConversationRepository;
 use crate::repositories::message_repository::{
-    normalize_tool_use_input_json, InsertMessageRecord, MessageRepository, PendingMessageContentPart,
+    InsertMessageRecord, MessageRepository, PendingMessageContentPart,
 };
 use crate::repositories::llm_retry_snapshot_repository::RetrySnapshotRepository;
 use crate::repositories::round_repository::RoundRepository;
@@ -40,6 +40,18 @@ pub struct ToolResultInput {
     pub tool_use_id: String,
     pub content: String,
     pub is_error: bool,
+}
+
+/// [`ChatService::persist_tool_results_round`] 的落盘结果：回执事务已
+/// 提交、新一轮已创建，续跳与否由调用方决定（工单 01-S1）。
+#[derive(Debug, Clone, Copy)]
+pub struct SubmittedToolRound {
+    /// 新创建的下一轮 round id。
+    pub new_round_id: i64,
+    /// 新一轮的助手消息 id。
+    pub assistant_message_id: i64,
+    /// 本会话绑定的 provider id（续跳流式任务用）。
+    pub provider_id: i64,
 }
 
 pub fn chat_debug_log(app: &AppHandle, message: &str) {
@@ -601,77 +613,6 @@ impl ChatService {
         })
     }
 
-    /// 执行本轮模型请求的全部 ToolCall，并把回执批量回注（随后开新轮续跑）。
-    ///
-    /// 编排位置的说明：模型 → 工具 → 回注 → 再生成，这一跳由本函数收口。
-    /// 执行计划取自**本轮编译结果**（`compiled_prompt.tool_plans`），不再二次加载蓝图，
-    /// 避免"同一份图两处解析"产生漂移。
-    ///
-    /// 失败与拦截一律转成 `is_error=true` 的回注内容（C2：不让模型误以为成功，
-    /// 也不静默中断对话）。
-    pub async fn dispatch_tool_calls(
-        app: AppHandle,
-        db: SqlitePool,
-        conversation_id: i64,
-        round_id: i64,
-        pending: Vec<crate::repositories::message_repository::PendingToolUseSkeleton>,
-        tool_plans: &HashMap<String, crate::models::tool_plan::ToolPlan>,
-    ) -> Result<(), String> {
-        if pending.is_empty() {
-            return Ok(());
-        }
-
-        let mut results = Vec::with_capacity(pending.len());
-        for skeleton in &pending {
-            let arguments_json = normalize_tool_use_input_json(&skeleton.input_json);
-            let outcome = crate::services::agent_runtime::execute_tool_call_with_plan(
-                &db,
-                &app,
-                conversation_id,
-                round_id,
-                false,
-                &skeleton.tool_name,
-                &arguments_json,
-                tool_plans.get(&skeleton.tool_name),
-            )
-            .await;
-
-            let (content, is_error) = match outcome {
-                Ok(text) => (text, false),
-                Err(err) => (err, true),
-            };
-
-            // 时序泳道要看到"真实发生的事"，所以事件由后端发射（含拦截原文），
-            // 前端不再靠流事件推断。
-            crate::services::agent::timeline::emit(
-                &app,
-                conversation_id,
-                round_id,
-                crate::services::agent::timeline::TimelineKind::ToolCall,
-                if is_error {
-                    crate::services::agent::timeline::TimelineStatus::Blocked
-                } else {
-                    crate::services::agent::timeline::TimelineStatus::Success
-                },
-                format!(
-                    "ToolCall: {} ({})",
-                    skeleton.tool_name,
-                    if is_error { "被拦截/失败" } else { "执行成功" }
-                ),
-                content.clone(),
-            );
-
-            results.push(ToolResultInput {
-                tool_use_id: skeleton.tool_use_id.clone(),
-                content,
-                is_error,
-            });
-        }
-
-        Self::submit_tool_results(app, db, conversation_id, round_id, results).await?;
-        Ok(())
-    }
-
     /// 批量提交工具回执：一条 user 消息承载 N 个 `tool_result` part，然后开新轮续跑。
     ///
     /// 与单条版本的区别：
@@ -690,21 +631,56 @@ impl ChatService {
             return Err("submit_tool_results 收到空的回执列表".to_string());
         }
 
-        let chat_mode = ConversationRepository::load_chat_mode(&db, conversation_id).await?;
-        if chat_mode != "director_agents" {
-            return Err(
-                "tool_result submission is only available in agent mode (director_agents)"
-                    .to_string(),
-            );
-        }
+        // 工具回执的可用性由蓝图工具计划与轮次上限决定（工单 06：chat_mode
+        // 旧模式拦截已移除）；无工具声明的会话根本不会产生待回执的 ToolCall。
 
-        // 工具轮次上限：防止模型无限 ToolCall 循环把 token 烧光。
+        // 工具轮次上限（命令入口准入检查）：本包装服务于前端命令
+        // `chat_submit_tool_result` 的人工回注路径——在受理一次人工回注前
+        // 校验本回合既往工具轮次，防止人工连环回注把 token 烧光。
+        // 模型驱动的单智能体轮次不走本包装：其步进 / 熔断由
+        // `AgentCycleRuntime` 依蓝图步长预算独占判定（工单 01-S1），
+        // 链内续跳直接调用 `persist_tool_results_round`，不叠加第二道熔断。
         let tool_rounds = Self::count_tool_rounds_since_last_user_input(&db, conversation_id).await?;
         if tool_rounds >= MAX_TOOL_ROUNDS_PER_TURN {
             return Err(format!(
                 "本回合工具调用轮次已达上限（{} 轮），停止继续调用工具；请调整提示或蓝图后重试",
                 MAX_TOOL_ROUNDS_PER_TURN
             ));
+        }
+
+        let submitted = Self::persist_tool_results_round(&db, conversation_id, round_id, results).await?;
+
+        crate::services::stream_processor::spawn_stream_task(
+            app,
+            db.clone(),
+            conversation_id,
+            submitted.new_round_id,
+            submitted.provider_id,
+            submitted.assistant_message_id,
+            vec![],
+            false, // auto_retry_enabled
+        );
+
+        let round_state =
+            RoundRepository::load_state(&db, conversation_id, Some(submitted.new_round_id)).await?;
+        Ok(serde_json::to_value(round_state).unwrap_or_default())
+    }
+
+    /// 工具回执落盘核心：一条 user 消息承载 N 个 `tool_result` part，
+    /// 并在同一事务内创建下一轮（聚合消息 + 助手消息 + streaming 状态）。
+    ///
+    /// 只做落盘，不 spawn 续跳任务、不做轮次上限判定——「是否续跳、续几
+    /// 跳」由调用方决定：命令包装 [`Self::submit_tool_results`] 落盘后
+    /// spawn 新任务续跑；`AgentCycleRuntime` 驱动的流式链（工单 01-S1）
+    /// 落盘后由运行器在同一任务内决定短路 / 熔断 / 续跳。
+    pub async fn persist_tool_results_round(
+        db: &SqlitePool,
+        conversation_id: i64,
+        round_id: i64,
+        results: Vec<ToolResultInput>,
+    ) -> Result<SubmittedToolRound, String> {
+        if results.is_empty() {
+            return Err("persist_tool_results_round 收到空的回执列表".to_string());
         }
 
         let now = now_ts();
@@ -838,20 +814,11 @@ impl ChatService {
 
         tx.commit().await.map_err(|err| err.to_string())?;
 
-        crate::services::stream_processor::spawn_stream_task(
-            app,
-            db.clone(),
-            conversation_id,
+        Ok(SubmittedToolRound {
             new_round_id,
-            provider_id,
             assistant_message_id,
-            vec![],
-            false, // auto_retry_enabled
-        );
-
-        let round_state =
-            RoundRepository::load_state(&db, conversation_id, Some(new_round_id)).await?;
-        Ok(serde_json::to_value(round_state).unwrap_or_default())
+            provider_id,
+        })
     }
 
     /// 统计「本回合」已发生的工具轮次数（= 自最后一条普通用户输入以来，产生过待回执工具调用的轮次数）。
@@ -907,6 +874,20 @@ impl ChatService {
         round_id: i64,
         provider_id_override: Option<i64>,
     ) -> Result<RegenerateRoundResult, String> {
+        // 工单 04 原子回滚：重新生成前先把 game_state 还原到该轮执行前快照
+        // 基线，杜绝重复扣款；同时丢弃可能残留的未提交回合内暂存状态。
+        // 无基线（本功能上线前的历史轮次）时 restore 返回 false，按现状继续。
+        if crate::repositories::round_snapshot_repository::RoundSnapshotRepository::restore(
+            &db,
+            conversation_id,
+            round_id,
+        )
+        .await?
+        {
+            crate::services::agent_runtime::discard_session_state_cache(&app, conversation_id)
+                .await;
+        }
+
         let now = now_ts();
         let mut tx = db.begin().await.map_err(|err| err.to_string())?;
 
@@ -1038,6 +1019,23 @@ impl ChatService {
 
         let mut round_deleted = false;
 
+        // 工单 04：预取被删轮次的序号与「是否为最后一轮」（轮次行删除后即
+        // 不可查），供轮次被彻底删除时做级联状态恢复决策。
+        let deleted_round_meta: Option<(i64, bool)> = match round_id {
+            Some(rid) => {
+                let (_, idx, _) = RoundRepository::find_round_meta(db, rid).await?;
+                let max_idx: Option<i64> = sqlx::query_scalar(
+                    "SELECT MAX(round_index) FROM message_rounds WHERE conversation_id = ?",
+                )
+                .bind(conversation_id)
+                .fetch_one(db)
+                .await
+                .map_err(|err| err.to_string())?;
+                Some((idx, max_idx == Some(idx)))
+            }
+            None => None,
+        };
+
         if let Some(round_id) = round_id {
             if role == "assistant" {
                 dbg_eprintln!(
@@ -1101,12 +1099,60 @@ impl ChatService {
             MessageRepository::delete_message(db, message_id).await?;
         }
 
+        // 工单 04 / 阶段 1c Delete 状态处理：轮次被彻底删除时——
+        // - 曾是最后一轮：其状态突变随轮次一并撤销（还原该轮基线 +
+        //   丢弃未提交暂存，再删除其快照记录）。
+        // - 中间轮：级联失效——被删轮与其后全部轮次的快照基线一并清理
+        //   （后续基线是在含被删轮突变的历史链上捕获的陈旧基线，保留会
+        //   在日后还原时静默复活已删轮效果）；会话现状态不强行回退
+        //   （不存在能表达「去掉被删轮、保留后续轮」的既有快照，强行
+        //   回退任一基线都会丢掉后续轮的合法突变）。被级联失效的后续
+        //   基线条数经 MessageDeleted 事件向调用方明示。
+        let mut invalidated_later_snapshots: u64 = 0;
+        if round_deleted {
+            if let (Some(deleted_round_id), Some((deleted_round_index, was_latest))) =
+                (round_id, deleted_round_meta)
+            {
+                if was_latest {
+                    if crate::repositories::round_snapshot_repository::RoundSnapshotRepository::restore(
+                        db,
+                        conversation_id,
+                        deleted_round_id,
+                    )
+                    .await?
+                    {
+                        crate::services::agent_runtime::discard_session_state_cache(
+                            app,
+                            conversation_id,
+                        )
+                        .await;
+                    }
+                    crate::repositories::round_snapshot_repository::RoundSnapshotRepository::delete_for_round(
+                        db,
+                        conversation_id,
+                        deleted_round_id,
+                    )
+                    .await?;
+                } else {
+                    invalidated_later_snapshots =
+                        crate::repositories::round_snapshot_repository::RoundSnapshotRepository::cascade_invalidate_for_deleted_round(
+                            db,
+                            conversation_id,
+                            deleted_round_id,
+                            deleted_round_index,
+                        )
+                        .await?;
+                }
+            }
+        }
+
         broadcast_room_message(
             app,
             crate::network::RoomMessage::MessageDeleted {
                 conversation_id,
                 message_id,
                 round_deleted,
+                invalidated_later_snapshots,
             },
         );
 
@@ -1199,6 +1245,27 @@ impl ChatService {
         }
 
         RoundRepository::delete_rounds_after(&db, conversation_id, round_index).await?;
+
+        // 工单 04 级联状态恢复：回溯同步把 game_state 还原到目标轮的执行前
+        // 基线，并清理被删后续轮次的快照基线（目标轮基线保留，供其重新
+        // 执行时继续作为回滚基线）。
+        if crate::repositories::round_snapshot_repository::RoundSnapshotRepository::restore(
+            &db,
+            conversation_id,
+            target_round_id,
+        )
+        .await?
+        {
+            crate::services::agent_runtime::discard_session_state_cache(app, conversation_id)
+                .await;
+        }
+        crate::repositories::round_snapshot_repository::RoundSnapshotRepository::delete_after_round_index(
+            &db,
+            conversation_id,
+            round_index,
+        )
+        .await?;
+
         RoundRepository::reset_to_collecting(&db, target_round_id).await?;
 
         let round = RoundRepository::load_state(&db, conversation_id, Some(target_round_id))

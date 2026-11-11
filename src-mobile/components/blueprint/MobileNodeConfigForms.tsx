@@ -17,6 +17,7 @@ import type {
   BlueprintNode,
   BranchCase,
   BranchConfig,
+  StepBudgetConfig,
   ConstantConfig,
   EndConfig,
   GateOption,
@@ -571,6 +572,41 @@ const ConstantForm: Component<{
 );
 
 // ─── Branch 节点表单（spec 里程碑 C）───
+
+const StepBudgetForm: Component<{
+  config: StepBudgetConfig;
+  onChange: (c: StepBudgetConfig) => void;
+}> = (props) => {
+  return (
+    <div class="flex flex-col gap-4 px-4">
+      <p class="text-[12px] leading-relaxed text-mist-solid/50">
+        为本分支设定 Agent 单轮步长配额：max_steps = 1 单步直出（工具执行后按短路开关收尾），
+        大于 1 允许多步推理，步长耗尽熔断报错。
+      </p>
+      <div>
+        <FieldLabel label="最大步长 (max_steps)" hint=">= 1" />
+        <NumberInput
+          value={props.config.max_steps}
+          placeholder="1"
+          step="1"
+          onInput={(v) =>
+            props.onChange({
+              ...props.config,
+              max_steps: v === null ? 1 : Math.max(1, Math.trunc(v)),
+            })
+          }
+        />
+      </div>
+      <div>
+        <Toggle
+          checked={props.config.short_circuit_on_tools}
+          onChange={(v) => props.onChange({ ...props.config, short_circuit_on_tools: v })}
+          label="首步工具短路 (short_circuit_on_tools)"
+        />
+      </div>
+    </div>
+  );
+};
 
 const BranchForm: Component<{
   config: BranchConfig;
@@ -2519,6 +2555,12 @@ export const MobileNodeConfigForm: Component<MobileNodeConfigFormProps> = (props
           onChange={(c: BranchConfig) => props.onConfigChange({ type: 'branch', config: c })}
         />
       </Match>
+      <Match when={props.node.type === 'step_budget'}>
+        <StepBudgetForm
+          config={props.node.config as StepBudgetConfig}
+          onChange={(c: StepBudgetConfig) => props.onConfigChange({ type: 'step_budget', config: c })}
+        />
+      </Match>
       <Match when={props.node.type === 'sampling_params'}>
         <SamplingParamsForm
           config={props.node.config as SamplingParamsConfig}
@@ -2743,6 +2785,15 @@ export function defaultConfigForType(type: BlueprintNode['type']): NodeConfig {
             { match_value: 'online', port: 'out_online' },
           ],
           default_port: 'out_single',
+        },
+      };
+    case 'step_budget':
+      return {
+        type: 'step_budget',
+        config: {
+          max_steps: 1,
+          short_circuit_on_tools: true,
+          is_locked: false,
         },
       };
     case 'sampling_params':

@@ -21,6 +21,12 @@ mod services;
 mod utils;
 mod validators;
 
+// 离线转换器（src/bin/nv-converter.rs，工单 06）的定向再导出：只暴露转换
+// 所需的四个符号，保持 lib 其余模块私有不变。
+pub use models::blueprint::{BlueprintGraph, NodeConfig};
+pub use services::blueprint_codec::{export_graph_to_code, import_code_to_graph};
+pub use services::blueprint_executor::normalize_legacy_value_edges;
+
 pub struct AppState {
     pub db: SqlitePool,
     pub host_server: Mutex<Option<Arc<Mutex<network::RoomServer>>>>,

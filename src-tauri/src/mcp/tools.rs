@@ -807,6 +807,122 @@ impl McpTool for NvBlueprintSave {
     }
 }
 
+/// 把预设蓝图图导出为 `.nv.ts` 代码（工单 05）。
+pub struct NvPresetExportCode;
+
+#[async_trait]
+impl McpTool for NvPresetExportCode {
+    fn name(&self) -> &'static str {
+        "nv_preset_export_code"
+    }
+
+    fn description(&self) -> &'static str {
+        "把预设的蓝图图编译为 .nv.ts TypeScript DSL 源码（初始状态/工具定义/分支走 DSL 调用，其余节点与连线在 nvFragment 中逐字保留，可无损导回）。"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": { "presetId": { "type": "integer", "description": "预设 id" } },
+            "required": ["presetId"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> Result<String, String> {
+        let preset_id = require_i64(args, "presetId")?;
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT name, blueprint_graph FROM presets WHERE id = ? LIMIT 1",
+        )
+        .bind(preset_id)
+        .fetch_optional(&ctx.db)
+        .await
+        .map_err(|err| format!("读取预设失败: {}", err))?;
+        let Some((preset_name, graph_json)) = row else {
+            return Err(format!("预设 {} 不存在", preset_id));
+        };
+        let graph_json = graph_json.ok_or_else(|| format!("预设 {} 尚未保存蓝图图", preset_id))?;
+        let graph: crate::models::blueprint::BlueprintGraph =
+            serde_json::from_str(&graph_json)
+                .map_err(|err| format!("蓝图图不是合法的图数据: {}", err))?;
+        crate::services::blueprint_codec::export_graph_to_code(&graph, &preset_name)
+    }
+}
+
+/// 把 `.nv.ts` 代码导入为预设蓝图图并广播刷新事件（工单 05）。
+pub struct NvPresetImportCode;
+
+#[async_trait]
+impl McpTool for NvPresetImportCode {
+    fn name(&self) -> &'static str {
+        "nv_preset_import_code"
+    }
+
+    fn description(&self) -> &'static str {
+        "把 .nv.ts TypeScript DSL 源码前向编译为蓝图图，经与编辑器保存相同的归一化校验后写回预设，并广播 blueprint:refreshed 事件通知前端刷新视图。"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "presetId": { "type": "integer", "description": "预设 id" },
+                "code": { "type": "string", "description": ".nv.ts 源码全文" }
+            },
+            "required": ["presetId", "code"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> Result<String, String> {
+        let preset_id = require_i64(args, "presetId")?;
+        let code = require_str(args, "code")?;
+
+        // 前向编译：oxc 解析 .nv.ts -> BlueprintGraph（模型层校验合法性）
+        let graph = crate::services::blueprint_codec::import_code_to_graph(code)?;
+        let graph_json = serde_json::to_string(&graph)
+            .map_err(|err| format!("编译出的图序列化失败: {}", err))?;
+
+        // 与编辑器保存同一条归一化校验路径，非法图不落库
+        let normalized =
+            crate::commands::blueprint::normalize_blueprint_graph(graph_json)
+                .await
+                .map_err(|err| err.replace('\\', "/"))?;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("取当前时间失败: {}", err))?
+            .as_millis() as i64;
+
+        let rows = sqlx::query("UPDATE presets SET blueprint_graph = ?, updated_at = ? WHERE id = ?")
+            .bind(normalized.graph_json.clone())
+            .bind(now_ms)
+            .bind(preset_id)
+            .execute(&ctx.db)
+            .await
+            .map_err(|err| format!("保存蓝图图失败: {}", err))?;
+        if rows.rows_affected() == 0 {
+            return Err(format!("预设 {} 不存在，.nv.ts 未导入", preset_id));
+        }
+
+        // 广播视图刷新事件（spec §4：导入后 emit blueprint:refreshed）
+        {
+            use tauri::Emitter;
+            let _ = ctx.app.emit(
+                "blueprint:refreshed",
+                json!({ "presetId": preset_id }),
+            );
+        }
+
+        Ok(format!(
+            "已把 .nv.ts 导入预设 {} 的蓝图图（{} 字节，拓扑迁移={}），并广播 blueprint:refreshed。",
+            preset_id,
+            normalized.graph_json.len(),
+            normalized.migrated
+        ))
+    }
+}
+
 /// 导入完整预设（PortablePresetFile JSON）。
 pub struct NvPresetImport;
 
@@ -855,6 +971,8 @@ pub fn all_tools() -> Vec<Box<dyn McpTool>> {
         Box::new(NvMessagesList),
         Box::new(NvBlueprintGet),
         Box::new(NvBlueprintSave),
+        Box::new(NvPresetExportCode),
+        Box::new(NvPresetImportCode),
         Box::new(NvPresetImport),
     ];
     #[cfg(windows)]

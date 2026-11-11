@@ -400,10 +400,12 @@ pub async fn execute_blueprint(
         tool_plans: HashMap::new(),
         active_ui_layout: None,
         schema_field_order: Vec::new(),
-        // 步长预算默认单步充填（max_steps=1 + 首步短路）；图中有 StepBudget
-        // 节点时由 traverse 覆盖为节点配置（工单 01）。
-        step_budget: 1,
-        short_circuit_on_first_step: true,
+        // 步长预算初始为「未盖章」（None）：spec §2 只定义 StepBudget 节点
+        // 盖章，未定义无节点默认。图中有 StepBudget 节点时由 traverse 盖章
+        // 为 Some(..)；全程无节点则保持 None，下游按不限制步数、不短路
+        // 处理（工单 01 / 阶段 1b 纠正，不再自创单步默认）。
+        step_budget: None,
+        short_circuit_on_first_step: None,
     };
 
     let start_id = working_graph
@@ -767,8 +769,8 @@ fn traverse(
                     node: node_id.to_string(),
                 });
             }
-            result.step_budget = cfg.max_steps;
-            result.short_circuit_on_first_step = cfg.short_circuit_on_tools;
+            result.step_budget = Some(cfg.max_steps);
+            result.short_circuit_on_first_step = Some(cfg.short_circuit_on_tools);
             let next = next_node_id(graph, node_id, port_names::OUT)?;
             traverse(graph, &next, context, result, visited, path, values)?;
         }
@@ -5307,8 +5309,8 @@ mod tests {
             .await
             .expect("graph with StepBudget(1) must execute");
 
-        assert_eq!(result.step_budget, 1);
-        assert!(result.short_circuit_on_first_step);
+        assert_eq!(result.step_budget, Some(1));
+        assert_eq!(result.short_circuit_on_first_step, Some(true));
         assert_eq!(result.blocks.len(), 1, "traversal must continue past StepBudget");
         assert_eq!(result.blocks[0].identifier, "role");
     }
@@ -5332,11 +5334,13 @@ mod tests {
             .await
             .expect("graph with StepBudget(5) must execute");
 
-        assert_eq!(result.step_budget, 5);
-        assert!(!result.short_circuit_on_first_step);
+        assert_eq!(result.step_budget, Some(5));
+        assert_eq!(result.short_circuit_on_first_step, Some(false));
     }
 
-    /// 图中无 StepBudget 节点时，编译结果保持单步默认（1 / true）。
+    /// 图中无 StepBudget 节点时，编译结果为「无预算声明」（None / None）：
+    /// spec §2 只定义节点盖章，下游必须按不限制步数、不短路处理，
+    /// 不得被强制单步（阶段 1b 锁定，原单步默认断言已纠正）。
     #[tokio::test]
     async fn test_step_budget_defaults_without_node() {
         let g = graph(
@@ -5355,8 +5359,14 @@ mod tests {
             .await
             .expect("graph without StepBudget must execute");
 
-        assert_eq!(result.step_budget, 1);
-        assert!(result.short_circuit_on_first_step);
+        assert_eq!(result.step_budget, None, "无 StepBudget 节点必须无预算声明");
+        assert_eq!(
+            result.short_circuit_on_first_step, None,
+            "无 StepBudget 节点必须无短路声明"
+        );
+        // 下游语义即字段本身：Option 的 None 是唯一的「无声明」表达，
+        // 任何消费方拿到 None 都只能按不限制步数、不短路处理，类型上
+        // 不存在可被误读为 max_steps=1 的数值。
     }
 
     /// max_steps=0 是无效预算：编译期硬错 InvalidStepBudget（C2，不兜底为 1）。

@@ -1025,6 +1025,8 @@ export interface RoomMessageDeletedEvent {
   conversationId: number;
   messageId: number;
   roundDeleted: boolean;
+  /** 删除中间轮时被级联失效的后续轮快照基线条数；删最后一轮或未删轮时为 0。 */
+  invalidatedLaterSnapshots: number;
 }
 
 export interface RoomRewoundToRoundEvent {

@@ -21,6 +21,7 @@ export { default as Eye } from 'lucide-solid/icons/eye';
 export { default as FilePlus2 } from 'lucide-solid/icons/file-plus-2';
 export { default as FileText } from 'lucide-solid/icons/file-text';
 export { default as Folder } from 'lucide-solid/icons/folder';
+export { default as Gauge } from 'lucide-solid/icons/gauge';
 export { default as GitFork } from 'lucide-solid/icons/git-fork';
 export { default as Globe } from 'lucide-solid/icons/globe';
 export { default as Info } from 'lucide-solid/icons/info';

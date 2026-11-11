@@ -34,6 +34,7 @@ import { Component, Show, Switch, Match } from 'solid-js';
 import type {
   BlueprintNode,
   BranchConfig,
+  StepBudgetConfig,
   ConstantConfig,
   EndConfig,
   GroupGateConfig,
@@ -76,6 +77,7 @@ import { ModeSwitchNode } from './nodes/ModeSwitchNode';
 import { RoleSwitchNode } from './nodes/RoleSwitchNode';
 import { ConstantNode } from './nodes/ConstantNode';
 import { BranchNode } from './nodes/BranchNode';
+import { StepBudgetNode } from './nodes/StepBudgetNode';
 import { SamplingParamsNode } from './nodes/SamplingParamsNode';
 import { SamplingParamsOpenAiNode } from './nodes/SamplingParamsOpenAiNode';
 import { SamplingParamsAnthropicNode } from './nodes/SamplingParamsAnthropicNode';
@@ -137,6 +139,7 @@ const NODE_TYPE_LABELS: Record<BlueprintNode['type'], string> = {
   role_switch: 'Role Switch',
   constant: 'Constant',
   branch: 'Branch',
+  step_budget: 'Step Budget',
   sampling_params: 'Sampling Params（legacy）',
   sampling_params_openai: 'Sampling Params (OpenAI)',
   sampling_params_anthropic: 'Sampling Params (Anthropic)',
@@ -227,6 +230,11 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
     props.onUpdate(nodeId, {
       type: 'branch',
       config: { ...(props.node!.config as BranchConfig), ...updates },
+    });
+  const updateStepBudget = (nodeId: string, updates: Partial<StepBudgetConfig>) =>
+    props.onUpdate(nodeId, {
+      type: 'step_budget',
+      config: { ...(props.node!.config as StepBudgetConfig), ...updates },
     });
   const updateSamplingParams = (nodeId: string, updates: Partial<SamplingParamsConfig>) =>
     props.onUpdate(nodeId, {
@@ -425,6 +433,13 @@ export const NodeConfigPanel: Component<NodeConfigPanelProps> = (props) => {
                     config={node().config as BranchConfig}
                     isLocked={isLocked()}
                     onUpdate={(updates) => updateBranch(node().id, updates)}
+                  />
+                </Match>
+                <Match when={node().type === 'step_budget'}>
+                  <StepBudgetNode
+                    config={node().config as StepBudgetConfig}
+                    isLocked={isLocked()}
+                    onUpdate={(updates) => updateStepBudget(node().id, updates)}
                   />
                 </Match>
                 <Match when={node().type === 'sampling_params'}>

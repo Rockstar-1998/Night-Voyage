@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] 在 `stream_processor.rs` 中实现 `StreamingToolAccumulator` 缓冲区，过滤并拦截 `delta.tool_calls`。
-- [ ] 确保 `delta.content` 实时通过 `llm-stream-chunk` 事件推流给前端，保证打字机零首字延迟（C3 响应性原则）。
-- [ ] 在流传输终止（`[DONE]`）时，解析缓冲区内的完整 ToolCall JSON，原子执行工具并提交 SQLite。
-- [ ] 提交成功后立即发射 `game-state:patch` 与 `agent:timeline_event` 事件。
-- [ ] 增加零延迟旁白合成防线：若 `assistant_content.trim().is_empty()` 但执行了工具，自动合成 `*（完成了交互结算：[...]）*` 填充对白并入库。
-- [ ] 编写测试断言：验证混洗 SSE 流中的文本即时发射、工具在流结束后原子落盘、以及纯工具调用流产出非空合成对白。
+- [x] 在 `stream_processor.rs` 中实现 `StreamingToolAccumulator` 缓冲区，过滤并拦截 `delta.tool_calls`。
+- [x] 确保 `delta.content` 实时通过 `llm-stream-chunk` 事件推流给前端，保证打字机零首字延迟（C3 响应性原则）。
+- [x] 在流传输终止（`[DONE]`）时，解析缓冲区内的完整 ToolCall JSON，原子执行工具并提交 SQLite。
+- [x] 提交成功后立即发射 `game-state:patch` 与 `agent:timeline_event` 事件。
+- [x] 增加零延迟旁白合成防线：若 `assistant_content.trim().is_empty()` 但执行了工具，自动合成 `*（完成了交互结算：[...]）*` 填充对白并入库。
+- [x] 编写测试断言：验证混洗 SSE 流中的文本即时发射、工具在流结束后原子落盘、以及纯工具调用流产出非空合成对白。
