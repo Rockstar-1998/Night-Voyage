@@ -69,6 +69,24 @@ export const StepBudgetNode: Component<NodeConfigComponentProps<StepBudgetConfig
           class="w-4 h-4 rounded border-white/20 bg-white/5 text-accent focus:ring-1 focus:ring-accent/40"
         />
       </div>
+
+      <div class="space-y-1">
+        <label class={LABEL_CLASS}>工具暴露策略 (tool_policy)</label>
+        <select
+          value={props.config.tool_policy ?? 'all'}
+          disabled={props.isLocked}
+          onChange={(e) =>
+            update({ tool_policy: e.currentTarget.value as 'all' | 'settlement_only' })
+          }
+          class={INPUT_CLASS}
+        >
+          <option value="all">全部暴露（本执行流激活的所有工具）</option>
+          <option value="settlement_only">仅结算类（单步直出契约：工具回执不回注，查询类不进白名单）</option>
+        </select>
+        <p class="text-[10px] text-mist-solid/40 leading-relaxed">
+          仅结算类要求工具在 Tool Definition 中标注「结算/变更类」；查询类与未分类工具将被排除出本路白名单。
+        </p>
+      </div>
     </div>
   );
 };

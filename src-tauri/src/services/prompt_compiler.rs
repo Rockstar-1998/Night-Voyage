@@ -753,6 +753,29 @@ pub async fn compile_prompt(
             })?
     };
 
+    let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_str).map_err(|err| {
+        format!(
+            "blueprint_graph JSON invalid: {}",
+            err.to_string().replace('\\', "/")
+        )
+    })?;
+
+    // 智能体架构键（spec §7）：与 `resolve_pipeline` 共用同一判定
+    // （`resolve_pipeline_key`），把 mode_switch 的 Gate 选择/缺省架构暴露为
+    // 常量值源 `agent_pipeline`，供图上 Branch 按真实管道路由执行流。
+    let orchestration = crate::services::blueprint_executor::extract_orchestration_configs(&graph)
+        .map_err(|err| err.to_string().replace('\\', "/"))?;
+    let agent_pipeline = match orchestration.agent_mode_switch.as_ref() {
+        Some(cfg) => Some(
+            crate::services::agent::orchestrator::resolve_pipeline_key(
+                cfg,
+                gate_selections.get(&orchestration.agent_mode_switch_node_id),
+            )
+            .map_err(|err| err.replace('\\', "/"))?,
+        ),
+        None => None,
+    };
+
     let exec_context = BlueprintExecutionContext {
         memory_mode: memory_mode.clone(),
         conversation_type: context.conversation_type.clone(),
@@ -760,14 +783,8 @@ pub async fn compile_prompt(
         protocol: crate::repositories::conversation_repository::ConversationRepository::resolve_conversation_protocol(db, input.conversation_id).await,
         preset_schemas,
         game_state,
+        agent_pipeline: agent_pipeline.map(|pipeline| pipeline.as_pipeline_key().to_string()),
     };
-
-    let graph: BlueprintGraph = serde_json::from_str(blueprint_graph_str).map_err(|err| {
-        format!(
-            "blueprint_graph JSON invalid: {}",
-            err.to_string().replace('\\', "/")
-        )
-    })?;
 
     // UI 数据契约静态校验门禁（C2 零回退与 Spec §2）：
     // 若蓝图或关联预设定义了 UI 布局，必须满足 UI 数据契约，
@@ -929,7 +946,22 @@ pub async fn compile_prompt(
     let db_mappings: HashMap<String, String> = blueprint_result.db_mappings;
 
     // 5. ToolCall 契约 → function-calling 定义（计划 §5.1）。空 = 本次不带工具。
-    let tools = compile_tool_definitions(&blueprint_result.active_tools)?;
+    // 工具暴露策略（spec §7）：StepBudget 盖章 settlement_only 时，单步直出
+    // 路只暴露结算类契约；查询类与未分类工具不进入请求白名单——单步契约下
+    // 工具回执不回注，查询没有消费方（策略由创作者在节点显式配置，非静默回退）。
+    let active_tools: Vec<crate::models::blueprint::ToolDefinitionConfig> =
+        match blueprint_result.tool_policy {
+            Some(crate::models::blueprint::StepBudgetToolPolicy::SettlementOnly) => {
+                blueprint_result
+                    .active_tools
+                    .iter()
+                    .filter(|t| t.tool_kind == Some(crate::models::blueprint::ToolKind::Settlement))
+                    .cloned()
+                    .collect()
+            }
+            _ => blueprint_result.active_tools.clone(),
+        };
+    let tools = compile_tool_definitions(&active_tools)?;
 
     // 6. 常驻 HUD 字段白名单（通道 B 的过滤依据，计划 §4.3）：只放 PersistentHUD 字段进补丁。
     let persistent_hud_keys = collect_persistent_hud_keys(&blueprint_result.active_schemas);

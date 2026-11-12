@@ -51,6 +51,28 @@ export const ToolDefinitionNode: Component<NodeConfigComponentProps<ToolDefiniti
       </div>
 
       <div class="space-y-1">
+        <label class={LABEL_CLASS}>工具类别 (Tool Kind)</label>
+        <select
+          value={props.config.tool_kind ?? ''}
+          disabled={props.isLocked}
+          onChange={(e) =>
+            update({
+              tool_kind:
+                e.currentTarget.value === '' ? null : (e.currentTarget.value as 'settlement' | 'query'),
+            })
+          }
+          class={INPUT_CLASS}
+        >
+          <option value="">未分类（不进入单步直出白名单）</option>
+          <option value="settlement">结算/变更类（单步直出路白名单）</option>
+          <option value="query">查询类（仅多步 agent 路暴露）</option>
+        </select>
+        <p class="text-[10px] text-mist-solid/40 leading-relaxed">
+          单步直出（StepBudget tool_policy = settlement_only）只暴露结算类工具；查询类工具依赖工具回执驱动多步推理，仅在多步 agent 路暴露。
+        </p>
+      </div>
+
+      <div class="space-y-1">
         <label class={LABEL_CLASS}>参数定义 (Parameters JSON Schema)</label>
         <textarea
           rows={6}

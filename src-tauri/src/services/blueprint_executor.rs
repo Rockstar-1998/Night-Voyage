@@ -378,6 +378,11 @@ pub async fn execute_blueprint(
         );
     }
 
+    // Prompt identifier 唯一性在【宏展开前】的原图上校验：同一宏的多个实例
+    // 是合法拓扑（如 schema 启动/关闭两条轨各挂一份思维链规则宏），展开产生的
+    // identifier 重复属于预期，不构成错误（spec §6 编排语义）。
+    check_unique_identifiers(&working_graph)?;
+
     working_graph = expand_macros(&working_graph, None)?;
 
     validate_graph(&working_graph)?;
@@ -412,6 +417,7 @@ pub async fn execute_blueprint(
         // 处理（工单 01 / 阶段 1b 纠正，不再自创单步默认）。
         step_budget: None,
         short_circuit_on_first_step: None,
+        tool_policy: None,
     };
 
     let start_id = working_graph
@@ -777,6 +783,7 @@ fn traverse(
             }
             result.step_budget = Some(cfg.max_steps);
             result.short_circuit_on_first_step = Some(cfg.short_circuit_on_tools);
+            result.tool_policy = Some(cfg.tool_policy);
             let next = next_node_id(graph, node_id, port_names::OUT)?;
             traverse(graph, &next, context, result, visited, path, values)?;
         }
@@ -808,6 +815,22 @@ fn traverse(
     }
 
     path.remove(node_id);
+    Ok(())
+}
+
+/// Prompt identifier 唯一性检查（在宏展开前的原图上执行）。
+///
+/// 作者手写的重复 identifier 在此处硬错；宏实例展开产生的重复属于
+/// 合法拓扑，不在检查范围内（spec §6 编排语义）。
+fn check_unique_identifiers(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
+    let mut seen: HashSet<String> = HashSet::new();
+    for node in &graph.nodes {
+        if let NodeConfig::Prompt(cfg) = &node.config {
+            if !seen.insert(cfg.identifier.clone()) {
+                return Err(BlueprintError::DuplicateIdentifier(cfg.identifier.clone()));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -849,15 +872,9 @@ fn validate_graph(graph: &BlueprintGraph) -> Result<(), BlueprintError> {
         }
     }
 
-    // 4. identifier unique
-    let mut seen_identifiers: HashSet<String> = HashSet::new();
-    for node in &graph.nodes {
-        if let NodeConfig::Prompt(cfg) = &node.config {
-            if !seen_identifiers.insert(cfg.identifier.clone()) {
-                return Err(BlueprintError::DuplicateIdentifier(cfg.identifier.clone()));
-            }
-        }
-    }
+    // 4. prompt identifier 唯一性已移至 execute_blueprint 的宏展开前检查
+    //    （check_unique_identifiers）：同一宏的多个实例展开后 identifier 重复
+    //    是合法拓扑，不得按错误拦截（spec §6）。
 
     // 5. gate_id uniqueness check removed — node_id is already unique
     // (MutexGateConfig/GroupGateConfig no longer carry gate_id; selection key
@@ -2478,6 +2495,14 @@ fn evaluate_session_source(
         "conversation_type" => Ok(BlueprintValue::Session(context.conversation_type.clone())),
         "memory_mode" => Ok(BlueprintValue::Session(context.memory_mode.clone())),
         "protocol" => Ok(BlueprintValue::Session(context.protocol.clone())),
+        "agent_pipeline" => Ok(BlueprintValue::Session(
+            context.agent_pipeline.clone().ok_or_else(|| {
+                BlueprintError::UnknownConstantSource(
+                    "agent_pipeline（蓝图未声明 agent_mode_switch，智能体架构无从解析）"
+                        .to_string(),
+                )
+            })?,
+        )),
         other => Err(BlueprintError::UnknownConstantSource(other.to_string())),
     }
 }
@@ -2834,6 +2859,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         }
     }
 
@@ -2845,6 +2871,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         }
     }
 
@@ -2856,6 +2883,7 @@ mod tests {
             protocol: protocol.to_string(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         }
     }
 
@@ -2869,6 +2897,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
             gate_selections: gates
                 .iter()
                 .map(|(node_id, keys)| {
@@ -4052,6 +4081,7 @@ mod tests {
             gate_selections: HashMap::new(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
         let res_anthropic = execute_blueprint(&graph, &ctx_anthropic)
             .await
@@ -4071,6 +4101,7 @@ mod tests {
             gate_selections: HashMap::new(),
             preset_schemas: HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
         let res_chat = execute_blueprint(&graph, &ctx_chat)
             .await
@@ -4991,6 +5022,7 @@ mod tests {
                         description: "购买物品".to_string(),
                         parameters_schema: "{}".to_string(),
                         is_locked: false,
+                        tool_kind: None,
                     }),
                     position: pos(0.0, 0.0),
                 },
@@ -5292,6 +5324,7 @@ mod tests {
                 crate::models::blueprint::StepBudgetConfig {
                     max_steps,
                     short_circuit_on_tools: short_circuit,
+                    tool_policy: crate::models::blueprint::StepBudgetToolPolicy::All,
                     is_locked: false,
                 },
             ),

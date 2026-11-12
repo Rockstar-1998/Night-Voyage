@@ -501,6 +501,24 @@ pub struct ToolDefinitionConfig {
     pub parameters_schema: String,
     #[serde(default)]
     pub is_locked: bool,
+    /// 工具暴露类别；`None` = 未分类（旧图兼容）。未分类工具不会被
+    /// `settlement_only` 路由暴露（创作者分类后才会进入单步直出白名单）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_kind: Option<ToolKind>,
+}
+
+/// 工具在「单步直出」策略下的暴露类别（spec §7 工具暴露策略）。
+///
+/// 单步直出路（StepBudget `tool_policy = settlement_only`）只把结算类契约
+/// 放进请求白名单：模型一次请求同时产出正文与状态变更调用，工具回执不回注；
+/// 查询类工具依赖工具回执驱动多步推理，只在多步 agent 路暴露。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    /// 结算/变更类：直接修改状态（购买扣款、写入工作区、掷骰等）。
+    Settlement,
+    /// 查询类：只读信息（查询价格、读取工作区等），供多步 agent 路消费。
+    Query,
 }
 
 /// 计算器操作符类型驱动枚举
@@ -1132,6 +1150,8 @@ pub struct RoleSwitchConfig {
 /// - `"conversation_type"` → 输出 `context.conversation_type`（`"single"` / `"online"`）
 /// - `"memory_mode"` → 输出 `context.memory_mode`（`"stateless"` / `"legacy"` / `"mem0"`）
 /// - `"protocol"` → 输出 `context.protocol`（`"anthropic"` / `"chat_completions"`）
+/// - `"agent_pipeline"` → 输出 `context.agent_pipeline`（`"single"` / `"director_actor"` /
+///   `"scriptwriter"`；图未声明 agent_mode_switch 时显式报错）
 ///
 /// 出口端口：`out`。值不通过运行时管道传递，而是由下游 BranchNode 通过入边回溯
 /// 读取 ConstantNode 的 `source` 配置，直接从 context 取值（详见 spec §3.1）。
@@ -1180,9 +1200,24 @@ pub struct StepBudgetConfig {
     /// 是否在第 1 步完成工具执行后强制短路（单步模式下为 true）。
     #[serde(default = "default_step_budget_short_circuit")]
     pub short_circuit_on_tools: bool,
+    /// 工具暴露策略（缺省 all，见 [`StepBudgetToolPolicy`]）。
+    #[serde(default)]
+    pub tool_policy: StepBudgetToolPolicy,
     /// 节点锁状态。
     #[serde(default)]
     pub is_locked: bool,
+}
+
+/// StepBudget 节点的工具暴露策略（spec §7）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StepBudgetToolPolicy {
+    /// 暴露本执行流激活的全部工具（缺省）。
+    #[default]
+    All,
+    /// 仅暴露结算类工具（`tool_kind = settlement`）；查询类与未分类工具
+    /// 不进入请求白名单——单步直出契约下工具回执不回注，查询没有消费方。
+    SettlementOnly,
 }
 
 fn default_step_budget_max_steps() -> usize {
@@ -1268,6 +1303,13 @@ pub struct BlueprintExecutionContext {
     /// 当前会话的数据容器 (如果有)
     #[serde(default)]
     pub game_state: Option<crate::models::game_state::DataContainer>,
+    /// 智能体架构键（`"single"` / `"director_actor"` / `"scriptwriter"`）：由
+    /// mode_switch 的 Gate 选择/缺省架构解析（与 `resolve_pipeline` 同一判定）。
+    /// `None` = 图未声明 agent_mode_switch，此时常量值源 `agent_pipeline`
+    /// 显式报错（C2）。仅供图上 Branch 路由执行流，管道执行仍由
+    /// `resolve_pipeline` 决定。
+    #[serde(default)]
+    pub agent_pipeline: Option<String>,
 }
 
 /// 图执行器产出的 prompt block，供 compile_prompt 注入。
@@ -1413,6 +1455,10 @@ pub struct BlueprintExecutionResult {
     /// `None`——图未声明短路，下游按「不短路」处理。
     #[serde(default)]
     pub short_circuit_on_first_step: Option<bool>,
+    /// 工具暴露策略：由 StepBudget 节点盖章（`Some(cfg.tool_policy)`）。
+    /// `None` = 图未声明策略，按「全部暴露」处理。
+    #[serde(default)]
+    pub tool_policy: Option<StepBudgetToolPolicy>,
 }
 
 #[cfg(test)]
@@ -1915,6 +1961,7 @@ mod tests {
     ) -> BlueprintExecutionResult {
         BlueprintExecutionResult {
             blocks: Vec::new(),
+            tool_policy: None,
             structured_output_schema: serde_json::json!({
                 "type": "object",
                 "properties": {},

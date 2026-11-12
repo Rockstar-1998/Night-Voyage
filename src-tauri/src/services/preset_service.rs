@@ -1343,6 +1343,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: std::collections::HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1431,6 +1432,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: std::collections::HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1579,6 +1581,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: std::collections::HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)
@@ -1721,6 +1724,7 @@ mod tests {
             protocol: "chat_completions".to_string(),
             preset_schemas: std::collections::HashMap::new(),
             game_state: None,
+            agent_pipeline: None,
         };
 
         let result = execute_blueprint(&graph, &ctx)

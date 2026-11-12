@@ -42,6 +42,15 @@ impl AgentPipeline {
             Self::Scriptwriter => "剧本流水线",
         }
     }
+
+    /// 图上 Branch 值源 `agent_pipeline` 使用的架构键（蛇形命名）。
+    pub fn as_pipeline_key(&self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::DirectorActor => "director_actor",
+            Self::Scriptwriter => "scriptwriter",
+        }
+    }
 }
 
 /// 解析本轮流水线：编排架构完全由预设蓝图的 `AgentModeSwitch` 节点资产决定
@@ -74,22 +83,33 @@ pub async fn resolve_pipeline(
             .map_err(|err| format!("读取会话预设失败: {}", err))?
             .flatten();
 
-    let key = match preset_id {
-        Some(pid) => {
-            let selection = PresetGateRepository::load_one(db, pid, switch_node_id)
-                .await
-                .map_err(|err| format!("读取智能体架构 Gate 失败: {}", err))?;
-            selection
-                .map(|s| s.selected_keys)
-                .unwrap_or_default()
-                .first()
-                .map(String::as_str)
-                .unwrap_or(switch_cfg.default_mode.as_str())
-                .to_string()
-        }
-        None => switch_cfg.default_mode.clone(),
+    let selection = match preset_id {
+        Some(pid) => PresetGateRepository::load_one(db, pid, switch_node_id)
+            .await
+            .map_err(|err| format!("读取智能体架构 Gate 失败: {}", err))?
+            .map(|sel| crate::models::blueprint::GateSelection {
+                keys: sel.selected_keys,
+            }),
+        None => None,
     };
+    resolve_pipeline_key(switch_cfg, selection.as_ref())
+}
 
+/// 由 mode_switch 配置与 Gate 选择解析智能体架构（纯函数，无 IO）。
+///
+/// `resolve_pipeline`（运行期管道选择）与蓝图执行上下文的 `agent_pipeline`
+/// 值源（图上 Branch 按真实管道路由执行流）共用本判定，保证 Gate 选择 →
+/// 架构语义在全仓库只有一处实现。
+///
+/// Gate 选择取其第一个键；未选择 / 选择为空 / 无预设关联时回退
+/// `default_mode`（与既有语义一致）。
+pub fn resolve_pipeline_key(
+    switch_cfg: &crate::models::blueprint::AgentModeSwitchConfig,
+    selection: Option<&crate::models::blueprint::GateSelection>,
+) -> Result<AgentPipeline, String> {
+    let key = selection
+        .and_then(|sel| sel.keys.first().cloned())
+        .unwrap_or_else(|| switch_cfg.default_mode.clone());
     match key.as_str() {
         "single" => Ok(AgentPipeline::Single),
         "director_actor" => Ok(AgentPipeline::DirectorActor),

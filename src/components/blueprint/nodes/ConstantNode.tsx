@@ -44,9 +44,10 @@ export const ConstantNode: Component<NodeConfigComponentProps<ConstantConfig>> =
           <option value="conversation_type">conversation_type（single / online）</option>
           <option value="memory_mode">memory_mode（legacy / mem0）</option>
           <option value="protocol">protocol（anthropic / chat_completions）</option>
+          <option value="agent_pipeline">agent_pipeline（single / director_actor / scriptwriter）</option>
         </select>
         <p class="text-[10px] text-mist-solid/35 mt-1">
-          运行时读取会话对应属性，输出值供下游 Branch 节点按值匹配走分支。
+          运行时读取会话对应属性，输出值供下游 Branch 节点按值匹配走分支。agent_pipeline 来自 mode_switch 的 Gate 选择/缺省架构，蓝图未声明 mode_switch 时显式报错。
         </p>
       </div>
 

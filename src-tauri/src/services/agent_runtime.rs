@@ -306,6 +306,9 @@ pub async fn resolve_tool_plan(
         gate_selections,
         preset_schemas,
         game_state: None,
+        // 工具计划解析不按智能体架构路由；图上若在工具链中使用 `agent_pipeline`
+        // 值源，此处 None 会让该值源显式报错（C2），不会静默。
+        agent_pipeline: None,
     };
 
     let result = crate::services::blueprint_executor::execute_blueprint(&graph, &exec_context)

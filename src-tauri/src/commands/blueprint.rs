@@ -489,6 +489,22 @@ pub async fn preview_blueprint_with_session(
         preset_schemas.insert(s.id.clone(), s);
     }
 
+    // 编译预览与主链路共用同一 `agent_pipeline` 判定，预览结果即真实路由结果
+    //（spec §7：图上 Branch 按真实管道路由执行流）。
+    let orchestration =
+        crate::services::blueprint_executor::extract_orchestration_configs(&graph)
+            .map_err(|err| err.to_string().replace('\\', "/"))?;
+    let agent_pipeline = match orchestration.agent_mode_switch.as_ref() {
+        Some(cfg) => Some(
+            crate::services::agent::orchestrator::resolve_pipeline_key(
+                cfg,
+                gate_selections.get(&orchestration.agent_mode_switch_node_id),
+            )
+            .map_err(|err| err.replace('\\', "/"))?,
+        ),
+        None => None,
+    };
+
     let exec_context = BlueprintExecutionContext {
         memory_mode,
         conversation_type,
@@ -496,6 +512,7 @@ pub async fn preview_blueprint_with_session(
         gate_selections,
         preset_schemas,
         game_state: None,
+        agent_pipeline: agent_pipeline.map(|pipeline| pipeline.as_pipeline_key().to_string()),
     };
 
     let blueprint_result = execute_blueprint(&graph, &exec_context)
@@ -540,8 +557,24 @@ pub async fn preview_blueprint_with_session(
     let full_prompt_text = full_text_parts.join("\n\n");
 
     // 编译预览要能回答"我的工具与 HUD 到底激活了没有"：把激活项与执行计划一并带出。
-    let active_tools = blueprint_result
-        .active_tools
+    // 预览白名单与真实会话同源（spec §7）：StepBudget 盖章 settlement_only 时，
+    // 查询类与未分类工具同样从预览中排除——预览即真实请求白名单，不得显示
+    // 运行时不会暴露的工具（C2：预览与执行一致，禁止两套口径）。
+    let exposed_tools: Vec<crate::models::blueprint::ToolDefinitionConfig> =
+        match blueprint_result.tool_policy {
+            Some(crate::models::blueprint::StepBudgetToolPolicy::SettlementOnly) => {
+                blueprint_result
+                    .active_tools
+                    .iter()
+                    .filter(|t| {
+                        t.tool_kind == Some(crate::models::blueprint::ToolKind::Settlement)
+                    })
+                    .cloned()
+                    .collect()
+            }
+            _ => blueprint_result.active_tools.clone(),
+        };
+    let active_tools = exposed_tools
         .iter()
         .map(|tool| crate::models::blueprint::BlueprintPreviewToolDto {
             tool_name: tool.tool_name.clone(),

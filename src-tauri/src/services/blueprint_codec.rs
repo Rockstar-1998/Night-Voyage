@@ -209,6 +209,11 @@ pub fn export_graph_to_code(graph: &BlueprintGraph, preset_name: &str) -> Result
             if let Some(locked) = config.get("is_locked") {
                 entry.insert("is_locked".to_string(), locked.clone());
             }
+            // 工具暴露类别（spec §7）：Some 时以 "settlement" / "query" 往返，
+            // None 时键缺席（未分类，旧代码兼容）。
+            if let Some(kind) = config.get("tool_kind") {
+                entry.insert("tool_kind".to_string(), kind.clone());
+            }
             if let Some(id) = node.get("id") {
                 entry.insert("__nodeId".to_string(), id.clone());
             }
@@ -638,15 +643,23 @@ fn read_top_level_call(
                     .get("is_locked")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let mut tool_config = json!({
+                    "tool_name": tool_name,
+                    "description": description,
+                    "parameters_schema": parameters_schema,
+                    "is_locked": is_locked,
+                });
+                // 工具暴露类别（spec §7）：键缺席 = 未分类；非法取值在图的
+                // NodeConfig 反序列化层显式报错（C2），不在 codec 侧静默丢字段。
+                if let Some(kind) = entry.get("tool_kind") {
+                    if let Some(obj) = tool_config.as_object_mut() {
+                        obj.insert("tool_kind".to_string(), kind.clone());
+                    }
+                }
                 tool_nodes.push(json!({
                     "id": node_id,
                     "type": "tool_definition",
-                    "config": {
-                        "tool_name": tool_name,
-                        "description": description,
-                        "parameters_schema": parameters_schema,
-                        "is_locked": is_locked,
-                    },
+                    "config": tool_config,
                     "position": position,
                 }));
             }
@@ -1096,7 +1109,7 @@ flow.branch({
                 { "id": "n_role", "type": "role_switch", "config": { "label": "角色模式" }, "position": { "x": 80.0, "y": 10.0 } },
                 { "id": "n_const", "type": "constant", "config": { "label": "协议", "source": "protocol" }, "position": { "x": 90.0, "y": 10.0 } },
                 { "id": "n_branch", "type": "branch", "config": { "label": "协议分支", "cases": [{ "match_value": "anthropic", "port": "p_anth" }], "default_port": "p_default" }, "position": { "x": 100.0, "y": 10.0 } },
-                { "id": "n_budget", "type": "step_budget", "config": { "max_steps": 1, "short_circuit_on_tools": true, "is_locked": false }, "position": { "x": 110.0, "y": 10.0 } },
+                { "id": "n_budget", "type": "step_budget", "config": { "max_steps": 1, "short_circuit_on_tools": true, "tool_policy": "all", "is_locked": false }, "position": { "x": 110.0, "y": 10.0 } },
                 { "id": "n_sampling", "type": "sampling_params", "config": { "temperature": 0.7, "max_tokens": 1024, "top_p": null, "frequency_penalty": null, "presence_penalty": null, "stop": null, "thinking_enabled": null, "thinking_budget_tokens": null, "is_locked": false }, "position": { "x": 120.0, "y": 10.0 } },
                 { "id": "n_sampling_oai", "type": "sampling_params_openai", "config": { "temperature": null, "max_tokens": null, "top_p": 0.9, "frequency_penalty": 0.1, "presence_penalty": null, "stop": ["END"], "is_locked": false }, "position": { "x": 130.0, "y": 10.0 } },
                 { "id": "n_sampling_ant", "type": "sampling_params_anthropic", "config": { "temperature": null, "max_tokens": 2048, "top_p": null, "stop": null, "thinking_enabled": true, "thinking_budget_tokens": 512, "is_locked": false }, "position": { "x": 140.0, "y": 10.0 } },

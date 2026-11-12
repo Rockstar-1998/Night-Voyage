@@ -563,6 +563,7 @@ const ConstantForm: Component<{
         <option value="conversation_type">conversation_type（single / online）</option>
         <option value="memory_mode">memory_mode（legacy / mem0）</option>
         <option value="protocol">protocol（anthropic / chat_completions）</option>
+        <option value="agent_pipeline">agent_pipeline（single / director_actor / scriptwriter）</option>
       </select>
     </div>
     <div class="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[12px] text-mist-solid/60 leading-relaxed">
@@ -603,6 +604,20 @@ const StepBudgetForm: Component<{
           onChange={(v) => props.onChange({ ...props.config, short_circuit_on_tools: v })}
           label="首步工具短路 (short_circuit_on_tools)"
         />
+      </div>
+      <div>
+        <FieldLabel label="工具暴露策略 (tool_policy)" hint="单步直出契约的配套白名单" />
+        <Select
+          value={props.config.tool_policy ?? 'all'}
+          onChange={(v) => props.onChange({ ...props.config, tool_policy: v as 'all' | 'settlement_only' })}
+          options={[
+            { value: 'all', label: '全部暴露（本执行流激活的所有工具）' },
+            { value: 'settlement_only', label: '仅结算类（查询类不进白名单）' },
+          ]}
+        />
+        <p class="mt-1 text-[11px] leading-relaxed text-mist-solid/40">
+          仅结算类要求工具标注「结算/变更类」；查询类与未分类工具将被排除出本路白名单。
+        </p>
       </div>
     </div>
   );
@@ -1035,6 +1050,23 @@ const ToolDefinitionForm: Component<{
           onInput={(v) => props.onChange({ ...props.config, description: v })}
           placeholder="购买道具，扣减金币并放入背包"
         />
+      </div>
+      <div>
+        <FieldLabel label="工具类别 (Tool Kind)" hint="单步直出白名单的分类依据" />
+        <Select
+          value={props.config.tool_kind ?? ''}
+          onChange={(v) =>
+            props.onChange({ ...props.config, tool_kind: v === '' ? null : (v as 'settlement' | 'query') })
+          }
+          options={[
+            { value: '', label: '未分类（不进入单步直出白名单）' },
+            { value: 'settlement', label: '结算/变更类（单步直出路白名单）' },
+            { value: 'query', label: '查询类（仅多步 agent 路暴露）' },
+          ]}
+        />
+        <p class="mt-1 text-[11px] leading-relaxed text-mist-solid/40">
+          单步直出（StepBudget tool_policy = settlement_only）只暴露结算类工具；查询类仅在多步 agent 路暴露。
+        </p>
       </div>
       <div>
         <FieldLabel label="参数定义 (JSON Schema)" />

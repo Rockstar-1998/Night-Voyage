@@ -183,6 +183,12 @@ export interface BranchConfig {
 export interface StepBudgetConfig {
   max_steps: number;
   short_circuit_on_tools: boolean;
+  /**
+   * 工具暴露策略（spec §7）：`all` = 暴露本执行流全部激活工具（缺省）；
+   * `settlement_only` = 仅暴露结算类工具（查询类与未分类不进请求白名单——
+   * 单步直出契约下工具回执不回注，查询没有消费方）。
+   */
+  tool_policy?: 'all' | 'settlement_only';
   is_locked: boolean;
 }
 
@@ -240,6 +246,12 @@ export interface ToolDefinitionConfig {
   description: string;
   parameters_schema: string;
   is_locked: boolean;
+  /**
+   * 工具暴露类别（spec §7）：`settlement` = 结算/变更类（单步直出路白名单），
+   * `query` = 查询类（仅多步 agent 路暴露）。缺省（undefined）= 未分类，
+   * 不会被 settlement_only 路由暴露。
+   */
+  tool_kind?: 'settlement' | 'query' | null;
 }
 
 export interface CalculatorConfig {

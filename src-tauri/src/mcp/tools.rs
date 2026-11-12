@@ -1051,6 +1051,7 @@ mod tests {
             gate_selections: HashMap::new(),
             game_state: None,
             preset_schemas: HashMap::new(),
+            agent_pipeline: None,
         };
         let exec_result = execute_blueprint(&graph, &ctx).await.expect("execute v3 blueprint");
         assert!(!exec_result.blocks.is_empty());
@@ -1066,6 +1067,7 @@ mod tests {
             gate_selections: HashMap::new(),
             game_state: None,
             preset_schemas: HashMap::new(),
+            agent_pipeline: None,
         };
         let exec_online = execute_blueprint(&graph, &ctx_online).await.expect("execute v3 online");
         assert!(!exec_online.blocks.is_empty());
